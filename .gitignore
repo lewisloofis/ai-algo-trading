@@ -1,0 +1,17 @@
+# Compiled command binaries (rebuildable via `make build`).
+/bin/
+
+# Captured market-data segments (never commit).
+/segments/
+*.binpb
+*.binpb.zst
+*.manifest.json
+
+# Token store (treat like a password — never commit).
+.sb-tokens.json
+
+# Stockbit production source — local reference clones only, NEVER commit.
+/sb-android/
+/sb-ios/
+/sb-protos/
+/sb-web/

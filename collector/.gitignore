@@ -1,0 +1,15 @@
+/sb-algo-prototype
+*.exe
+
+# Captured market-data segments (never commit).
+/segments/
+*.binpb
+*.binpb.zst
+*.manifest.json
+
+# Token store (treat like a password — never commit).
+.sb-tokens.json
+
+# Visualisation tooling.
+viz/.venv/
+viz/*.png
