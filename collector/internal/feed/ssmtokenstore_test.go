@@ -114,6 +114,43 @@ func TestSSMTokenStoreSaveOrdering(t *testing.T) {
 	}
 }
 
+// TestSSMTokenStoreSaveSkipsEmpty verifies that an empty value is NOT written:
+// SSM rejects zero-length values, and overwriting a valid token with "" is data
+// loss. An empty refresh must leave the stored refresh untouched.
+func TestSSMTokenStoreSaveSkipsEmpty(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeSSMClient()
+	store := newSSMTokenStoreWithClient(client, "/sb-test")
+
+	// Seed an existing refresh token.
+	if err := store.Save("acc1", "ref1"); err != nil {
+		t.Fatalf("seed Save error: %v", err)
+	}
+
+	// Persist only a new access token (empty refresh, as on initial login).
+	client.puts = nil
+	if err := store.Save("acc2", ""); err != nil {
+		t.Fatalf("Save with empty refresh error: %v", err)
+	}
+
+	// Only the access parameter should have been written.
+	if len(client.puts) != 1 || client.puts[0] != "/sb-test/access" {
+		t.Errorf("expected only /sb-test/access written, got %v", client.puts)
+	}
+
+	access, refresh, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if access != "acc2" {
+		t.Errorf("access: got %q want acc2", access)
+	}
+	if refresh != "ref1" {
+		t.Errorf("refresh: got %q want ref1 (must be preserved)", refresh)
+	}
+}
+
 // TestSSMTokenStoreKeyNames verifies the parameter names used for each token.
 func TestSSMTokenStoreKeyNames(t *testing.T) {
 	t.Parallel()

@@ -79,12 +79,18 @@ func (s *SSMTokenStore) Load() (access, refresh string, err error) {
 //
 // SECURITY: token values must never appear in log output.
 func (s *SSMTokenStore) Save(access, refresh string) error {
+	// An empty value means "leave the stored token unchanged": SSM rejects
+	// zero-length values, and overwriting a valid token with "" is data loss.
 	// Write refresh first — restart-critical.
-	if err := s.putParam(s.prefix+"/refresh", refresh); err != nil {
-		return fmt.Errorf("ssm save refresh token: %w", err)
+	if refresh != "" {
+		if err := s.putParam(s.prefix+"/refresh", refresh); err != nil {
+			return fmt.Errorf("ssm save refresh token: %w", err)
+		}
 	}
-	if err := s.putParam(s.prefix+"/access", access); err != nil {
-		return fmt.Errorf("ssm save access token: %w", err)
+	if access != "" {
+		if err := s.putParam(s.prefix+"/access", access); err != nil {
+			return fmt.Errorf("ssm save access token: %w", err)
+		}
 	}
 	return nil
 }

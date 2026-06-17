@@ -91,6 +91,12 @@ func main() {
 		}
 	}
 
+	// Validate authentication only after env vars AND the token store have been
+	// consulted — headless EC2 has no token env vars; it relies on SSM-seeded tokens.
+	if !cfg.hasAuth() {
+		log.Fatalf("config: need SB_USERNAME+SB_PASSWORD, SB_ACCESS_TOKEN, or tokens seeded in the token store")
+	}
+
 	session := feed.NewSession(cfg.feedCfg)
 	session.SetTokenStore(store)
 
@@ -99,9 +105,11 @@ func main() {
 	}
 	log.Printf("[auth] main session ready (user_id=%q)", session.UserID())
 
-	// Persist tokens immediately after login so the file exists before the
-	// first proactive refresh.
-	if err := store.Save(session.AccessToken(), ""); err != nil {
+	// Persist tokens immediately after login so the store reflects the live
+	// access token before the first proactive refresh. Pass the refresh token we
+	// currently hold (from env or the store) rather than "" — an empty value is
+	// rejected by SSM and would clobber a good token.
+	if err := store.Save(session.AccessToken(), cfg.feedCfg.RefreshToken); err != nil {
 		// Non-fatal: we can still capture; warn the operator.
 		log.Printf("WARN: initial token persist failed: %v", err)
 	}
