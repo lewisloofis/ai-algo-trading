@@ -48,6 +48,41 @@ go build ./...
 go test ./...
 ```
 
+## Verifying trade capture (next market open)
+
+IDX hours are approximately 09:00–16:00 WIB. Run these commands during a live
+session to confirm `running_trade_batch` frames are actually being captured:
+
+```bash
+# 1. Build the collector and the inspector.
+go build -o /tmp/collector ./cmd/collector
+go build -o /tmp/sbcap     ./cmd/sbcap
+
+# 2. Set credentials (one of the three options below):
+#    Option A — username + password (triggers fresh login):
+export SB_USERNAME='your_username'
+export SB_PASSWORD='your_password'
+#    Option B — pre-obtained access token (skips login):
+export SB_ACCESS_TOKEN='<token>'
+#    Option C — persisted token file (FileTokenStore, default path ~/.sb-tokens.json):
+#    just ensure the file exists with valid tokens; no env var needed.
+
+# 3. Set the capture target and let it run for a few minutes.
+export CAPTURE_DIR="./segments-test"
+export CAPTURE_WATCHLIST_ID="verify"
+# watchlist.txt must list at least one symbol, e.g. BUMI or BBCA.
+/tmp/collector        # Ctrl-C after ~2 minutes
+
+# 4. Inspect the resulting segment.
+/tmp/sbcap stat ./segments-test/dt=$(date -u +%Y-%m-%d)/verify/seg-*.binpb.zst
+```
+
+A successful capture shows `running_trade > 0` in the "channels" line.  If it
+still shows zero, confirm the collector log says:
+  `[feed] subscribed runningTradeBatch+orderBook+liveprice+iepiev for N symbol(s)`
+and check that the market is open (pre-open auction 08:55–09:00 WIB may send
+IEPIEV but no running trades; continuous trading starts at 09:00).
+
 ## Run (dry-run — safe default)
 
 ```bash

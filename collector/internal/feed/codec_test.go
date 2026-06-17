@@ -364,3 +364,88 @@ func TestDecodeWrapRunningTradeBatch(t *testing.T) {
 		t.Errorf("[1] Side: got %q want S", d.Trades[1].Side)
 	}
 }
+
+// TestBuildSubscribeRunningTradeBatch verifies that BuildSubscribe emits field 5
+// (running_trade_batch) once per symbol in the embedded WebsocketChannel when
+// Channels.RunningTradeBatch is true, and emits no field-5 entries when false.
+//
+// This is the critical regression test for the trade-capture subscribe path:
+// if field 5 is absent the server never sends running_trade_batch frames and
+// the segment will have running_trade == 0.
+func TestBuildSubscribeRunningTradeBatch(t *testing.T) {
+	t.Parallel()
+
+	syms := []string{"BUMI", "BBCA"}
+
+	// extractChannel parses the outer WebsocketRequest (field 2 = WebsocketChannel)
+	// and returns the raw channel sub-message bytes.
+	extractChannel := func(t *testing.T, frame []byte) []byte {
+		t.Helper()
+		r := sbproto.NewReader(frame)
+		for !r.EOF() {
+			f, w, err := r.ReadTag()
+			if err != nil {
+				t.Fatalf("ReadTag outer: %v", err)
+			}
+			if f == 2 && w == sbproto.WireBytes {
+				b, err := r.ReadBytes()
+				if err != nil {
+					t.Fatalf("ReadBytes channel: %v", err)
+				}
+				return b
+			}
+			if err := r.Skip(w); err != nil {
+				t.Fatalf("Skip outer: %v", err)
+			}
+		}
+		return nil
+	}
+
+	// countField counts how many times fieldNum appears in the channel message.
+	countField := func(t *testing.T, chBytes []byte, fieldNum int) int {
+		t.Helper()
+		var n int
+		rc := sbproto.NewReader(chBytes)
+		for !rc.EOF() {
+			f, w, err := rc.ReadTag()
+			if err != nil {
+				t.Fatalf("ReadTag channel: %v", err)
+			}
+			if f == fieldNum {
+				n++
+			}
+			if err := rc.Skip(w); err != nil {
+				t.Fatalf("Skip channel: %v", err)
+			}
+		}
+		return n
+	}
+
+	t.Run("enabled", func(t *testing.T) {
+		t.Parallel()
+		frame := feed.BuildSubscribe("u1", "tok", "key", syms, feed.Channels{RunningTradeBatch: true})
+		chBytes := extractChannel(t, frame)
+		if chBytes == nil {
+			t.Fatal("WebsocketChannel sub-message not found in subscribe frame")
+		}
+		got := countField(t, chBytes, 5) // field 5 = running_trade_batch
+		if got != len(syms) {
+			t.Errorf("field-5 count: got %d want %d (one entry per symbol)", got, len(syms))
+		}
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		t.Parallel()
+		frame := feed.BuildSubscribe("u1", "tok", "key", syms, feed.Channels{RunningTradeBatch: false})
+		chBytes := extractChannel(t, frame)
+		// When all channels are false the channel sub-message is omitted entirely —
+		// that is also valid (zero field-5 entries).
+		if chBytes == nil {
+			return
+		}
+		got := countField(t, chBytes, 5)
+		if got != 0 {
+			t.Errorf("field-5 count: got %d want 0 when RunningTradeBatch=false", got)
+		}
+	})
+}
