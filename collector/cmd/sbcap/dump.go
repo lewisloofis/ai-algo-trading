@@ -113,6 +113,8 @@ func parseDumpChannel(ch string) replay.EventKind {
 		return replay.EventOrderbook
 	case "liveprice", "price", "live":
 		return replay.EventLivePrice
+	case "iepiev":
+		return replay.EventIEPIEV
 	default:
 		return "" // no filter
 	}
@@ -210,6 +212,21 @@ func printDumpLine(evt replay.MarketEvent) {
 			price = evt.Decoded.LastPrice
 		}
 		fmt.Printf("%s  PRICE  %-8s  last=%.0f\n", timeStr, evt.Symbol, price)
+
+	case replay.EventIEPIEV:
+		iep, iev, chg, pct := 0.0, 0.0, 0.0, 0.0
+		seq := int64(0)
+		dt := ""
+		if evt.Decoded != nil {
+			iep = evt.Decoded.IEP
+			iev = evt.Decoded.IEV
+			chg = evt.Decoded.IEPChange
+			pct = evt.Decoded.IEPChangePct
+			seq = evt.Decoded.SequenceNumber
+			dt = evt.Decoded.Datetime
+		}
+		fmt.Printf("%s  IEPIEV %-8s  iep=%.0f  iev=%.0f  chg=%+.0f  pct=%+.4f  seq=%d  dt=%s\n",
+			timeStr, evt.Symbol, iep, iev, chg, pct, seq, dt)
 
 	default:
 		// "ping", "error", "other" — print minimally.

@@ -36,16 +36,17 @@ const (
 	statsInterval     = 15 * time.Second
 )
 
-// activeChannels enables OrderBook, LivePrice, and RunningTradeBatch for
-// full microstructure capture.
+// activeChannels enables OrderBook, LivePrice, RunningTradeBatch, and IEPIEV
+// for full microstructure capture.
 var activeChannels = feed.Channels{
 	OrderBook:         true,
-	LivePrice:         true,
 	RunningTradeBatch: true,
+	LivePrice:         true,
+	IEPIEV:            true,
 }
 
 // activeChannelNames is the channels list recorded in the manifest.
-var activeChannelNames = []string{"runningTradeBatch", "orderBook", "liveprice"}
+var activeChannelNames = []string{"runningTradeBatch", "orderBook", "liveprice", "iepiev"}
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
@@ -296,7 +297,7 @@ func runOnce(ctx context.Context, cfg collectorConfig, s *feed.Session, sf *segm
 	if err := conn.WriteBinary(subFrame); err != nil {
 		return err
 	}
-	log.Printf("[feed] subscribed runningTradeBatch+orderBook+liveprice for %d symbol(s)", len(cfg.symbols))
+	log.Printf("[feed] subscribed runningTradeBatch+orderBook+liveprice+iepiev for %d symbol(s)", len(cfg.symbols))
 
 	// SUBSCRIBE control record.
 	subscribePayload, err := segment.SubscribeEvent(cfg.symbols)

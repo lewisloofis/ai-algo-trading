@@ -16,6 +16,7 @@ package feed
 //	2:  repeated string order_book
 //	5:  repeated string running_trade_batch
 //	6:  repeated string liveprice
+//	7:  repeated string iepiev
 //
 // WebsocketWrapMessageChannel oneof message_channel (inbound):
 //
@@ -25,6 +26,17 @@ package feed
 //	 8: RunningTradeBatch running_trade_batch (repeated RunningTrade batch = 1)
 //	 9: consumer LivePrice liveprice
 //	10: consumer Orderbook orderbook
+//	11: financial.company_price_feed.entity.v2.IEPIEV iepiev
+//
+// financial.company_price_feed.entity.v2.IEPIEV:
+//
+//	1: string stock_code           (bytes)
+//	2: double iep                  (fixed64)
+//	3: double iev                  (fixed64)
+//	4: int64  sequence_number      (varint)
+//	5: string datetime             (bytes; RFC3339Nano)
+//	6: double iep_change           (fixed64)
+//	7: double iep_change_percentage (fixed64)
 //
 // consumer Orderbook (datafeed/consumer/entity/v1/entity.proto):
 //
@@ -62,8 +74,9 @@ import (
 // Channels selects which WebsocketChannel fields to subscribe.
 type Channels struct {
 	OrderBook         bool // field 2
-	LivePrice         bool // field 6
 	RunningTradeBatch bool // field 5
+	LivePrice         bool // field 6
+	IEPIEV            bool // field 7
 }
 
 // BuildSubscribe encodes a WebsocketRequest that authenticates the socket and
@@ -79,11 +92,14 @@ func BuildSubscribe(userID, accessToken, key string, symbols []string, channels 
 		if channels.OrderBook {
 			ch.String(2, sym) // order_book
 		}
+		if channels.RunningTradeBatch {
+			ch.String(5, sym) // running_trade_batch
+		}
 		if channels.LivePrice {
 			ch.String(6, sym) // liveprice
 		}
-		if channels.RunningTradeBatch {
-			ch.String(5, sym) // running_trade_batch
+		if channels.IEPIEV {
+			ch.String(7, sym) // iepiev
 		}
 	}
 
@@ -120,15 +136,21 @@ type Trade struct {
 
 // Decoded carries whatever a single incoming frame contained.
 type Decoded struct {
-	Kind           string // "orderbook" | "liveprice" | "running_trade" | "ping" | "error" | "other"
+	Kind           string // "orderbook" | "liveprice" | "running_trade" | "iepiev" | "ping" | "error" | "other"
 	Symbol         string
 	Body           string  // raw orderbook body string (when Kind == "orderbook")
 	LastPrice      float64 // when Kind == "liveprice"
-	SequenceNumber int64   // orderbook sequence number (field 3, when Kind == "orderbook")
+	SequenceNumber int64   // orderbook sequence number (field 3, when Kind == "orderbook"); iepiev sequence_number (field 4, when Kind == "iepiev")
 	SwitchReset    int     // SwitchReset enum value (field 6, non-zero = reset)
 	ErrCode        int     // when Kind == "error"
 	ErrMsg         string
 	Trades         []Trade // when Kind == "running_trade"
+	// when Kind == "iepiev"
+	IEP          float64 // indicative equilibrium price
+	IEV          float64 // indicative equilibrium volume
+	IEPChange    float64 // iep_change
+	IEPChangePct float64 // iep_change_percentage
+	Datetime     string  // RFC3339Nano datetime string
 }
 
 // DecodeWrap parses one WebsocketWrapMessageChannel frame into a Decoded
@@ -175,6 +197,12 @@ func DecodeWrap(data []byte) (Decoded, error) {
 			}
 			t := decodeRunningTradeMsg(sub)
 			return Decoded{Kind: "running_trade", Symbol: t.Symbol, Trades: []Trade{t}}, nil
+		case field == 11 && wire == sbproto.WireBytes: // iepiev
+			sub, err := r.ReadBytes()
+			if err != nil {
+				return Decoded{}, err
+			}
+			return decodeIEPIEVMsg(sub), nil
 		case field == 7 && wire == sbproto.WireBytes: // error
 			sub, err := r.ReadBytes()
 			if err != nil {
@@ -267,6 +295,70 @@ func decodeLivePriceMsg(data []byte) (stockCode string, lastPrice float64) {
 		}
 	}
 	return
+}
+
+// decodeIEPIEVMsg decodes a financial.company_price_feed.entity.v2.IEPIEV
+// sub-message. Fields decoded: stock_code(1,bytes), iep(2,fixed64),
+// iev(3,fixed64), sequence_number(4,varint), datetime(5,bytes),
+// iep_change(6,fixed64), iep_change_percentage(7,fixed64).
+func decodeIEPIEVMsg(data []byte) Decoded {
+	d := Decoded{Kind: "iepiev"}
+	r := sbproto.NewReader(data)
+	for !r.EOF() {
+		field, wire, err := r.ReadTag()
+		if err != nil {
+			return d
+		}
+		switch {
+		case field == 1 && wire == sbproto.WireBytes: // stock_code
+			b, err := r.ReadBytes()
+			if err != nil {
+				return d
+			}
+			d.Symbol = string(b)
+		case field == 2 && wire == sbproto.WireFixed64: // iep
+			v, err := r.ReadDouble()
+			if err != nil {
+				return d
+			}
+			d.IEP = v
+		case field == 3 && wire == sbproto.WireFixed64: // iev
+			v, err := r.ReadDouble()
+			if err != nil {
+				return d
+			}
+			d.IEV = v
+		case field == 4 && wire == sbproto.WireVarint: // sequence_number
+			v, err := r.ReadVarint()
+			if err != nil {
+				return d
+			}
+			d.SequenceNumber = int64(v)
+		case field == 5 && wire == sbproto.WireBytes: // datetime
+			b, err := r.ReadBytes()
+			if err != nil {
+				return d
+			}
+			d.Datetime = string(b)
+		case field == 6 && wire == sbproto.WireFixed64: // iep_change
+			v, err := r.ReadDouble()
+			if err != nil {
+				return d
+			}
+			d.IEPChange = v
+		case field == 7 && wire == sbproto.WireFixed64: // iep_change_percentage
+			v, err := r.ReadDouble()
+			if err != nil {
+				return d
+			}
+			d.IEPChangePct = v
+		default:
+			if r.Skip(wire) != nil {
+				return d
+			}
+		}
+	}
+	return d
 }
 
 func decodeErrorMsg(data []byte) (code int, msg string) {

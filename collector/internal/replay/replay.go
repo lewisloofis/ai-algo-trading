@@ -27,6 +27,8 @@ const (
 	EventOrderbook EventKind = "orderbook"
 	// EventRunningTrade is emitted for "running_trade" frames.
 	EventRunningTrade EventKind = "running_trade"
+	// EventIEPIEV is emitted for "iepiev" frames (indicative equilibrium price/volume).
+	EventIEPIEV EventKind = "iepiev"
 	// EventControl is emitted for segment control records (CONNECT, SUBSCRIBE,
 	// REAUTH, RECONNECT, SWITCH_RESET).
 	EventControl EventKind = "control"
@@ -201,6 +203,8 @@ func dataKind(kind string) EventKind {
 		return EventOrderbook
 	case "running_trade":
 		return EventRunningTrade
+	case "iepiev":
+		return EventIEPIEV
 	default:
 		// "ping", "error", "other" — keep the raw string as EventKind so
 		// callers can still filter on evt.Kind if needed.
