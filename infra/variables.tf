@@ -39,13 +39,16 @@ variable "extra_tags" {
 variable "watchlist" {
   description = "Symbols to subscribe. Written to /sb-collector/watchlist in SSM."
   type        = list(string)
-  default     = ["BBCA", "BMRI", "TLKM", "ASII", "BBRI"]
+  # Popular LQ45 mining names (coal + nickel/metals) plus BUMI (heavily-traded
+  # coal retail name, not a stable LQ45 member). Verify against the current
+  # official LQ45 list before each apply — membership rotates every Feb & Aug.
+  default = ["ADRO", "PTBA", "ITMG", "INDY", "ANTM", "INCO", "MDKA", "HRUM", "BUMI"]
 }
 
 variable "watchlist_id" {
   description = "Short stable identifier for this symbol set; used as S3 key prefix segment."
   type        = string
-  default     = "default"
+  default     = "lq45-mining"
 }
 
 # --- Compute ---------------------------------------------------------------------

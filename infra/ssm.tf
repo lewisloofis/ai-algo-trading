@@ -34,10 +34,20 @@ resource "aws_ssm_parameter" "access_token" {
   }
 }
 
-# Watchlist is a plain String — not a secret; the collector reads it at boot.
+# Watchlist is a plain String — not a secret; the collector reads it at boot,
+# authoritative over the CAPTURE_WATCHLIST env var (which remains a local-dev fallback).
 resource "aws_ssm_parameter" "watchlist" {
   name        = "/sb-collector/watchlist"
-  description = "Comma-separated symbol watchlist read by the collector at startup."
+  description = "Comma-separated symbol watchlist read by the collector at startup (authoritative over CAPTURE_WATCHLIST env)."
   type        = "String"
   value       = join(",", var.watchlist)
+}
+
+# Short stable id for the symbol set; used as the S3 key prefix segment.
+# Read by the collector at startup (authoritative over the CAPTURE_WATCHLIST_ID env).
+resource "aws_ssm_parameter" "watchlist_id" {
+  name        = "/sb-collector/watchlist_id"
+  description = "Short stable id for the symbol set; S3 key prefix segment. Read by the collector at startup."
+  type        = "String"
+  value       = var.watchlist_id
 }

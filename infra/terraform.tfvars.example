@@ -12,8 +12,9 @@ cost_center = "market-data"
 
 # Watchlist — symbols to subscribe and capture.
 # Changing this list requires an SSM parameter update + collector restart.
-watchlist    = ["BBCA", "BMRI", "TLKM", "ASII", "BBRI"]
-watchlist_id = "default"
+# Changing the SET should also change watchlist_id so old/new S3 segments don't mix.
+watchlist    = ["ADRO", "PTBA", "ITMG", "INDY", "ANTM", "INCO", "MDKA", "HRUM", "BUMI"]
+watchlist_id = "lq45-mining"
 
 # Compute
 instance_type    = "t4g.nano"
