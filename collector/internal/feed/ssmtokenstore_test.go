@@ -1,0 +1,136 @@
+package feed
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/aws-sdk-go-v2/service/ssm/types"
+)
+
+// fakeSSMClient is an in-memory fake that implements the ssmAPI interface.
+// It never makes network calls.
+type fakeSSMClient struct {
+	mu     sync.Mutex
+	params map[string]string // name -> value
+	puts   []string          // ordered record of PutParameter calls (key names)
+}
+
+func newFakeSSMClient() *fakeSSMClient {
+	return &fakeSSMClient{params: make(map[string]string)}
+}
+
+func (f *fakeSSMClient) GetParameter(ctx context.Context, in *ssm.GetParameterInput, opts ...func(*ssm.Options)) (*ssm.GetParameterOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	name := aws.ToString(in.Name)
+	val, ok := f.params[name]
+	if !ok {
+		return nil, &types.ParameterNotFound{Message: aws.String(fmt.Sprintf("parameter %s not found", name))}
+	}
+	return &ssm.GetParameterOutput{
+		Parameter: &types.Parameter{
+			Name:  aws.String(name),
+			Value: aws.String(val),
+		},
+	}, nil
+}
+
+func (f *fakeSSMClient) PutParameter(ctx context.Context, in *ssm.PutParameterInput, opts ...func(*ssm.Options)) (*ssm.PutParameterOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	name := aws.ToString(in.Name)
+	f.params[name] = aws.ToString(in.Value)
+	f.puts = append(f.puts, name)
+	return &ssm.PutParameterOutput{}, nil
+}
+
+// TestSSMTokenStoreLoadNotFound verifies that Load returns ("","",nil) when
+// parameters do not exist yet.
+func TestSSMTokenStoreLoadNotFound(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeSSMClient()
+	store := newSSMTokenStoreWithClient(client, "/sb-test")
+
+	access, refresh, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load unexpected error: %v", err)
+	}
+	if access != "" || refresh != "" {
+		t.Errorf("expected empty tokens, got access=%q refresh=%q", access, refresh)
+	}
+}
+
+// TestSSMTokenStoreSaveLoad verifies that Save writes both tokens and Load
+// reads them back.
+func TestSSMTokenStoreSaveLoad(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeSSMClient()
+	store := newSSMTokenStoreWithClient(client, "/sb-test")
+
+	if err := store.Save("access-tok", "refresh-tok"); err != nil {
+		t.Fatalf("Save error: %v", err)
+	}
+
+	access, refresh, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if access != "access-tok" {
+		t.Errorf("access: got %q want access-tok", access)
+	}
+	if refresh != "refresh-tok" {
+		t.Errorf("refresh: got %q want refresh-tok", refresh)
+	}
+}
+
+// TestSSMTokenStoreSaveOrdering verifies that Save writes refresh FIRST then
+// access — critical so a crash between the two writes never strands a stale
+// refresh token.
+func TestSSMTokenStoreSaveOrdering(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeSSMClient()
+	store := newSSMTokenStoreWithClient(client, "/sb-prod")
+
+	if err := store.Save("acc", "ref"); err != nil {
+		t.Fatalf("Save error: %v", err)
+	}
+
+	if len(client.puts) != 2 {
+		t.Fatalf("expected 2 PutParameter calls, got %d", len(client.puts))
+	}
+	// refresh must come first
+	if client.puts[0] != "/sb-prod/refresh" {
+		t.Errorf("first PutParameter: got %q want /sb-prod/refresh", client.puts[0])
+	}
+	if client.puts[1] != "/sb-prod/access" {
+		t.Errorf("second PutParameter: got %q want /sb-prod/access", client.puts[1])
+	}
+}
+
+// TestSSMTokenStoreKeyNames verifies the parameter names used for each token.
+func TestSSMTokenStoreKeyNames(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeSSMClient()
+	store := newSSMTokenStoreWithClient(client, "/my-prefix")
+
+	if err := store.Save("a", "r"); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	_, refOK := client.params["/my-prefix/refresh"]
+	_, accOK := client.params["/my-prefix/access"]
+	if !refOK {
+		t.Error("expected /my-prefix/refresh in SSM params")
+	}
+	if !accOK {
+		t.Error("expected /my-prefix/access in SSM params")
+	}
+}

@@ -11,16 +11,18 @@ package feed
 //	4: PingRequest ping        (PingRequest{ 1: string message })
 //	5: string access_token
 //
-// WebsocketChannel:
+// WebsocketChannel (outbound subscribe):
 //
 //	2:  repeated string order_book
+//	5:  repeated string running_trade_batch
 //	6:  repeated string liveprice
-//	11: repeated string running_trade_batch
 //
-// WebsocketWrapMessageChannel oneof message_channel:
+// WebsocketWrapMessageChannel oneof message_channel (inbound):
 //
+//	 1: RunningTrade running_trade
 //	 2: PingResponse ping
 //	 7: Error error               (Error{ 1: ErrorCode code; 2: string message })
+//	 8: RunningTradeBatch running_trade_batch (repeated RunningTrade batch = 1)
 //	 9: consumer LivePrice liveprice
 //	10: consumer Orderbook orderbook
 //
@@ -35,6 +37,19 @@ package feed
 //
 //	1: string stock_code
 //	2: double lastprice
+//
+// RunningTrade (securities/transactional/datafeed/v1/running_trade.proto):
+//
+//	1: google.protobuf.Timestamp websocket_time
+//	2: string stock
+//	3: double price       (fixed64)
+//	4: double volume      (fixed64)
+//	5: TradeType action   (varint; UNSPECIFIED=0, BUY=1, SELL=2)
+//	6: bool is_global
+//	7: google.protobuf.Timestamp time
+//	8: Change change
+//	9: int32 trade_number (varint)
+//	10: BoardType market_board (varint)
 
 import (
 	"fmt"
@@ -48,7 +63,7 @@ import (
 type Channels struct {
 	OrderBook         bool // field 2
 	LivePrice         bool // field 6
-	RunningTradeBatch bool // field 11
+	RunningTradeBatch bool // field 5
 }
 
 // BuildSubscribe encodes a WebsocketRequest that authenticates the socket and
@@ -68,7 +83,7 @@ func BuildSubscribe(userID, accessToken, key string, symbols []string, channels 
 			ch.String(6, sym) // liveprice
 		}
 		if channels.RunningTradeBatch {
-			ch.String(11, sym) // running_trade_batch
+			ch.String(5, sym) // running_trade_batch
 		}
 	}
 
@@ -92,9 +107,20 @@ func BuildPing(userID, accessToken string) []byte {
 	return req.Bytes()
 }
 
+// Trade is one decoded RunningTrade entry from a running_trade or
+// running_trade_batch frame.
+type Trade struct {
+	Symbol      string
+	Price       float64
+	Volume      float64
+	Action      int    // TradeType enum: 0=unspecified, 1=buy, 2=sell
+	Side        string // "B" (buy), "S" (sell), or "" (unspecified)
+	TradeNumber int32
+}
+
 // Decoded carries whatever a single incoming frame contained.
 type Decoded struct {
-	Kind           string  // "orderbook" | "liveprice" | "ping" | "error" | "other"
+	Kind           string // "orderbook" | "liveprice" | "running_trade" | "ping" | "error" | "other"
 	Symbol         string
 	Body           string  // raw orderbook body string (when Kind == "orderbook")
 	LastPrice      float64 // when Kind == "liveprice"
@@ -102,6 +128,7 @@ type Decoded struct {
 	SwitchReset    int     // SwitchReset enum value (field 6, non-zero = reset)
 	ErrCode        int     // when Kind == "error"
 	ErrMsg         string
+	Trades         []Trade // when Kind == "running_trade"
 }
 
 // DecodeWrap parses one WebsocketWrapMessageChannel frame into a Decoded
@@ -134,6 +161,20 @@ func DecodeWrap(data []byte) (Decoded, error) {
 			}
 			code, price := decodeLivePriceMsg(sub)
 			return Decoded{Kind: "liveprice", Symbol: code, LastPrice: price}, nil
+		case field == 8 && wire == sbproto.WireBytes: // running_trade_batch
+			sub, err := r.ReadBytes()
+			if err != nil {
+				return Decoded{}, err
+			}
+			trades := decodeRunningTradeBatchMsg(sub)
+			return Decoded{Kind: "running_trade", Trades: trades}, nil
+		case field == 1 && wire == sbproto.WireBytes: // single running_trade
+			sub, err := r.ReadBytes()
+			if err != nil {
+				return Decoded{}, err
+			}
+			t := decodeRunningTradeMsg(sub)
+			return Decoded{Kind: "running_trade", Symbol: t.Symbol, Trades: []Trade{t}}, nil
 		case field == 7 && wire == sbproto.WireBytes: // error
 			sub, err := r.ReadBytes()
 			if err != nil {
@@ -255,6 +296,98 @@ func decodeErrorMsg(data []byte) (code int, msg string) {
 		}
 	}
 	return
+}
+
+// ---------- Running trade decoding ----------
+
+// tradeTypeToSide maps a TradeType varint value to a side string.
+// TradeType: 0=UNSPECIFIED, 1=BUY, 2=SELL.
+func tradeTypeToSide(action int) string {
+	switch action {
+	case 1:
+		return "B"
+	case 2:
+		return "S"
+	default:
+		return ""
+	}
+}
+
+// decodeRunningTradeMsg decodes one RunningTrade sub-message.
+// Fields decoded: stock(2), price(3, fixed64), volume(4, fixed64),
+// action(5, varint), trade_number(9, varint). All others are skipped.
+func decodeRunningTradeMsg(data []byte) Trade {
+	var t Trade
+	r := sbproto.NewReader(data)
+	for !r.EOF() {
+		field, wire, err := r.ReadTag()
+		if err != nil {
+			return t
+		}
+		switch {
+		case field == 2 && wire == sbproto.WireBytes: // stock
+			b, err := r.ReadBytes()
+			if err != nil {
+				return t
+			}
+			t.Symbol = string(b)
+		case field == 3 && wire == sbproto.WireFixed64: // price
+			d, err := r.ReadDouble()
+			if err != nil {
+				return t
+			}
+			t.Price = d
+		case field == 4 && wire == sbproto.WireFixed64: // volume
+			d, err := r.ReadDouble()
+			if err != nil {
+				return t
+			}
+			t.Volume = d
+		case field == 5 && wire == sbproto.WireVarint: // action (TradeType)
+			v, err := r.ReadVarint()
+			if err != nil {
+				return t
+			}
+			t.Action = int(v)
+			t.Side = tradeTypeToSide(t.Action)
+		case field == 9 && wire == sbproto.WireVarint: // trade_number
+			v, err := r.ReadVarint()
+			if err != nil {
+				return t
+			}
+			t.TradeNumber = int32(v)
+		default:
+			if r.Skip(wire) != nil {
+				return t
+			}
+		}
+	}
+	return t
+}
+
+// decodeRunningTradeBatchMsg decodes a RunningTradeBatch sub-message.
+// RunningTradeBatch: repeated RunningTrade batch = 1.
+func decodeRunningTradeBatchMsg(data []byte) []Trade {
+	var trades []Trade
+	r := sbproto.NewReader(data)
+	for !r.EOF() {
+		field, wire, err := r.ReadTag()
+		if err != nil {
+			break
+		}
+		if field == 1 && wire == sbproto.WireBytes { // batch entry
+			sub, err := r.ReadBytes()
+			if err != nil {
+				break
+			}
+			trades = append(trades, decodeRunningTradeMsg(sub))
+		} else {
+			if r.Skip(wire) != nil {
+				break
+			}
+		}
+	}
+	return trades
 }
 
 // ---------- Orderbook body parsing ----------

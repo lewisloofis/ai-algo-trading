@@ -21,12 +21,12 @@ var httpClient = &http.Client{Timeout: 20 * time.Second}
 type Session struct {
 	cfg Config
 
-	mu              sync.RWMutex
-	accessToken     string
-	refreshToken    string
-	tradingToken    string
-	tradingRefresh  string
-	userID          string
+	mu             sync.RWMutex
+	accessToken    string
+	refreshToken   string
+	tradingToken   string
+	tradingRefresh string
+	userID         string
 }
 
 func NewSession(cfg Config) *Session {

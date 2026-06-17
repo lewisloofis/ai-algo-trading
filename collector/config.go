@@ -13,12 +13,12 @@ const liveConfirmPhrase = "I_UNDERSTAND_LIVE_TRADING"
 // Config is assembled from environment variables. Secrets are NEVER hardcoded.
 type Config struct {
 	// Credentials (either password login or pre-obtained tokens).
-	Username string
-	Password string
+	Username   string
+	Password   string
 	TradingPIN string
 
-	AccessToken  string // optional: skip password login
-	RefreshToken string
+	AccessToken         string // optional: skip password login
+	RefreshToken        string
 	TradingAccessToken  string // optional: skip PIN login
 	TradingRefreshToken string
 
@@ -29,9 +29,9 @@ type Config struct {
 	WSSubProto string
 
 	// Strategy.
-	Symbol           string
-	ImbalanceThresh  float64
-	DepthLevels      int
+	Symbol          string
+	ImbalanceThresh float64
+	DepthLevels     int
 
 	// Risk / execution gates.
 	LotsPerOrder int

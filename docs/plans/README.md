@@ -19,16 +19,18 @@ replay mode.
 
 ## Plans
 
-| Doc | What it covers |
-|-----|----------------|
-| [01-market-data-capture.md](./01-market-data-capture.md) | End-to-end capture architecture: locked decisions, component design, AWS deployment (compute options + cost table), failure modes, and phased implementation steps. |
-| [02-storage-format-and-replay.md](./02-storage-format-and-replay.md) | Precise on-disk and S3 specification: binary record framing (byte-level layout), segment naming, JSON manifest schema, zstd rationale, S3 layout + lifecycle policy, replayer design with pseudocode, and optional Parquet analytics schema. |
+| Doc | Status | What it covers |
+|-----|--------|----------------|
+| [01-market-data-capture.md](./01-market-data-capture.md) | 🔨 In Progress | End-to-end capture architecture: locked decisions, component design, AWS deployment (compute options + cost table), OpenTofu provisioning, failure modes, and phased implementation steps. |
+| [02-storage-format-and-replay.md](./02-storage-format-and-replay.md) | ✅ Approved | Precise on-disk and S3 specification: binary record framing (byte-level layout), segment naming, JSON manifest schema, zstd rationale, S3 layout + lifecycle policy, replayer design with pseudocode, and optional Parquet analytics schema. |
+
+**Status legend:** 📝 Draft · ✅ Approved · 🔨 In Progress · ⛔ Blocked · ✔️ Done · 🗑️ Superseded. Plans are tracked like tickets — each carries a status header and tickable task checklists per [ADR-0001 — Treat planning docs as tickets](../adr/0001-treat-plans-as-tickets.md).
 
 ## Cheapest setup at a glance
 
 - **Compute:** EC2 `t4g.nano` (Graviton/ARM) in `ap-southeast-3`, started and
-  stopped by EventBridge around IDX session hours — roughly 150 active
-  hours/month → under $1/month in compute.
+  stopped by EventBridge around IDX session hours (08:40–16:30 WIB) — roughly
+  170 active hours/month → under $1/month in compute.
 - **Storage:** S3 Standard for the current week's compressed segments, automatic
   transition to Glacier Deep Archive after 30 days. Full-microstructure data for
   ~30 symbols compressed with zstd runs to tens–low-hundreds of MB/day; monthly

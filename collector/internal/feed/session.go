@@ -24,8 +24,8 @@ var httpClient = &http.Client{Timeout: 20 * time.Second}
 // of the root prototype's Config — strategy-specific fields are omitted.
 type Config struct {
 	// Credentials (password login or pre-obtained tokens).
-	Username string
-	Password string
+	Username   string
+	Password   string
 	TradingPIN string
 
 	// Optional: pre-seeded tokens skip the password/PIN login flows.

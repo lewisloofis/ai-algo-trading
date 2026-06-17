@@ -165,15 +165,19 @@ func printDumpLine(evt replay.MarketEvent) {
 
 	switch evt.Kind {
 	case replay.EventRunningTrade:
-		// Running-trade frames carry the parsed body in Decoded.Body; the
-		// feed package extracts only symbol and last price from liveprice
-		// sub-messages. For running_trade the decoded body is the full batch
-		// body — print what we have.
 		price := 0.0
-		if evt.Decoded != nil {
-			price = evt.Decoded.LastPrice
+		vol := 0.0
+		side := ""
+		tradeNum := int32(0)
+		if evt.Decoded != nil && len(evt.Decoded.Trades) > 0 {
+			tr := evt.Decoded.Trades[0]
+			price = tr.Price
+			vol = tr.Volume
+			side = tr.Side
+			tradeNum = tr.TradeNumber
 		}
-		fmt.Printf("%s  TRADE  %-8s  price=%.0f\n", timeStr, evt.Symbol, price)
+		fmt.Printf("%s  TRADE  %-8s  price=%-8.0f  vol=%-8.0f  side=%-2s  trade#=%d\n",
+			timeStr, evt.Symbol, price, vol, side, tradeNum)
 
 	case replay.EventOrderbook:
 		if evt.Decoded == nil {

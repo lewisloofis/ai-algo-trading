@@ -1,0 +1,69 @@
+#!/bin/bash
+# cloud-init user_data — installs and starts the collector systemd service.
+# §9.5 / §10 / §12.3
+#
+# Template variables (injected by ec2.tf templatefile()):
+#   watchlist_id              — e.g. "default"
+#   watchlist                 — comma-separated symbols, e.g. "BBCA,BMRI,TLKM,ASII,BBRI"
+#   ssm_prefix                — "/sb-collector"
+#   s3_bucket                 — bucket name
+#   region                    — AWS region, e.g. "ap-southeast-3"
+#   collector_artifact_s3_uri — optional S3 URI for the arm64 binary; empty = skip
+
+set -euo pipefail
+
+# --- Create dedicated user and working directories ----------------------------
+useradd --system --no-create-home --shell /sbin/nologin collector || true
+install -d -o collector -g collector -m 750 /opt/collector
+install -d -o collector -g collector -m 750 /var/lib/collector/segments
+
+# --- Optionally fetch the collector binary from S3 ----------------------------
+%{ if collector_artifact_s3_uri != "" }
+aws s3 cp "${collector_artifact_s3_uri}" /opt/collector/collector \
+  --region "${region}"
+chmod 0755 /opt/collector/collector
+chown collector:collector /opt/collector/collector
+%{ endif }
+
+# --- Write the systemd unit ---------------------------------------------------
+# KillSignal=SIGTERM + TimeoutStopSec=120 ensures the open segment is flushed,
+# compressed, and uploaded to S3 before the EventBridge stop terminates the
+# instance (§9.5).
+cat > /etc/systemd/system/collector.service << 'UNIT'
+[Unit]
+Description=Stockbit market-data collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=collector
+Group=collector
+ExecStart=/opt/collector/collector
+Restart=on-failure
+RestartSec=5s
+
+# Clean segment flush on EventBridge scheduled stop (§9.5)
+KillSignal=SIGTERM
+TimeoutStopSec=120
+
+# Runtime environment — matches the env vars the Go collector reads.
+Environment="CAPTURE_DIR=/var/lib/collector/segments"
+Environment="CAPTURE_WATCHLIST_ID=${watchlist_id}"
+Environment="CAPTURE_WATCHLIST=${watchlist}"
+Environment="SSM_PARAM_PREFIX=${ssm_prefix}"
+Environment="S3_BUCKET=${s3_bucket}"
+Environment="AWS_REGION=${region}"
+
+# Journal logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=collector
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# --- Enable and start the service ---------------------------------------------
+systemctl daemon-reload
+systemctl enable --now collector.service

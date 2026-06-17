@@ -1,5 +1,8 @@
 # Storage Format & Replay Specification
 
+> **Status:** ✅ Approved · **Owner:** @lewis · **Updated:** 2026-06-17
+> **Related:** [01-market-data-capture.md](./01-market-data-capture.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md)
+
 This document defines the exact on-disk and S3 format for captured market-data
 segments, the JSON manifest schema, the replayer design with pseudocode, and the
 optional Parquet analytics schema. It is the normative reference for any tool

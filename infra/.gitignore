@@ -1,0 +1,25 @@
+# Terraform / OpenTofu state — never commit; contains sensitive data + account IDs.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Variable files with real values — only the .example file is committed.
+*.tfvars
+!*.tfvars.example
+
+# Provider cache and generated files.
+.terraform/
+.terraform.lock.hcl.bak
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Override files (local machine customisations).
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# .terraform.lock.hcl IS committed — it pins provider versions.
+# (no ignore rule for it here)

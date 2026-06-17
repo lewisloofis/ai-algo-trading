@@ -1,0 +1,41 @@
+# Example variable values for the sb-algo-trading infra stack.
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit it.
+
+# Region — Jakarta for lowest latency to Stockbit WebSocket.
+aws_region = "ap-southeast-3"
+
+# Cost-audit tags
+project     = "sb-algo-trading"
+environment = "prod"
+cost_center = "market-data"
+
+# Watchlist — symbols to subscribe and capture.
+# Changing this list requires an SSM parameter update + collector restart.
+watchlist    = ["BBCA", "BMRI", "TLKM", "ASII", "BBRI"]
+watchlist_id = "default"
+
+# Compute
+instance_type    = "t4g.nano"
+root_volume_size = 8
+
+# EventBridge market-hours scheduling (Asia/Jakarta timezone)
+# Start 15 min before IDX pre-opening (08:45); stop ~10 min after post-trading (16:15).
+market_open_schedule  = "cron(30 8 ? * MON-FRI *)"   # 08:30 WIB
+market_close_schedule = "cron(25 16 ? * MON-FRI *)"  # 16:25 WIB
+schedule_timezone     = "Asia/Jakarta"
+
+# Cost governance
+monthly_budget_limit_usd = 5
+budget_alert_emails      = ["your-email@example.com"]
+
+# Activate Project/Component/CostCenter as Cost Explorer dimensions.
+# Set to false if the tags are already activated in this account.
+activate_cost_allocation_tags = true
+
+# Optional: S3 URI of the pre-built arm64 collector binary.
+# Leave empty ("") to skip auto-fetch; deploy the binary manually instead.
+collector_artifact_s3_uri = ""
+
+# Optional: extra tags merged onto all resources.
+# extra_tags = { Owner = "lewis" }

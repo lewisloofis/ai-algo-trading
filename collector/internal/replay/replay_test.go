@@ -11,6 +11,55 @@ import (
 	"sb-algo-prototype/internal/segment"
 )
 
+// appendVarReplay appends a varint-encoded uint64 to buf.
+func appendVarReplay(buf []byte, v uint64) []byte {
+	for v >= 0x80 {
+		buf = append(buf, byte(v)|0x80)
+		v >>= 7
+	}
+	return append(buf, byte(v))
+}
+
+// appendFixed64Replay appends 8 little-endian bytes to buf.
+func appendFixed64Replay(buf []byte, v uint64) []byte {
+	for i := 0; i < 8; i++ {
+		buf = append(buf, byte(v))
+		v >>= 8
+	}
+	return buf
+}
+
+// lenDelimReplay appends a length-delimited (WireBytes) field to buf.
+func lenDelimReplay(buf []byte, field int, data []byte) []byte {
+	buf = appendVarReplay(buf, uint64(field<<3|sbproto.WireBytes))
+	buf = appendVarReplay(buf, uint64(len(data)))
+	return append(buf, data...)
+}
+
+// buildRTMsgReplay constructs a raw RunningTrade sub-message byte slice.
+// Fields: stock(2), price(3,fixed64), volume(4,fixed64), action(5,varint).
+func buildRTMsgReplay(symbol string, price, volume float64, action int) []byte {
+	var buf []byte
+	buf = lenDelimReplay(buf, 2, []byte(symbol))
+	buf = appendVarReplay(buf, uint64(3<<3|sbproto.WireFixed64))
+	buf = appendFixed64Replay(buf, math.Float64bits(price))
+	buf = appendVarReplay(buf, uint64(4<<3|sbproto.WireFixed64))
+	buf = appendFixed64Replay(buf, math.Float64bits(volume))
+	buf = appendVarReplay(buf, uint64(5<<3|sbproto.WireVarint))
+	buf = appendVarReplay(buf, uint64(action))
+	return buf
+}
+
+// buildRunningTradeBatchFrame builds a WebsocketWrapMessageChannel frame
+// containing a RunningTradeBatch (field 8) with the given symbols.
+func buildRunningTradeBatchFrame(symbols []string) []byte {
+	var batchBuf []byte
+	for _, sym := range symbols {
+		batchBuf = lenDelimReplay(batchBuf, 1, buildRTMsgReplay(sym, 1000.0, 100.0, 1))
+	}
+	return lenDelimReplay(nil, 8, batchBuf)
+}
+
 // buildOrderbookFrame returns a raw WebsocketWrapMessageChannel frame wrapping
 // a consumer Orderbook sub-message with the given symbol, body, and sequence.
 //
@@ -302,5 +351,50 @@ func TestReplayDecodedFields(t *testing.T) {
 	}
 	if e.Decoded.Body != body {
 		t.Errorf("Decoded.Body: got %q want %q", e.Decoded.Body, body)
+	}
+}
+
+// TestReplayRunningTradeBatchExpansion verifies that a single data record
+// carrying a RunningTradeBatch with N trades yields N EventRunningTrade events,
+// each with the correct per-trade Symbol set.
+func TestReplayRunningTradeBatchExpansion(t *testing.T) {
+	t.Parallel()
+
+	const ts = int64(1_700_000_040_000_000_000)
+
+	// Build a batch with 3 trades for different symbols.
+	symbols := []string{"BBCA", "BMRI", "TLKM"}
+	batchFrame := buildRunningTradeBatchFrame(symbols)
+
+	segPath := writeTestSegment(t, []segRecord{
+		{segment.RecordData, ts, batchFrame},
+	})
+
+	var events []replay.MarketEvent
+	if err := replay.Replay([]string{segPath}, replay.ModeFast, func(e replay.MarketEvent) {
+		events = append(events, e)
+	}); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+
+	if len(events) != len(symbols) {
+		t.Fatalf("event count: got %d want %d (one per trade)", len(events), len(symbols))
+	}
+	for i, sym := range symbols {
+		e := events[i]
+		if e.Kind != replay.EventRunningTrade {
+			t.Errorf("[%d] Kind: got %q want %q", i, e.Kind, replay.EventRunningTrade)
+		}
+		if e.Symbol != sym {
+			t.Errorf("[%d] Symbol: got %q want %q", i, e.Symbol, sym)
+		}
+		if e.RecvNs != ts {
+			t.Errorf("[%d] RecvNs: got %d want %d", i, e.RecvNs, ts)
+		}
+		if e.Decoded == nil || len(e.Decoded.Trades) != 1 {
+			t.Errorf("[%d] expected exactly 1 trade in Decoded, got %v", i, e.Decoded)
+		} else if e.Decoded.Trades[0].Symbol != sym {
+			t.Errorf("[%d] Trade.Symbol: got %q want %q", i, e.Decoded.Trades[0].Symbol, sym)
+		}
 	}
 }

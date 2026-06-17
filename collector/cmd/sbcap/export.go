@@ -27,9 +27,14 @@ type exportRecord struct {
 	TopPrice       float64 `json:"top_price"`
 	TopVolume      float64 `json:"top_volume"`
 	LevelCount     int     `json:"level_count"`
-	ErrCode        int     `json:"err_code,omitempty"`
-	ErrMsg         string  `json:"err_msg,omitempty"`
-	ControlEvent   string  `json:"control_event,omitempty"`
+	// Trade fields (populated when kind == "running_trade")
+	TradePrice   float64 `json:"trade_price,omitempty"`
+	TradeVolume  float64 `json:"trade_volume,omitempty"`
+	TradeSide    string  `json:"trade_side,omitempty"`
+	TradeNumber  int32   `json:"trade_number,omitempty"`
+	ErrCode      int     `json:"err_code,omitempty"`
+	ErrMsg       string  `json:"err_msg,omitempty"`
+	ControlEvent string  `json:"control_event,omitempty"`
 }
 
 // csvHeader is the column order for CSV output. Must match toStringSlice.
@@ -37,6 +42,7 @@ var csvHeader = []string{
 	"recv_ns", "iso_time", "kind", "symbol",
 	"last_price", "sequence_number", "switch_reset",
 	"side", "top_price", "top_volume", "level_count",
+	"trade_price", "trade_volume", "trade_side", "trade_number",
 	"err_code", "err_msg", "control_event",
 }
 
@@ -53,6 +59,10 @@ func (r exportRecord) toStringSlice() []string {
 		fmt.Sprintf("%g", r.TopPrice),
 		fmt.Sprintf("%g", r.TopVolume),
 		fmt.Sprintf("%d", r.LevelCount),
+		fmt.Sprintf("%g", r.TradePrice),
+		fmt.Sprintf("%g", r.TradeVolume),
+		r.TradeSide,
+		fmt.Sprintf("%d", r.TradeNumber),
 		fmt.Sprintf("%d", r.ErrCode),
 		r.ErrMsg,
 		r.ControlEvent,
@@ -143,6 +153,15 @@ func buildExportRecord(evt replay.MarketEvent) exportRecord {
 					rec.TopVolume = bs.Levels[0].Volume
 				}
 			}
+		}
+
+		// For running_trade events, populate trade-specific fields.
+		if evt.Kind == replay.EventRunningTrade && len(d.Trades) > 0 {
+			tr := d.Trades[0]
+			rec.TradePrice = tr.Price
+			rec.TradeVolume = tr.Volume
+			rec.TradeSide = tr.Side
+			rec.TradeNumber = tr.TradeNumber
 		}
 	}
 

@@ -52,10 +52,10 @@ const maxPaceGap = 5 * time.Second
 
 // MarketEvent is one decoded event from the replay stream.
 type MarketEvent struct {
-	RecvNs  int64             // arrival timestamp (ns since Unix epoch)
+	RecvNs  int64 // arrival timestamp (ns since Unix epoch)
 	Kind    EventKind
-	Symbol  string            // empty for control events
-	Decoded *feed.Decoded     // non-nil for data events (liveprice, orderbook, running_trade)
+	Symbol  string                // empty for control events
+	Decoded *feed.Decoded         // non-nil for data events (liveprice, orderbook, running_trade)
 	Control *segment.ControlEvent // non-nil for EventControl
 }
 
@@ -82,6 +82,10 @@ func Replay(segments []string, mode PacingMode, handler func(MarketEvent)) error
 }
 
 // replaySegment opens one segment file and emits its events.
+//
+// For running_trade records that carry a batch of N trades, the handler is
+// called once per trade (N times total).  Pacing sleeps once per raw record,
+// not once per trade, so a burst of trades does not slow replay.
 func replaySegment(path string, mode PacingMode, prevNs *int64, handler func(MarketEvent)) error {
 	rc, err := openSegment(path)
 	if err != nil {
@@ -102,55 +106,88 @@ func replaySegment(path string, mode PacingMode, prevNs *int64, handler func(Mar
 			break
 		}
 
-		evt, ok := decodeRecord(rec, path)
+		evts, ok := decodeRecord(rec, path)
 		if !ok {
 			continue
 		}
 
 		if mode == ModePaced && *prevNs > 0 {
-			gap := time.Duration(evt.RecvNs - *prevNs)
+			gap := time.Duration(evts[0].RecvNs - *prevNs)
 			if gap > 0 && gap < maxPaceGap {
 				time.Sleep(gap)
 			}
 		}
-		*prevNs = evt.RecvNs
-		handler(evt)
+		*prevNs = evts[0].RecvNs
+		for _, evt := range evts {
+			handler(evt)
+		}
 	}
 	return nil
 }
 
-// decodeRecord converts a raw segment.Record into a MarketEvent. Returns
-// (zero, false) if the record should be skipped.
-func decodeRecord(rec segment.Record, segPath string) (MarketEvent, bool) {
+// decodeRecord converts a raw segment.Record into one or more MarketEvents.
+// Returns (nil, false) if the record should be skipped.
+//
+// For running_trade records carrying a batch of N trades, N events are
+// returned — one per trade. For all other record types exactly one event is
+// returned.
+func decodeRecord(rec segment.Record, segPath string) ([]MarketEvent, bool) {
 	switch rec.Type {
 	case segment.RecordData:
 		d, err := feed.DecodeWrap(rec.Payload)
 		if err != nil {
 			log.Printf("replay: warn: decode error in %s: %v", segPath, err)
-			return MarketEvent{}, false
+			return nil, false
 		}
-		return MarketEvent{
+		kind := dataKind(d.Kind)
+
+		// Expand running_trade batches: emit one event per trade so that
+		// per-symbol counters and dump output work naturally.
+		if kind == EventRunningTrade && len(d.Trades) > 0 {
+			evts := make([]MarketEvent, 0, len(d.Trades))
+			for i := range d.Trades {
+				tr := d.Trades[i]
+				single := feed.Decoded{
+					Kind:   "running_trade",
+					Symbol: tr.Symbol,
+					Trades: []feed.Trade{tr},
+				}
+				evts = append(evts, MarketEvent{
+					RecvNs:  rec.TimestampNs,
+					Kind:    EventRunningTrade,
+					Symbol:  tr.Symbol,
+					Decoded: &single,
+				})
+			}
+			if len(evts) > 0 {
+				return evts, true
+			}
+			// Batch was empty — skip.
+			return nil, false
+		}
+
+		return []MarketEvent{{
 			RecvNs:  rec.TimestampNs,
-			Kind:    dataKind(d.Kind),
+			Kind:    kind,
 			Symbol:  d.Symbol,
 			Decoded: &d,
-		}, true
+		}}, true
 
 	case segment.RecordControl:
 		var ctrl segment.ControlEvent
 		if err := json.Unmarshal(rec.Payload, &ctrl); err != nil {
 			log.Printf("replay: warn: control unmarshal error in %s: %v", segPath, err)
-			return MarketEvent{}, false
+			return nil, false
 		}
-		return MarketEvent{
+		return []MarketEvent{{
 			RecvNs:  rec.TimestampNs,
 			Kind:    EventControl,
 			Control: &ctrl,
-		}, true
+		}}, true
 
 	default:
 		log.Printf("replay: warn: unknown record type 0x%02x in %s", rec.Type, segPath)
-		return MarketEvent{}, false
+		return nil, false
 	}
 }
 

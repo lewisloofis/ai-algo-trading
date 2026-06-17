@@ -12,17 +12,17 @@ import (
 //
 // Field names match the spec exactly so the JSON output is normative.
 type manifest struct {
-	SchemaVersion      int      `json:"schema_version"`
-	CollectorVersion   string   `json:"collector_version"`
-	WatchlistID        string   `json:"watchlist_id"`
-	Symbols            []string `json:"symbols"`
-	Channels           []string `json:"channels"`
-	SegmentStartUTC    string   `json:"segment_start_utc"`
-	SegmentEndUTC      string   `json:"segment_end_utc"`
-	TotalDataRecords   int64    `json:"total_data_records"`
-	TotalControlRecords int64   `json:"total_control_records"`
-	CompressedSizeBytes   int64 `json:"compressed_size_bytes"`
-	UncompressedSizeBytes int64 `json:"uncompressed_size_bytes"`
+	SchemaVersion         int      `json:"schema_version"`
+	CollectorVersion      string   `json:"collector_version"`
+	WatchlistID           string   `json:"watchlist_id"`
+	Symbols               []string `json:"symbols"`
+	Channels              []string `json:"channels"`
+	SegmentStartUTC       string   `json:"segment_start_utc"`
+	SegmentEndUTC         string   `json:"segment_end_utc"`
+	TotalDataRecords      int64    `json:"total_data_records"`
+	TotalControlRecords   int64    `json:"total_control_records"`
+	CompressedSizeBytes   int64    `json:"compressed_size_bytes"`
+	UncompressedSizeBytes int64    `json:"uncompressed_size_bytes"`
 }
 
 // manifestParams groups the inputs needed to build a manifest value.

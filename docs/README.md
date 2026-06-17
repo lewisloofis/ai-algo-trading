@@ -33,6 +33,13 @@ A runnable **Go prototype** that ties all three docs together (auth → stream �
 orderbook-imbalance strategy → live orders, dry-run by default) lives in
 [`../collector/`](../collector/).
 
+## Planning & decisions
+
+- [`plans/`](./plans/) — implementation plans, tracked like tickets (status header
+  + task checklists). See the [plans index](./plans/README.md).
+- [`adr/`](./adr/) — architecture & process decision records. See the
+  [ADR index](./adr/README.md).
+
 ## Two independent sessions
 
 Stockbit has **two distinct authenticated sessions** — understand this before

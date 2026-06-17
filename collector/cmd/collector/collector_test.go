@@ -74,15 +74,15 @@ func TestParseInlineWatchlist(t *testing.T) {
 
 func TestParseWatchlistFile(t *testing.T) {
 	tests := []struct {
-		name     string
-		content  string
-		want     []string
-		wantErr  bool
+		name    string
+		content string
+		want    []string
+		wantErr bool
 	}{
 		{
-			name: "basic file",
+			name:    "basic file",
 			content: "BBCA\nBMRI\nTLKM\n",
-			want: []string{"BBCA", "BMRI", "TLKM"},
+			want:    []string{"BBCA", "BMRI", "TLKM"},
 		},
 		{
 			name:    "comments and blank lines skipped",

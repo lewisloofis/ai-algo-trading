@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"sb-algo-prototype/internal/s3upload"
 	"sb-algo-prototype/internal/segment"
 	"sb-algo-prototype/internal/zstdio"
 )
@@ -23,12 +24,15 @@ type segmentFile struct {
 	captureDir  string
 	watchlistID string
 
+	// uploader is non-nil when S3_BUCKET is configured. Set once at startup.
+	uploader *s3upload.Uploader
+
 	// current segment state
-	file        *os.File
-	sw          *segment.Writer
-	bw          *bufio.Writer // kept so we can Flush before sw.Flush
-	openPath    string
-	openTime    time.Time
+	file     *os.File
+	sw       *segment.Writer
+	bw       *bufio.Writer // kept so we can Flush before sw.Flush
+	openPath string
+	openTime time.Time
 
 	// per-segment counters
 	dataRecords    int64
@@ -188,17 +192,17 @@ func (sf *segmentFile) closeAndCompress(symbols []string, channels []string) {
 
 	// Write the manifest sidecar.
 	m := buildManifest(manifestParams{
-		watchlistID:        sf.watchlistID,
-		symbols:            symbols,
-		channels:           channels,
-		segmentStart:       openTime,
-		segmentEnd:         time.Unix(0, endNs).UTC(),
-		startNs:            startNs,
-		endNs:              endNs,
-		totalData:          dataRecords,
-		totalControl:       controlRecords,
-		compressedBytes:    compressedBytes,
-		uncompressedBytes:  uncompressedBytes,
+		watchlistID:       sf.watchlistID,
+		symbols:           symbols,
+		channels:          channels,
+		segmentStart:      openTime,
+		segmentEnd:        time.Unix(0, endNs).UTC(),
+		startNs:           startNs,
+		endNs:             endNs,
+		totalData:         dataRecords,
+		totalControl:      controlRecords,
+		compressedBytes:   compressedBytes,
+		uncompressedBytes: uncompressedBytes,
 	})
 	manifestPath := manifestSidecarPath(zstPath)
 	if err := writeManifest(manifestPath, m); err != nil {
@@ -208,6 +212,16 @@ func (sf *segmentFile) closeAndCompress(symbols []string, channels []string) {
 
 	log.Printf("[segment] closed and compressed %s (data=%d ctrl=%d unc=%d cmp=%d)",
 		zstPath, dataRecords, controlRecords, uncompressedBytes, compressedBytes)
+
+	// S3 upload: only when an uploader is configured (S3_BUCKET is set).
+	// On failure, log and leave local files in place per plan 01 §9.6.
+	if sf.uploader != nil {
+		if err := sf.uploader.UploadSegment(zstPath, manifestPath, sf.watchlistID, openTime); err != nil {
+			log.Printf("[segment] s3 upload failed for %s — leaving local files: %v", zstPath, err)
+		} else {
+			log.Printf("[segment] uploaded %s and manifest to S3", filepath.Base(zstPath))
+		}
+	}
 }
 
 // fileSize returns the file size in bytes, or 0 on error.
