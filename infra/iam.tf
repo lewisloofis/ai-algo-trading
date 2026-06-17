@@ -2,6 +2,7 @@
 #
 # Permissions:
 #   s3:PutObject          → raw/* on the marketdata bucket (upload only; no read/delete)
+#   s3:GetObject          → artifacts/* on the marketdata bucket (boot-time binary fetch)
 #   ssm:GetParameter      → /sb-collector/* (boot-time token + watchlist read)
 #   ssm:GetParameters     → /sb-collector/* (batch read variant used by SDK)
 #   ssm:PutParameter      → /sb-collector/* (post-refresh token rotation, §4.5)
@@ -35,6 +36,17 @@ data "aws_iam_policy_document" "collector_permissions" {
     actions = ["s3:PutObject"]
     resources = [
       "${aws_s3_bucket.marketdata.arn}/raw/*"
+    ]
+  }
+
+  # Fetch the collector binary from artifacts/ on boot — read-only, scoped to
+  # the artifacts prefix (kept out of the raw/ lifecycle rules).
+  statement {
+    sid     = "S3GetArtifact"
+    effect  = "Allow"
+    actions = ["s3:GetObject"]
+    resources = [
+      "${aws_s3_bucket.marketdata.arn}/artifacts/*"
     ]
   }
 

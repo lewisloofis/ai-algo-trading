@@ -1,6 +1,12 @@
 #!/bin/bash
-# cloud-init user_data — installs and starts the collector systemd service.
+# cloud-init user_data — installs the collector systemd service.
 # §9.5 / §10 / §12.3
+#
+# Unlike a one-shot first-boot fetch, the binary is pulled from S3 on EVERY boot
+# via an ExecStartPre updater (see /opt/collector/update.sh below). Because the
+# EventBridge schedulers stop/start (never re-launch) the instance, this makes
+# binary updates a one-line `aws s3 cp` to the artifact key: the next scheduled
+# start picks up the latest binary automatically.
 #
 # Template variables (injected by ec2.tf templatefile()):
 #   watchlist_id              — e.g. "default"
@@ -8,7 +14,7 @@
 #   ssm_prefix                — "/sb-collector"
 #   s3_bucket                 — bucket name
 #   region                    — AWS region, e.g. "ap-southeast-3"
-#   collector_artifact_s3_uri — optional S3 URI for the arm64 binary; empty = skip
+#   collector_artifact_s3_uri — S3 URI for the arm64 binary (e.g. s3://<bucket>/artifacts/collector)
 
 set -euo pipefail
 
@@ -17,18 +23,49 @@ useradd --system --no-create-home --shell /sbin/nologin collector || true
 install -d -o collector -g collector -m 750 /opt/collector
 install -d -o collector -g collector -m 750 /var/lib/collector/segments
 
-# --- Optionally fetch the collector binary from S3 ----------------------------
-%{ if collector_artifact_s3_uri != "" }
-aws s3 cp "${collector_artifact_s3_uri}" /opt/collector/collector \
-  --region "${region}"
-chmod 0755 /opt/collector/collector
-chown collector:collector /opt/collector/collector
-%{ endif }
+# --- Write the boot-time updater script ---------------------------------------
+# Pulls the latest binary from S3 before each start. On fetch failure it falls
+# back to the last-known-good binary so a transient S3/network blip does not stop
+# an already-deployed collector. A first boot with no binary in S3 yet fails fast
+# and systemd retries (Restart=on-failure).
+cat > /opt/collector/update.sh << 'UPDATE'
+#!/bin/bash
+set -euo pipefail
+
+ARTIFACT_URI="${collector_artifact_s3_uri}"
+REGION="${region}"
+DEST=/opt/collector/collector
+
+if [ -z "$ARTIFACT_URI" ]; then
+  # No artifact configured — rely on a manually-placed binary if present.
+  [ -x "$DEST" ] && exit 0
+  echo "update: no collector_artifact_s3_uri set and no binary at $DEST" >&2
+  exit 1
+fi
+
+TMP="$(mktemp /opt/collector/collector.XXXXXX)"
+if aws s3 cp "$ARTIFACT_URI" "$TMP" --region "$REGION"; then
+  chmod 0755 "$TMP"
+  mv -f "$TMP" "$DEST"
+  echo "update: fetched latest collector from $ARTIFACT_URI"
+  exit 0
+fi
+
+rm -f "$TMP"
+if [ -x "$DEST" ]; then
+  echo "update: S3 fetch failed; using existing binary at $DEST" >&2
+  exit 0
+fi
+echo "update: S3 fetch failed and no existing binary at $DEST" >&2
+exit 1
+UPDATE
+chmod 0755 /opt/collector/update.sh
+chown collector:collector /opt/collector/update.sh
 
 # --- Write the systemd unit ---------------------------------------------------
-# KillSignal=SIGTERM + TimeoutStopSec=120 ensures the open segment is flushed,
-# compressed, and uploaded to S3 before the EventBridge stop terminates the
-# instance (§9.5).
+# ExecStartPre pulls the latest binary on every start. KillSignal=SIGTERM +
+# TimeoutStopSec=120 ensures the open segment is flushed, compressed, and
+# uploaded to S3 before the EventBridge stop terminates the instance (§9.5).
 cat > /etc/systemd/system/collector.service << 'UNIT'
 [Unit]
 Description=Stockbit market-data collector
@@ -39,6 +76,9 @@ Wants=network-online.target
 Type=simple
 User=collector
 Group=collector
+
+# Pull the latest binary from S3 before each start (runs every boot).
+ExecStartPre=/opt/collector/update.sh
 ExecStart=/opt/collector/collector
 Restart=on-failure
 RestartSec=5s

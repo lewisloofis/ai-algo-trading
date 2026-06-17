@@ -2,7 +2,7 @@
 # Bucket name includes account ID to guarantee global uniqueness.
 
 resource "aws_s3_bucket" "marketdata" {
-  bucket = "sb-marketdata-${data.aws_caller_identity.current.account_id}"
+  bucket = "marketdata-${data.aws_caller_identity.current.account_id}"
 }
 
 # Enable versioning — noncurrent-version expiry handled in lifecycle below.
@@ -36,9 +36,11 @@ resource "aws_s3_bucket_public_access_block" "marketdata" {
 }
 
 # Lifecycle policy on raw/ prefix (§7.4 / §4 of 02-storage-format-and-replay.md):
-#   0–7 days   → Standard (fast access for recent backtests)
-#   8–30 days  → Standard-IA (~45% saving, millisecond access)
-#   31+ days   → Glacier Deep Archive (~$0.00099/GB-month cold archive)
+#   0–29 days  → Standard (fast access for recent backtests)
+#   30–89 days → Standard-IA (~45% saving, millisecond access)
+#   90+ days   → Glacier Deep Archive (~$0.00099/GB-month cold archive)
+# Note: AWS requires STANDARD_IA transitions ≥30 days, and ≥30 days in IA
+# before transitioning to DEEP_ARCHIVE — hence 30/90 rather than 7/30.
 # Additional rules:
 #   abort incomplete multipart uploads after 7 days (cost hygiene)
 #   expire noncurrent versions after 30 days (versioning cost cap)
@@ -57,12 +59,12 @@ resource "aws_s3_bucket_lifecycle_configuration" "marketdata" {
     }
 
     transition {
-      days          = 7
+      days          = 30
       storage_class = "STANDARD_IA"
     }
 
     transition {
-      days          = 30
+      days          = 90
       storage_class = "DEEP_ARCHIVE"
     }
 

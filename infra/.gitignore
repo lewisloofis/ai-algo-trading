@@ -11,6 +11,11 @@
 .terraform/
 .terraform.lock.hcl.bak
 
+# Saved plan files — binary, may contain sensitive values; never commit.
+tfplan
+*.tfplan
+*.plan
+
 # Crash logs
 crash.log
 crash.*.log

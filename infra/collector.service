@@ -19,6 +19,9 @@ Wants=network-online.target
 Type=simple
 User=collector
 Group=collector
+
+# Pull the latest binary from S3 before each start (runs every boot).
+ExecStartPre=/opt/collector/update.sh
 ExecStart=/opt/collector/collector
 Restart=on-failure
 RestartSec=5s
@@ -33,7 +36,7 @@ Environment="CAPTURE_DIR=/var/lib/collector/segments"
 Environment="CAPTURE_WATCHLIST_ID=default"
 Environment="CAPTURE_WATCHLIST=BBCA,BMRI,TLKM,ASII,BBRI"
 Environment="SSM_PARAM_PREFIX=/sb-collector"
-Environment="S3_BUCKET=sb-marketdata-<account-id>"
+Environment="S3_BUCKET=marketdata-<account-id>"
 Environment="AWS_REGION=ap-southeast-3"
 
 # Journal logging
