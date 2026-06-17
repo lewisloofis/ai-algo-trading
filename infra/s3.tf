@@ -1,16 +1,18 @@
-# §7.4 / §12.3 — S3 bucket with versioning, SSE-S3, public-access-block, and lifecycle
+# §7.4 / §12.3 — S3 bucket with versioning suspended, SSE-S3, public-access-block, and lifecycle
 # Bucket name includes account ID to guarantee global uniqueness.
 
 resource "aws_s3_bucket" "marketdata" {
   bucket = "marketdata-${data.aws_caller_identity.current.account_id}"
 }
 
-# Enable versioning — noncurrent-version expiry handled in lifecycle below.
+# Versioning suspended to cap storage costs — AWS does not allow fully removing versioning
+# once it has been enabled, so "Suspended" is the correct setting. Noncurrent-version expiry
+# in the lifecycle below cleans up any versions accumulated while versioning was active.
 resource "aws_s3_bucket_versioning" "marketdata" {
   bucket = aws_s3_bucket.marketdata.id
 
   versioning_configuration {
-    status = "Enabled"
+    status = "Suspended"
   }
 }
 
@@ -43,11 +45,11 @@ resource "aws_s3_bucket_public_access_block" "marketdata" {
 # before transitioning to DEEP_ARCHIVE — hence 30/90 rather than 7/30.
 # Additional rules:
 #   abort incomplete multipart uploads after 7 days (cost hygiene)
-#   expire noncurrent versions after 30 days (versioning cost cap)
+#   expire noncurrent versions after 1 day (purge versions accumulated before versioning was suspended)
 resource "aws_s3_bucket_lifecycle_configuration" "marketdata" {
   bucket = aws_s3_bucket.marketdata.id
 
-  # Depend on versioning being enabled before applying lifecycle rules.
+  # Depend on the versioning resource being applied before lifecycle rules.
   depends_on = [aws_s3_bucket_versioning.marketdata]
 
   rule {
@@ -73,9 +75,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "marketdata" {
       days_after_initiation = 7
     }
 
-    # Expire old versions after 30 days to keep versioning costs under control.
+    # Expire any noncurrent versions after 1 day — cleans up versions accumulated
+    # before versioning was suspended, preventing ongoing storage charges.
     noncurrent_version_expiration {
-      noncurrent_days = 30
+      noncurrent_days = 1
     }
   }
 }
