@@ -39,6 +39,9 @@ orderbook-imbalance strategy → live orders, dry-run by default) lives in
   + task checklists). See the [plans index](./plans/README.md).
 - [`adr/`](./adr/) — architecture & process decision records. See the
   [ADR index](./adr/README.md).
+- [`thesis/`](./thesis/) — research notes recording the academic thesis, formulas,
+  and citations behind a signal or strategy before we build it. See the
+  [thesis index](./thesis/README.md).
 
 ## Two independent sessions
 
