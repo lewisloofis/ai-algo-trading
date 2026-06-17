@@ -178,16 +178,19 @@ As long as `RefreshMain()` runs before the refresh token's own `expired_at`
 
 ### 4.3 One-time bootstrap checklist
 
-- [ ] On the developer laptop: set `SB_USERNAME` / `SB_PASSWORD` and run
+> ✔️ **Done (2026-06-17).** Bootstrap performed and verified end-to-end on the
+> live instance (user_id 17301).
+
+- [x] On the developer laptop: set `SB_USERNAME` / `SB_PASSWORD` and run
       `go run ./collector` (or a seed command) to trigger `Session.Login()`.
-- [ ] Capture the printed or logged `access.token` and `refresh.token`.
-- [ ] Store each as an SSM `SecureString` parameter under the `/sb-collector/`
+- [x] Capture the printed or logged `access.token` and `refresh.token`.
+- [x] Store each as an SSM `SecureString` parameter under the `/sb-collector/`
       prefix: `/sb-collector/access` and `/sb-collector/refresh`, alongside the
       existing `/sb-collector/watchlist`. Standard tier (free); encrypted with
       the AWS-managed `aws/ssm` KMS key (free).
-- [ ] Deploy the collector binary. At startup it reads those fields, bypasses
+- [x] Deploy the collector binary. At startup it reads those fields, bypasses
       `Login()`, and enters the refresh loop.
-- [ ] Verify: first 60 seconds of logs should show `GetWebsocketKey` success
+- [x] Verify: first 60 seconds of logs should show `GetWebsocketKey` success
       and `SUBSCRIBE` control record written, with no login-challenge errors.
 
 ### 4.4 Refresh-token rotation and persistence
@@ -347,6 +350,15 @@ Or via environment variable for simpler deployments:
 ```bash
 export CAPTURE_WATCHLIST="BBCA,BMRI,TLKM,ASII,BBRI"
 ```
+
+**SSM Parameter Store (production, authoritative):** when `SSM_PARAM_PREFIX` is
+set, the collector reads `/sb-collector/watchlist` and `/sb-collector/watchlist_id`
+from SSM at boot — these take priority over the `CAPTURE_WATCHLIST` /
+`CAPTURE_WATCHLIST_ID` env vars, which remain a local-dev fallback. Terraform
+(OpenTofu) stays authoritative for both parameters. Consequently, changing the
+production watchlist requires only `tofu apply` (updates the SSM params) followed
+by a collector restart or the next scheduled boot — **no instance replacement**,
+even though `ignore_changes = [user_data]` is set on the `aws_instance`.
 
 ### 5.4 Raw frame appending (the hot path)
 
@@ -705,16 +717,19 @@ transient upload failures do not cause data loss.
 
 ## 10. Operational checklist
 
-- [ ] EC2 `t4g.nano` launched in `ap-southeast-3`, Amazon Linux 2023 ARM AMI
-- [ ] Collector binary cross-compiled for `GOARCH=arm64 GOOS=linux` and installed at `/opt/collector/collector`
-- [ ] Systemd service unit: `collector.service` (start on boot, restart on failure)
-- [ ] EventBridge Scheduler rules for start (08:30 WIB) and stop (16:25 WIB), weekdays
-- [ ] IAM instance profile: `s3:PutObject` on `raw/*`, `ssm:GetParameter` + `ssm:PutParameter` on `/sb-collector/*`, and `kms:Decrypt`/`kms:Encrypt` via `aws/ssm` (see §7.5)
-- [ ] S3 bucket in `ap-southeast-3`, versioning enabled, lifecycle policy configured
-- [ ] Bootstrap performed: logged in from developer laptop, access + refresh tokens seeded into SSM SecureString params `/sb-collector/access` + `/sb-collector/refresh` — see §4.3
-- [ ] Segment directory on EBS: `/var/lib/collector/segments/`
-- [ ] Log rotation configured (systemd journal or `/var/log/collector/`)
-- [ ] At least one test capture run validated by running the replayer locally
+> ✔️ **Provisioned & verified 2026-06-17** (account `047915756052`). Boxes reflect
+> the live deployment; deviations from the spec are noted inline.
+
+- [x] EC2 `t4g.nano` launched in `ap-southeast-3`, Amazon Linux 2023 ARM AMI
+- [x] Collector binary cross-compiled for `GOARCH=arm64 GOOS=linux` *(built with Homebrew go 1.25.1; go.mod requires 1.21)* and delivered via S3 + every-boot `update.sh` (`ExecStartPre`), not baked into the AMI
+- [x] Systemd service unit: `collector.service` (start on boot, restart on failure)
+- [x] EventBridge Scheduler rules for start (08:30 WIB) and stop (16:25 WIB), weekdays
+- [x] IAM instance profile: `s3:PutObject` on `raw/*`, `s3:GetObject` on `artifacts/*`, `ssm:GetParameter` + `ssm:PutParameter` on `/sb-collector/*`, and `kms:Decrypt`/`kms:Encrypt` via `aws/ssm` (see §7.5)
+- [x] S3 bucket in `ap-southeast-3`, lifecycle policy configured *(bucket `marketdata-<accountid>`; versioning **Suspended** for cost; lifecycle 30d→IA, 90d→Deep Archive)*
+- [x] Bootstrap performed: logged in from developer laptop, access + refresh tokens seeded into SSM SecureString params `/sb-collector/access` + `/sb-collector/refresh` — see §4.3
+- [x] Segment directory on EBS: `/var/lib/collector/segments/`
+- [x] Log rotation configured (systemd journal, `SyslogIdentifier=collector`)
+- [x] At least one test capture run validated *(live capture → S3 confirmed 2026-06-17; replayer validated locally on Phase 1 segments — replay of a downloaded S3 day still pending, see §11 Phase 2)*
 
 ---
 
@@ -759,12 +774,23 @@ were logged during capture, and `sbcap stat` reports no gaps or truncation.
 
 Goal: production-grade multi-symbol capture running on AWS.
 
-> **Status (2026-06-17):** all Go code + the OpenTofu config are implemented and
-> verified locally (`make build` + `go test -race ./...` green). The live-AWS
-> steps (bootstrap seeding, `tofu apply`, EventBridge activation, week-long run,
-> replay of a downloaded day) are **intentionally deferred** until the AWS
-> account is provisioned — no AWS resources have been created. Boxes below are
-> ticked for work that is done; AWS-execution boxes remain open.
+> **Status (2026-06-17):** **deployed and verified end-to-end on AWS.** The
+> OpenTofu stack was applied to account `047915756052` (`ap-southeast-3`, 26
+> resources), tokens were seeded into SSM, the arm64 binary was uploaded to
+> `s3://marketdata-047915756052/artifacts/collector`, and a live EC2 run
+> confirmed the full path: SSM token load → WS auth → subscribe
+> (runningTradeBatch+orderBook+liveprice+iepiev, 5 symbols) → capture → SIGTERM
+> flush → zstd → S3 upload to `raw/`. The instance is currently **stopped**; the
+> EventBridge schedulers start/stop it on the WIB market window. Only the
+> week-long soak and a replay of a downloaded day remain open.
+>
+> **Deployment deviations from the spec above** (intentional, see [§12](#12-infrastructure-as-code-opentofu)):
+> bucket is `marketdata-<accountid>` (the `sb-` prefix was dropped); S3 lifecycle
+> is Standard → STANDARD_IA @30d → DEEP_ARCHIVE @90d (AWS requires IA ≥ 30 days,
+> so not the 7/30 in §7.4); bucket versioning is **Suspended** (cost cap, with
+> noncurrent-version expiry). The binary is pulled from S3 on **every** boot via a
+> systemd `ExecStartPre` updater (`update.sh`), since EventBridge stop/start never
+> re-runs cloud-init.
 
 > The AWS-side of steps 4–8 (S3 bucket + lifecycle, SSM token parameters, IAM
 > instance profile, EC2 instance, and EventBridge start/stop scheduling) is
@@ -783,9 +809,10 @@ Goal: production-grade multi-symbol capture running on AWS.
    every refresh via `ssm:PutParameter`). Swap out `FileTokenStore` in the
    collector's `main.go` when `SSM_PARAM_PREFIX` is set. *(Client behind an
    injectable interface; unit-tested with a fake — no live AWS.)*
-- [ ] Follow the one-time bootstrap checklist (§4.3): log in from the developer
+- [x] Follow the one-time bootstrap checklist (§4.3): log in from the developer
    laptop, seed the `/sb-collector/access` and `/sb-collector/refresh`
-   SecureString parameters, then deploy. *(Deferred — requires AWS account.)*
+   SecureString parameters, then deploy. *(Done 2026-06-17 — tokens seeded
+   out-of-band, user_id 17301; SSM load verified on the live instance.)*
 - [x] Implement UTC-midnight segment rolling and S3 upload with retry. *(Rolling
    landed in Phase 1; `internal/s3upload` adds upload of the `.binpb.zst` +
    `.manifest.json` with 3-attempt exponential backoff, gated on `S3_BUCKET`,
@@ -794,18 +821,23 @@ Goal: production-grade multi-symbol capture running on AWS.
    *(Unit at `infra/collector.service` with `KillSignal=SIGTERM` +
    `TimeoutStopSec=120`; the `main.go` SIGTERM handler flushes/compresses/uploads
    the open segment before exit.)*
-- [ ] Deploy to EC2 `t4g.nano` in `ap-southeast-3` with the IAM instance profile
+- [x] Deploy to EC2 `t4g.nano` in `ap-southeast-3` with the IAM instance profile
    (`s3:PutObject` + `ssm:GetParameter` + `ssm:PutParameter` + `kms:Decrypt`/`kms:Encrypt`
    scoped to the `/sb-collector/` prefix — see §7.5). Provisioned via OpenTofu (§12).
-   *(OpenTofu authored under `infra/`; **not** applied — deferred to AWS account.)*
-- [ ] Configure EventBridge Scheduler for weekday market-hours start/stop (§12).
-   *(Authored in `infra/scheduler.tf`; not applied.)*
+   *(Done 2026-06-17 — `tofu apply`, 26 resources; live instance verified, then
+   stopped. The IAM role also grants `s3:GetObject` on `artifacts/*` for the
+   every-boot binary fetch.)*
+- [x] Configure EventBridge Scheduler for weekday market-hours start/stop (§12).
+   *(Done 2026-06-17 — schedulers applied; auto-start 08:30 / stop 16:25 WIB Mon–Fri.)*
 - [ ] Run for one full trading week. Verify: segments appear in S3, manifest files
    are present, segment byte counts are non-zero for each trading day, and
    the `/sb-collector/refresh` parameter shows a fresh value after each daily run.
-   *(Deferred — requires AWS account.)*
-- [ ] Run the replayer against a downloaded day's segments. *(Deferred — no S3
-   data yet; replayer verified locally against Phase 1 segments.)*
+   *(Open — schedulers are active; the first full scheduled week has not yet
+   elapsed. A single live capture on 2026-06-17 already produced segments under
+   `raw/dt=2026-06-17/default/`.)*
+- [ ] Run the replayer against a downloaded day's segments. *(Open — segments now
+   exist in S3 (`raw/dt=2026-06-17/`); replay against a downloaded day not yet run.
+   Replayer verified locally against Phase 1 segments.)*
 
 **Done when:** a full week of data is in S3, the lifecycle policy is active,
 and the replayer successfully reads a downloaded day.
@@ -845,8 +877,10 @@ manages the stack. Cost auditing is built in through three mechanisms: provider
 `default_tags`, cost-allocation-tag activation, and a budget alarm (§12.2).
 
 > This section is the design reference for the OpenTofu config. The `.tf` files
-> are implemented under [`infra/`](../../infra/) (authored 2026-06-17, not yet
-> applied — no AWS resources exist). Nothing here changes the collector or replayer.
+> are implemented under [`infra/`](../../infra/) and were **applied 2026-06-17**
+> to account `047915756052` (26 resources). Nothing here changes the collector or
+> replayer. See the §11 Phase 2 status note for the as-built deviations (bucket
+> name, lifecycle days, suspended versioning, every-boot binary fetch).
 
 ### 12.1 Layout
 

@@ -189,6 +189,12 @@ Applied to prefix `raw/`:
 | To Standard-IA | > 7 days | `STANDARD_IA` |
 | To Glacier Deep Archive | > 30 days | `DEEP_ARCHIVE` |
 
+> **As-built note (2026-06-17).** The deployed lifecycle is **30d → STANDARD_IA,
+> 90d → DEEP_ARCHIVE** (not 7/30): AWS requires an object to spend ≥ 30 days in
+> Standard before transitioning to Standard-IA, so the 7-day rule above is not
+> permitted. Bucket versioning is **Suspended** (cost cap) with noncurrent-version
+> expiry. See [01-market-data-capture.md §11 Phase 2 status](./01-market-data-capture.md#phase-2--watchlist--s3--scheduling).
+
 ```json
 {
   "Rules": [{
