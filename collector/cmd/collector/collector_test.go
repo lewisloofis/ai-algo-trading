@@ -155,7 +155,7 @@ func TestLoadWatchlistEnv(t *testing.T) {
 		os.Setenv("CAPTURE_WATCHLIST", "BBCA,BMRI")
 		os.Unsetenv("CAPTURE_WATCHLIST_FILE")
 
-		got, err := loadWatchlist()
+		got, err := loadWatchlist(nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -172,7 +172,7 @@ func TestLoadWatchlistEnv(t *testing.T) {
 		os.WriteFile(path, []byte("TLKM\nASII\n"), 0644)
 		os.Setenv("CAPTURE_WATCHLIST_FILE", path)
 
-		got, err := loadWatchlist()
+		got, err := loadWatchlist(nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -185,7 +185,7 @@ func TestLoadWatchlistEnv(t *testing.T) {
 		os.Unsetenv("CAPTURE_WATCHLIST")
 		os.Unsetenv("CAPTURE_WATCHLIST_FILE")
 
-		_, err := loadWatchlist()
+		_, err := loadWatchlist(nil)
 		if err == nil {
 			t.Error("expected error, got nil")
 		}

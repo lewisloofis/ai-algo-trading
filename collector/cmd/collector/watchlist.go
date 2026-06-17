@@ -3,19 +3,40 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"strings"
+
+	"sb-algo-prototype/internal/feed"
 )
 
-// loadWatchlist resolves the symbol list from env or file, uppercases all
-// entries, strips blank lines and # comments, and deduplicates.
+// loadWatchlist resolves the symbol list, uppercases all entries, strips blank
+// lines and # comments, and deduplicates.
 //
 // Priority:
-//  1. CAPTURE_WATCHLIST env var (comma-separated)
-//  2. CAPTURE_WATCHLIST_FILE env var (path to file, one symbol per line)
+//  1. SSM param reader (when params != nil): reads "<prefix>/watchlist" from AWS
+//     SSM Parameter Store — authoritative over the env when set.
+//  2. CAPTURE_WATCHLIST env var (comma-separated)
+//  3. CAPTURE_WATCHLIST_FILE env var (path to file, one symbol per line)
 //
-// At least one must be set and non-empty.
-func loadWatchlist() ([]string, error) {
+// At least one source must yield a non-empty list.
+func loadWatchlist(params *feed.SSMParamReader) ([]string, error) {
+	if params != nil {
+		raw, err := params.Get("watchlist")
+		if err != nil {
+			return nil, fmt.Errorf("ssm watchlist: %w", err)
+		}
+		if raw != "" {
+			symbols, err := parseInlineWatchlist(raw)
+			if err != nil {
+				return nil, err
+			}
+			log.Printf("[watchlist] loaded %d symbols from SSM", len(symbols))
+			return symbols, nil
+		}
+		// SSM param not set — fall through to env.
+	}
+
 	if raw := os.Getenv("CAPTURE_WATCHLIST"); raw != "" {
 		return parseInlineWatchlist(raw)
 	}

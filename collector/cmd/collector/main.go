@@ -57,16 +57,41 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	symbols, err := loadWatchlist()
+	// Hoist SSM prefix once — used by both the param reader and the token store.
+	ssmPrefix := os.Getenv("SSM_PARAM_PREFIX")
+
+	// Build the param reader for plain (non-secret) SSM config when the prefix
+	// is set. The collector reads these (watchlist, watchlist_id) but never
+	// writes them — Terraform stays authoritative.
+	var paramReader *feed.SSMParamReader
+	if ssmPrefix != "" {
+		paramReader, err = feed.NewSSMParamReader(ssmPrefix)
+		if err != nil {
+			log.Fatalf("ssm param reader init: %v", err)
+		}
+	}
+
+	symbols, err := loadWatchlist(paramReader)
 	if err != nil {
 		log.Fatalf("watchlist: %v", err)
 	}
 	cfg.symbols = symbols
 
+	// Override watchlist_id from SSM when available — authoritative over the
+	// CAPTURE_WATCHLIST_ID env var (which remains a local-dev fallback).
+	if paramReader != nil {
+		if id, idErr := paramReader.Get("watchlist_id"); idErr != nil {
+			log.Fatalf("ssm watchlist_id: %v", idErr)
+		} else if id != "" {
+			cfg.watchlistID = id
+			log.Printf("[watchlist] id %q loaded from SSM", id)
+		}
+	}
+
 	// Token store selection: use SSMTokenStore when SSM_PARAM_PREFIX is set;
 	// otherwise fall back to the local FileTokenStore.
 	var store feed.TokenStore
-	if ssmPrefix := os.Getenv("SSM_PARAM_PREFIX"); ssmPrefix != "" {
+	if ssmPrefix != "" {
 		s, err := feed.NewSSMTokenStore(ssmPrefix)
 		if err != nil {
 			log.Fatalf("ssm token store init: %v", err)
