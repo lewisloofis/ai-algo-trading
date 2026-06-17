@@ -18,6 +18,8 @@ import (
 //	--channel trades|orderbook|liveprice
 //	--from HH:MM[:SS]       skip events before this WIB wall-clock time
 //	--to   HH:MM[:SS]       skip events after this WIB wall-clock time
+//
+// Flags may appear before or after the segment path.
 func runDump(args []string) error {
 	fs := flag.NewFlagSet("dump", flag.ContinueOnError)
 	symbolFlag := fs.String("symbol", "", "filter by symbol")
@@ -25,13 +27,13 @@ func runDump(args []string) error {
 	fromFlag := fs.String("from", "", "start time HH:MM[:SS] WIB (inclusive)")
 	toFlag := fs.String("to", "", "end time HH:MM[:SS] WIB (inclusive)")
 
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() < 1 {
+	segPath, flagArgs, err := extractPositionalArg(args)
+	if err != nil {
 		return fmt.Errorf("usage: sbcap dump <segment> [--symbol S] [--channel C] [--from HH:MM] [--to HH:MM]")
 	}
-	segPath := fs.Arg(0)
+	if err := fs.Parse(flagArgs); err != nil {
+		return err
+	}
 
 	fromNs, toNs, err := parseTimeRange(*fromFlag, *toFlag)
 	if err != nil {
@@ -67,6 +69,38 @@ func runDump(args []string) error {
 		printDumpLine(evt)
 	})
 	return err
+}
+
+// extractPositionalArg separates the first non-flag token from args, returning
+// it as the positional argument and the remaining tokens as flag args.
+//
+// This lets callers place flags before or after the positional argument:
+//
+//	sbcap dump   <path> --symbol X      (path first)
+//	sbcap export --format ndjson <path> (flags first)
+//
+// An error is returned when no non-flag token is found.
+func extractPositionalArg(args []string) (positional string, rest []string, err error) {
+	skipNext := false
+	for i, a := range args {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			// Flag token: if it carries no inline value (no "="), the next token
+			// is its value — skip it so we don't confuse it for the positional arg.
+			if !strings.Contains(a, "=") {
+				skipNext = true
+			}
+			continue
+		}
+		// First non-flag, non-value token is the positional argument.
+		rest = append(rest, args[:i]...)
+		rest = append(rest, args[i+1:]...)
+		return a, rest, nil
+	}
+	return "", nil, fmt.Errorf("no segment path provided")
 }
 
 // parseDumpChannel converts the --channel flag value to a replay.EventKind.

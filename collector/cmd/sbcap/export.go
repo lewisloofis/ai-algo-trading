@@ -64,17 +64,19 @@ func (r exportRecord) toStringSlice() []string {
 // Flags:
 //
 //	--format ndjson|csv  (required)
+//
+// Flags may appear before or after the segment path.
 func runExport(args []string) error {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	formatFlag := fs.String("format", "", "output format: ndjson or csv")
 
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() < 1 {
+	segPath, flagArgs, err := extractPositionalArg(args)
+	if err != nil {
 		return fmt.Errorf("usage: sbcap export <segment> --format ndjson|csv")
 	}
-	segPath := fs.Arg(0)
+	if err := fs.Parse(flagArgs); err != nil {
+		return err
+	}
 
 	switch strings.ToLower(*formatFlag) {
 	case "ndjson":

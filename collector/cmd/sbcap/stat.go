@@ -42,10 +42,11 @@ type statResult struct {
 	firstRecvNs int64
 	lastRecvNs  int64
 
-	// orderbook sequence-number gap tracking: lastSeq[symbol] = last seq seen
-	lastSeq  map[string]int64
-	seqGaps  map[string]int   // gap count per symbol
-	gapFirst map[string]int64 // RecvNs of first gap per symbol
+	// per-symbol sequence-number range (global feed counter, not per-symbol monotonic).
+	// Used only to report the observed range; gap detection is unreliable at per-symbol
+	// level because the counter is shared across all symbols and BID/OFFER interleave.
+	seqMin map[string]int64
+	seqMax map[string]int64
 
 	// control event summary
 	reconnects   int
@@ -59,9 +60,8 @@ func newStatResult() *statResult {
 	return &statResult{
 		tradeCounts:     make(map[string]int),
 		orderbookCounts: make(map[string]int),
-		lastSeq:         make(map[string]int64),
-		seqGaps:         make(map[string]int),
-		gapFirst:        make(map[string]int64),
+		seqMin:          make(map[string]int64),
+		seqMax:          make(map[string]int64),
 		firstRecvNs:     math.MaxInt64,
 		lastRecvNs:      math.MinInt64,
 	}
@@ -82,13 +82,12 @@ func (s *statResult) update(evt replay.MarketEvent) {
 		s.orderbookCounts[evt.Symbol]++
 		if evt.Decoded != nil {
 			seq := evt.Decoded.SequenceNumber
-			if prev, ok := s.lastSeq[evt.Symbol]; ok && seq > prev+1 {
-				s.seqGaps[evt.Symbol]++
-				if _, seen := s.gapFirst[evt.Symbol]; !seen {
-					s.gapFirst[evt.Symbol] = evt.RecvNs
-				}
+			if min, ok := s.seqMin[evt.Symbol]; !ok || seq < min {
+				s.seqMin[evt.Symbol] = seq
 			}
-			s.lastSeq[evt.Symbol] = seq
+			if max, ok := s.seqMax[evt.Symbol]; !ok || seq > max {
+				s.seqMax[evt.Symbol] = seq
+			}
 		}
 	case replay.EventLivePrice:
 		s.liveprice++
@@ -225,24 +224,20 @@ func printStatReport(segPath string, diskBytes int64, dataRecs, ctrlRecs int, re
 		fmt.Println()
 	}
 
-	// Sequence gaps per symbol.
-	fmt.Printf("seq gaps  :")
-	if len(res.lastSeq) == 0 {
+	// Sequence-number range per symbol.
+	// sequence_number is a GLOBAL feed counter shared across all symbols; BID and
+	// OFFER carry separate interleaved sub-sequences, so per-symbol deltas can be
+	// negative. Per-symbol gap detection is therefore not a reliable frame-loss
+	// signal. Real capture discontinuities are detected via RECONNECT control
+	// records (see "controls" line below).
+	fmt.Printf("seq range :")
+	if len(res.seqMin) == 0 {
 		fmt.Printf("  (no orderbook events)\n")
 	} else {
-		symbols := sortedKeys(res.lastSeq)
+		symbols := sortedKeys(res.seqMin)
 		for _, sym := range symbols {
-			gaps := res.seqGaps[sym]
-			if gaps > 0 {
-				offset := ""
-				if ns, ok := res.gapFirst[sym]; ok {
-					rel := time.Duration(ns - res.firstRecvNs)
-					offset = fmt.Sprintf(" (offset %s)", formatDuration(rel))
-				}
-				fmt.Printf("  %s ×%d%s", sym, gaps, offset)
-			} else {
-				fmt.Printf("  %s ×0", sym)
-			}
+			frames := res.orderbookCounts[sym]
+			fmt.Printf("  %s %d→%d (%s frames)", sym, res.seqMin[sym], res.seqMax[sym], formatInt(frames))
 		}
 		fmt.Println()
 	}

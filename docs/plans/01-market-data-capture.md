@@ -586,16 +586,26 @@ microstructure, 30 symbols, zstd — could be lower for quiet days).
 
 ### 9.1 Frame gaps — `sequence_number`
 
-The consumer `Orderbook` message carries a `sequence_number` (int64) that is
-monotonically increasing per symbol. Track the last seen `sequence_number` per
-symbol during replay. A jump indicates dropped frames (network gap or reconnect).
-The replayer should emit a `GAP` event to the strategy when a jump is detected,
-so the strategy can widen its uncertainty or pause until the book is re-synced.
+The consumer `Orderbook` message carries a `sequence_number` (int64). This is
+a **global feed counter shared across all symbols on the exchange feed** — it
+is NOT monotonically increasing per symbol. Additionally, BID and OFFER frames
+carry separate interleaved sub-sequences, so consecutive `sequence_number`
+values seen for a single symbol can even decrease (an OFFER frame at seq N may
+be followed by a BID frame at seq N-1). Per-symbol sequence-gap detection is
+therefore **not a reliable frame-loss signal** and should not be used.
+
+Real capture discontinuities are instead detected via **RECONNECT control
+records** written by the collector whenever the WebSocket connection is lost and
+re-established (see §5.5 and §9.3). After a reconnect the server re-snapshots
+the current state of subscribed symbols, so strategies should treat the first
+orderbook frames after a `RECONNECT` record as full snapshots rather than
+incremental updates.
 
 During capture, sequence numbers are preserved in the raw frames — no special
 handling is needed. The `sequence_number` is visible in the raw protobuf bytes
 (field 3 of the consumer `Orderbook` message, wire type varint) without a full
-decode.
+decode. It can be useful for observing the global counter range across a
+segment, but not for per-symbol gap counting.
 
 ### 9.2 `switch_reset` — feed-source switches
 
