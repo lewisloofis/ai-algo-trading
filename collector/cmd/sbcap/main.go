@@ -6,10 +6,12 @@
 //
 // Subcommands:
 //
-//	stat   Print a health report for a segment file.
-//	dump   Print decoded events, one per line, with optional filters.
-//	export Emit decoded events as NDJSON or CSV.
-//	book   Reconstruct the order book at a given point in time (OPTIONAL).
+//	stat     Print a health report for a segment file.
+//	dump     Print decoded events, one per line, with optional filters.
+//	export   Emit decoded events as NDJSON or CSV.
+//	book     Reconstruct the order book at a given point in time.
+//	features Emit a consolidated book+price feature CSV for study use.
+//	trades   Emit a per-trade CSV (continuous-session, side-tagged only).
 //
 // Segment paths may be uncompressed (.binpb) or zstd-compressed (.binpb.zst).
 // Both local paths and S3 paths (s3://) are accepted in principle; S3 support
@@ -54,6 +56,16 @@ func main() {
 			fmt.Fprintf(os.Stderr, "sbcap book: %v\n", err)
 			os.Exit(1)
 		}
+	case "features":
+		if err := runFeatures(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "sbcap features: %v\n", err)
+			os.Exit(1)
+		}
+	case "trades":
+		if err := runTrades(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "sbcap trades: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "sbcap: unknown subcommand %q\n\n", subcommand)
 		usage()
@@ -65,10 +77,12 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `sbcap — market-data segment inspector
 
 Usage:
-  sbcap stat   <seg>
-  sbcap dump   <seg> [--symbol S] [--channel trades|orderbook|liveprice] [--from HH:MM] [--to HH:MM]
-  sbcap export <seg> --format ndjson|csv
-  sbcap book   <seg> --symbol S --at HH:MM:SS
+  sbcap stat     <seg>
+  sbcap dump     <seg> [--symbol S] [--channel trades|orderbook|liveprice] [--from HH:MM] [--to HH:MM]
+  sbcap export   <seg> --format ndjson|csv
+  sbcap book     <seg> --symbol S --at HH:MM:SS
+  sbcap features <seg>... --symbol S [--depth N] [--from HH:MM] [--to HH:MM]
+  sbcap trades   <seg>... --symbol S [--from HH:MM] [--to HH:MM]
 
 Segment files: .binpb (raw) or .binpb.zst (zstd-compressed)`)
 }

@@ -6,9 +6,17 @@ It records *why* these signals are expected to predict short-term price, the
 *formulas* we will implement, and the *open question* of whether results derived on
 developed-market equities transfer to a thin, 1-tick IDX name.
 
-> **Status:** research thesis only — no code yet. The companion study (OBI/
-> micro-price → forward-return) is built on the replay engine and validated
-> against the next live capture (with trade tape). See [README](./README.md).
+> **Status:** gate run — **PASS** (2026-06-18). The companion study (OBI/
+> micro-price → forward-return) is built on the replay engine and run on the
+> captured BUMI segments: **top-of-book imbalance predicts the forward mid
+> direction** (0.75–0.80 hit-rate conditional on a move, out-of-sample, beating a
+> block-bootstrap null). OFI (the event-flow version, §2.1) — ✅ **study complete, verdict `OFI_NO_GAIN`**.
+> On a 1-tick book the static OBI snapshot is the sufficient statistic; OFI adds
+> no reliable gain over OBI1. See [plan 05](../plans/05-ofi-trade-flow-study.md)
+> and [thesis 02](./02-order-flow-and-price-impact.md).
+> Harness, report, and figures: [`collector/study/`](../../collector/study/)
+> (see [plan 04](../plans/04-microstructure-study.md)).
+> See also [README](./README.md).
 
 ---
 
@@ -172,15 +180,33 @@ on data we already have.
 
 ## 6. Implementation plan (summary)
 
+Built as the go/no-go gate in [plan 04](../plans/04-microstructure-study.md); the
+harness lives in [`collector/study/`](../../collector/study/) (Python stats over a
+Go `sbcap features` CSV). Status per step below.
+
 1. **Weighted mid-price + top-of-book OBI** (this doc, §2.2 & §3.2 layer 1) —
-   compute on every book update over the replay engine; regress against forward
-   liveprice returns at 1s / 5s / 30s horizons.
-2. **Depth-weighted OBI** (§2.2, N>1) — check whether depth beyond the touch adds
-   predictive power.
-3. **Stoikov micro-price** (§3.2 layer 2) — only if 1–2 show signal; requires
-   fitting the Markov chain from data.
-4. **OFI** (Cont–Kukanov–Stoikov) — after the next live capture provides a trade
-   tape with aggressor side.
+   ✅ **done, PASS.** Computed on every book update over the replay engine and
+   regressed against forward **mid** returns at 1s/5s/10s/30s/60s. Top-of-book
+   imbalance (`OBI1`, equivalently the weighted-mid skew) hit **0.75–0.80**
+   conditional on a move, out-of-sample, clearing a block-bootstrap null.
+   *(Target is forward mid, not last-price — last price is the contaminated signal
+   §1 rejects.)*
+2. **Depth-weighted OBI** (§2.2, N>1) — ✅ **done, weaker.** `1/(i+1)`-weighted
+   depth was the only signal also passing the strict monotone-decile test, but its
+   conditional hit-rate (0.65–0.68) trails top-of-book; equal-weight depth was
+   near coin-flip on the pre-lunch holdout. Depth beyond the touch did **not** add
+   robust power over level-1.
+3. **Stoikov micro-price** (§3.2 layer 2) — ⏭️ **unlocked, deferred.** Steps 1–2
+   passed, so this is now justified; needs Markov transition-matrix fitting. Next
+   after the backtester, not before.
+4. **OFI** (Cont–Kukanov–Stoikov) — ✅ **done, verdict `OFI_NO_GAIN`.** OFI
+   incremental R² over OBI1 did not reach 5 pp on the held-out OOS split. On a
+   1-tick book, the static snapshot (OBI1) is the sufficient statistic — the
+   within-snapshot flow dynamics add no reliable predictive power. Kyle's lambda
+   is statistically nonzero (t ≈ 3.4) but economically negligible (~0 IDR/100
+   lots). OBI generalises strongly across all 6 symbols (6/6 pass, OOS hit-rates
+   0.64–0.99 at 5 s). See [thesis 02](./02-order-flow-and-price-impact.md) and
+   [plan 05](../plans/05-ofi-trade-flow-study.md).
 
 ---
 
