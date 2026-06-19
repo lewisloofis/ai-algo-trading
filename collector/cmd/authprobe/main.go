@@ -48,6 +48,10 @@
 //	-channel     string (default "")    OTP channel override: CHANNEL_EMAIL,
 //	                                    CHANNEL_SMS, CHANNEL_WHATSAPP.
 //	                                    Also SB_OTP_CHANNEL env var.
+//	-out         string (default "")    If set, persist the obtained token pair
+//	                                    to this JSON file (mode 0600) on any
+//	                                    successful exit.  Also SB_TOKEN_OUT env.
+//	                                    Example: -out ~/.sb-tokens.json
 //
 // # IP-change A/B procedure
 //
@@ -85,11 +89,17 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"collector/internal/feed"
 )
 
 const defaultHost = "https://exodus.stockbit.com"
 
 var client = &http.Client{Timeout: 20 * time.Second}
+
+// tokenOutPath is set once from the -out flag (or SB_TOKEN_OUT env) in main.
+// It is process-global CLI config, analogous to the shared client above.
+var tokenOutPath string
 
 func main() {
 	user := flag.String("user", "", "Stockbit username / email (or SB_USERNAME env)")
@@ -98,6 +108,7 @@ func main() {
 	host := flag.String("host", "", "Exodus host (or SB_EXODUS_HOST env; default "+defaultHost+")")
 	verify := flag.Bool("verify", true, "Complete OTP flow when multi_factor challenge is detected")
 	channel := flag.String("channel", "", "OTP channel override: CHANNEL_EMAIL, CHANNEL_SMS, CHANNEL_WHATSAPP (or SB_OTP_CHANNEL env)")
+	out := flag.String("out", "", "If set, persist the obtained token pair to this JSON file (mode 0600). Or SB_TOKEN_OUT env.")
 	flag.Parse()
 
 	resolveEnv(user, "SB_USERNAME")
@@ -108,6 +119,8 @@ func main() {
 		*host = defaultHost
 	}
 	resolveEnv(channel, "SB_OTP_CHANNEL")
+	resolveEnv(out, "SB_TOKEN_OUT")
+	tokenOutPath = *out
 
 	if *user == "" || *password == "" || *playerID == "" {
 		fmt.Fprintln(os.Stderr, "error: -user / SB_USERNAME, -password / SB_PASSWORD, and -player-id / SB_PLAYER_ID are all required")
@@ -211,6 +224,7 @@ func classify(m map[string]interface{}, status int, host string, verify bool, ch
 	// Priority 1: check for a token pair (successful login).
 	if access, refresh, ok := findTokenPair(m); ok {
 		printTokenPair(access, refresh)
+		saveTokens(access, refresh)
 		os.Exit(0)
 	}
 
@@ -405,6 +419,7 @@ func finalizeDeviceTrust(host, loginToken, playerID string) {
 		fmt.Println("  refresh token: <absent>")
 	}
 	fmt.Printf("player_id %s is now trusted — re-run the probe (without -verify) to confirm a direct TOKEN_PAIR.\n", playerID)
+	saveTokens(access, refresh)
 	os.Exit(0)
 }
 
@@ -520,6 +535,7 @@ approved:
 		fmt.Println("  refresh token: <absent>")
 	}
 	fmt.Printf("player_id %s is now trusted — re-run the probe (without -verify) to confirm a direct TOKEN_PAIR.\n", playerID)
+	saveTokens(access, refresh)
 	os.Exit(0)
 }
 
@@ -684,6 +700,21 @@ func printTokenPair(access, refresh string) {
 	} else {
 		fmt.Println("  refresh token: <absent>")
 	}
+}
+
+// saveTokens persists the token pair to tokenOutPath when it is non-empty.
+// Persistence failure is non-fatal: a warning is printed to stderr but the
+// exit code is not changed so a successful login is never reported as failure.
+// SECURITY: token values are never logged or printed.
+func saveTokens(access, refresh string) {
+	if tokenOutPath == "" {
+		return
+	}
+	if err := (&feed.FileTokenStore{Path: tokenOutPath}).Save(access, refresh); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not persist tokens to %s: %v\n", tokenOutPath, err)
+		return
+	}
+	fmt.Printf("  tokens persisted → %s\n", tokenOutPath)
 }
 
 func bodySnippet(b []byte) string {
