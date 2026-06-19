@@ -61,7 +61,7 @@ few look good by chance.*
       spread (bps), **tick-size-as-fraction-of-price** (this bounds the achievable
       edge for an imbalance signal), volatility, and quote/trade update rate.
       *Upstream of everything — the current 5–6 miners are a convenience sample, so
-      every verdict so far inherits that selection bias.* → seeds a new plan.
+      every verdict so far inherits that selection bias.* → [plan 09](./09-universe-screener.md).
 - [ ] **More data across regimes** — multi-day capture so a verdict rests on
       trending/choppy/high-low-vol days, not one session. Depends on pillar 4.1.
 - [ ] **Day-aware multi-day pooling** in the study harness — concat N days, split
@@ -180,7 +180,7 @@ signals the gate permits), and only then invest in the trading-system machinery.
 
 1. **Universe screening pass** — compute turnover / relative-spread /
    tick-to-price across the names in existing captures and rank them, so the next
-   study runs on a data-chosen universe instead of a remembered one. *(New plan.)*
+   study runs on a data-chosen universe instead of a remembered one. *(See [plan 09](./09-universe-screener.md).)*
 2. **Verify + start unattended capture** — confirm the collector is deployed,
    EventBridge is scheduling it, and token rotation is live; then let multi-day
    data accrue. *(Pillar 4.1.)*
