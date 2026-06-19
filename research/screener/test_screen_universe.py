@@ -16,12 +16,17 @@ import pytest
 
 from screener.screen_universe import (
     EDGE_CAP_THRESHOLD_BPS,
+    FRICTION_BAND_TIGHT_BPS,
     ROUND_TRIP_BPS,
     TOO_THIN_TURNOVER_IDR,
+    RankedSymbol,
     SymbolMetrics,
     TAG_EDGE_CAPPED,
     TAG_TOO_THIN,
+    build_watchlist_file,
+    friction_band,
     rank_universe,
+    select_capture_watchlist,
 )
 
 
@@ -287,6 +292,165 @@ def test_mixed_universe_all_fundable_ranked() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Helpers for watchlist tests
+# ---------------------------------------------------------------------------
+
+def _make_ranked(
+    rank: int,
+    symbol: str,
+    min_spread_bps: float,
+    turnover: float,
+    vol_bps: float = 200.0,
+) -> RankedSymbol:
+    """
+    Build a RankedSymbol directly for watchlist selection tests.
+
+    min_edge_to_clear_bps and is_edge_capped are derived consistently from
+    the provided min_spread_bps, matching production rank_universe logic.
+    """
+    return RankedSymbol(
+        rank=rank,
+        symbol=symbol,
+        latest_price=1000.0,       # arbitrary; not used by watchlist logic
+        tick_sz=5,                  # arbitrary
+        min_spread_bps_val=min_spread_bps,
+        min_edge_to_clear_bps=min_spread_bps + ROUND_TRIP_BPS,
+        median_daily_turnover_idr=turnover,
+        realised_vol_bps_val=vol_bps,
+        is_edge_capped=min_spread_bps >= EDGE_CAP_THRESHOLD_BPS,
+        is_thin=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test: friction_band thresholds
+# ---------------------------------------------------------------------------
+
+def test_friction_band_thresholds() -> None:
+    """friction_band returns the correct band at key boundary values."""
+    assert friction_band(9.0) == "tight",    "9 bps is below FRICTION_BAND_TIGHT_BPS — should be tight"
+    assert friction_band(0.0) == "tight",    "0 bps is tight"
+    # Boundary: exactly FRICTION_BAND_TIGHT_BPS (20.0) is NOT tight
+    assert friction_band(FRICTION_BAND_TIGHT_BPS) == "moderate", "20.0 bps is moderate (boundary)"
+    assert friction_band(30.0) == "moderate", "30 bps is moderate"
+    # Boundary: exactly EDGE_CAP_THRESHOLD_BPS (40.0) is wide
+    assert friction_band(EDGE_CAP_THRESHOLD_BPS) == "wide", "40.0 bps is wide (boundary)"
+    assert friction_band(59.5) == "wide", "59.5 bps is wide"
+
+
+# ---------------------------------------------------------------------------
+# Test: select_capture_watchlist round-robin interleaving
+# ---------------------------------------------------------------------------
+
+def test_select_capture_watchlist_interleaves_bands() -> None:
+    """
+    4 tight + 4 moderate + 4 wide names, top_n=6 → 2 from each band (round-robin).
+    Within each band the most-liquid (highest-turnover) names are picked first.
+    """
+    # Turnover within each band is distinct and decreasing so liquidity order is clear.
+    tight    = [_make_ranked(i+1,  f"T{i+1}", 10.0, 100_000_000_000 - i*1e9) for i in range(4)]
+    moderate = [_make_ranked(i+5,  f"M{i+1}", 25.0,  50_000_000_000 - i*1e9) for i in range(4)]
+    wide     = [_make_ranked(i+9,  f"W{i+1}", 50.0,  20_000_000_000 - i*1e9) for i in range(4)]
+
+    ranked = tight + moderate + wide  # already liquidity-sorted within each band
+    result = select_capture_watchlist(ranked, top_n=6)
+
+    assert len(result) == 6, f"Expected 6 selected, got {len(result)}"
+    # Round-robin order: T1, M1, W1, T2, M2, W2
+    assert result[0].symbol == "T1"
+    assert result[1].symbol == "M1"
+    assert result[2].symbol == "W1"
+    assert result[3].symbol == "T2"
+    assert result[4].symbol == "M2"
+    assert result[5].symbol == "W2"
+
+
+# ---------------------------------------------------------------------------
+# Test: top_n >= len returns all in rank order; top_n=0 returns all
+# ---------------------------------------------------------------------------
+
+def test_select_capture_watchlist_passthrough() -> None:
+    """top_n >= len(ranked) or top_n=0 returns all symbols in original rank order."""
+    ranked = [
+        _make_ranked(1, "AAAA", 10.0, 100_000_000_000),
+        _make_ranked(2, "BBBB", 25.0,  50_000_000_000),
+        _make_ranked(3, "CCCC", 50.0,  20_000_000_000),
+    ]
+
+    # top_n equal to length
+    result_eq = select_capture_watchlist(ranked, top_n=3)
+    assert [r.symbol for r in result_eq] == ["AAAA", "BBBB", "CCCC"]
+
+    # top_n greater than length
+    result_gt = select_capture_watchlist(ranked, top_n=100)
+    assert [r.symbol for r in result_gt] == ["AAAA", "BBBB", "CCCC"]
+
+    # top_n = 0 means "all"
+    result_zero = select_capture_watchlist(ranked, top_n=0)
+    assert [r.symbol for r in result_zero] == ["AAAA", "BBBB", "CCCC"]
+
+
+# ---------------------------------------------------------------------------
+# Test: thin band exhaustion — remaining picks come from non-exhausted bands
+# ---------------------------------------------------------------------------
+
+def test_select_capture_watchlist_thin_band_exhaustion() -> None:
+    """
+    5 tight + 1 wide, top_n=4 → 1 wide (exhausted after round 1) + 3 tight.
+    Round-robin: tight, moderate(empty), wide → T1, W1;
+    then tight, moderate(empty), wide(empty) → T2; T3.
+    """
+    tight = [_make_ranked(i+1, f"T{i+1}", 10.0, 100_000_000_000 - i*1e9) for i in range(5)]
+    wide  = [_make_ranked(6,   "W1",      50.0,  20_000_000_000)]
+
+    ranked = tight + wide
+    result = select_capture_watchlist(ranked, top_n=4)
+
+    assert len(result) == 4, f"Expected 4 selected, got {len(result)}"
+    symbols = [r.symbol for r in result]
+    # Round 1: T1 (tight), W1 (wide — moderate is empty).
+    # Round 2: T2 (tight), wide exhausted, moderate exhausted.
+    # Round 3: T3.
+    assert symbols[0] == "T1"
+    assert symbols[1] == "W1"
+    assert symbols[2] == "T2"
+    assert symbols[3] == "T3"
+    # Exactly 3 tight + 1 wide.
+    assert symbols.count("W1") == 1
+
+
+# ---------------------------------------------------------------------------
+# Test: build_watchlist_file round-trip parse
+# ---------------------------------------------------------------------------
+
+def test_build_watchlist_file_roundtrip() -> None:
+    """
+    The collector parsing rule: keep lines that, after strip, are non-empty
+    and do NOT start with '#'.  The result must equal [s.symbol for s in selected],
+    all uppercase.
+    """
+    selected = [
+        _make_ranked(1, "ITMG", 9.1,  150_000_000_000),
+        _make_ranked(2, "BUMI", 59.5, 170_000_000_000),
+        _make_ranked(3, "ANTM", 25.0,  35_000_000_000),
+    ]
+    text = build_watchlist_file(selected, universe_size=10, top_n=5)
+
+    # Simulate collector parsing.
+    parsed = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+    expected = [s.symbol for s in selected]
+    assert parsed == expected, f"Round-trip mismatch: {parsed} != {expected}"
+    # All uppercase.
+    for sym in parsed:
+        assert sym == sym.upper(), f"Symbol not uppercase: {sym!r}"
+
+
+# ---------------------------------------------------------------------------
 # Test runner
 # ---------------------------------------------------------------------------
 
@@ -300,6 +464,12 @@ if __name__ == "__main__":
         test_non_fundable_excluded,
         test_min_edge_to_clear_equals_spread_plus_roundtrip,
         test_mixed_universe_all_fundable_ranked,
+        # watchlist tests
+        test_friction_band_thresholds,
+        test_select_capture_watchlist_interleaves_bands,
+        test_select_capture_watchlist_passthrough,
+        test_select_capture_watchlist_thin_band_exhaustion,
+        test_build_watchlist_file_roundtrip,
     ]
     passed = 0
     failed = 0
