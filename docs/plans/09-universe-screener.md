@@ -187,7 +187,9 @@ remain deferred (see §2 and §9).
   write SSM directly:** the operator pastes the line into `terraform.tfvars` and
   runs `tofu apply`, keeping the capture set as auditable IaC per
   [ADR-0006](../adr/0006-watchlist-from-ssm.md) (effective on the collector's
-  next boot). This closes the screen → capture loop.
+  next boot). This closes the screen → capture loop. See
+  [ADR-0010](../adr/0010-capture-watchlist-is-topn-diverse-slice-via-tfvars.md)
+  for the slice policy and the tfvars-not-SSM delivery rationale.
 - [ ] **7.3** Tier B refine (deferred) — order-book metrics (time-weighted L1
   depth, realised relative spread bps, quote update rate) via `sbcap features`;
   re-rank Tier-A candidates once their data is captured.
