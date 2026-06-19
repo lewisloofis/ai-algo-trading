@@ -1,6 +1,6 @@
 # Microstructure Signal Study — OBI / Micro-Price Go/No-Go Gate
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-17
+> **Status:** ✔️ Done · **Owner:** @lewis · **Updated:** 2026-06-18 · **Verdict:** ~~PASS~~ → **INCONCLUSIVE** (post-audit)
 > **Related:** [Thesis: microstructure signals](../thesis/01-microstructure-signals.md) · [02-storage-format-and-replay.md](./02-storage-format-and-replay.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md)
 
 This plan builds the harness that **tests the microstructure thesis** on the BUMI
@@ -12,6 +12,23 @@ pursuing on a thin 1-tick IDX name before we invest in a backtest harness.
 
 > ⚠️ **Disclaimer.** See [01-market-data-capture.md §1](./01-market-data-capture.md)
 > for the disclaimer on undocumented Stockbit endpoints and ToS.
+
+> ⚠️ **Result (2026-06-18): originally PASS, downgraded to INCONCLUSIVE after audit.**
+> Built and run on the two BUMI segments (37,711 feature rows). The raw run reported
+> `OBI1`/`wmid_skew` hitting **0.75–0.80** conditional on a move (base ≈0.50). A
+> subsequent look-ahead audit (`collector/study/audit_join.py`) found **no look-ahead
+> bug** (signal at `t`, target strictly forward) **but** that those hit-rates are
+> inflated by **overlapping forward windows**: consecutive book-update rows share the
+> same future, so the headline `n` counts non-independent observations. De-overlapped
+> (one obs per ≥horizon spacing), the best cell (`OBI_w_N`/5s) holds only **~0.56 OOS on
+> 18 independent moves** — below the `MIN_EFF_N=30` evidence bar. **Corrected verdict:
+> INCONCLUSIVE** — the signal looks directional but a single BUMI day is too thin to
+> confirm it. The script now reports de-overlapped hit-rate + effective-N and renders
+> this verdict automatically. **Standing caveats unchanged:** `OBI1` and `wmid_skew` are
+> the same signal on a 1-tick book (`wmid − mid = (spread/2)·OBI1`); predictive ≠
+> tradeable (a backtest must clear spread + fees + latency); the move is coincident with
+> book skew, not anticipated by it. **Next:** more capture days to lift effective-N, then
+> the execution backtester — not "we have a strategy."
 
 ---
 
@@ -92,10 +109,10 @@ A fifth subcommand alongside `stat/dump/export/book`, reusing the side-caching p
   `replay_test.go`) or unit-test the row-assembly helper with synthetic `feed.BookSide`.
 
 ### Tasks
-- [ ] `features.go`: `runFeatures` + flag parsing + state struct + CSV emit
-- [ ] `main.go`: dispatch + usage
-- [ ] `features_test.go`: table-driven snapshot-assembly tests
-- [ ] `go test -race ./cmd/sbcap/...` green
+- [x] `features.go`: `runFeatures` + flag parsing + state struct + CSV emit
+- [x] `main.go`: dispatch + usage
+- [x] `features_test.go`: table-driven snapshot-assembly tests
+- [x] `go test -race ./cmd/sbcap/...` green
 
 ## 4. Part B — Python: the statistical test
 
@@ -134,12 +151,12 @@ AND an **economically meaningful** magnitude. Else NO-GO → book-only signal do
 transfer to BUMI; defer to a trade-tape (OFI) capture before building a backtester.
 
 ### Tasks
-- [ ] `requirements.txt`, `README.md`, `.gitignore`
-- [ ] `obi_forward_return.py`: load + signals + forward-return as-of join (lunch-gap aware)
-- [ ] decile bins, Pearson/Spearman, HAC OLS, conditional hit-rate
-- [ ] block-bootstrap null + chronological OOS split
-- [ ] markdown report + decile / hit-rate / scatter PNGs
-- [ ] run on the two BUMI segments → record the verdict
+- [x] `requirements.txt`, `README.md`, `.gitignore`
+- [x] `obi_forward_return.py`: load + signals + forward-return as-of join (lunch-gap aware)
+- [x] decile bins, Pearson/Spearman, HAC OLS, conditional hit-rate
+- [x] block-bootstrap null + chronological OOS split
+- [x] markdown report + decile / hit-rate / scatter PNGs
+- [x] run on the two BUMI segments → record the verdict (PASS)
 
 ## 5. Standing caveats (carried into report.md and study/README.md)
 

@@ -3,6 +3,27 @@
 > **Status:** ✔️ Done · **Owner:** @lewis · **Updated:** 2026-06-18
 > **Related:** [Thesis: order flow & price impact](../thesis/02-order-flow-and-price-impact.md) · [Thesis: microstructure signals](../thesis/01-microstructure-signals.md) · [04-microstructure-study.md](./04-microstructure-study.md) · [Plans index](./README.md)
 
+> ⚠️ **Results (2026-06-18, audit-corrected).**
+> - **Part A — OFI vs OBI:** `OFI_NO_GAIN`. OFI's incremental OOS R² over `OBI1` never
+>   clears the 5pp bar. On a 1-tick book the static top-of-book snapshot is the
+>   sufficient statistic — adding book-flow buys nothing.
+> - **Part B — signed flow + Kyle's λ:** signed flow adds **nothing** over `OBI1` at every
+>   horizon (OOS ΔR² ≈ 0). Kyle's **λ ≈ 0** IDR/100 lots (significant t, negligible
+>   magnitude) — price impact at the tick is essentially flat. `OBI1`→next-trade-sign
+>   AUC = 0.55 (barely better than a coin).
+> - **Part C — multi-symbol OBI:** originally **STRONG (6/6)**, **downgraded to
+>   `INSUFFICIENT_DATA`** by the audit (`collector/study/audit_join.py`). De-overlapped,
+>   5/6 names (BUMI, DEWA, INDY, ITMG, MDKA) hold a 0.69–0.78 OOS hit-rate on **56–118
+>   independent moves** — a real, generalising tilt — but **ANTM's raw 0.9866 collapsed to
+>   4 independent observations** (a near-frozen mid), the audit's headline cautionary case.
+> - **Part D — pre-open IEP:** descriptive only; all six names flat through the auction on
+>   this day, nothing to characterise.
+>
+> **Takeaway:** `OBI1` is the whole edge — OFI and signed flow are redundant with it, and
+> the predicted move is ~1 tick against a ~1-tick spread with λ≈0. The bottleneck is now
+> execution economics and **independent sample size**, not signal discovery. Next: more
+> capture days, then a queue-aware fill simulator.
+
 Plan 04 passed the OBI/micro-price gate on the June 17 BUMI segments (0 trades,
 book-only data). This plan runs the **next layer of the thesis** now that a full
 trading day with a live trade tape is available: does **OFI add over OBI**, does

@@ -1,7 +1,7 @@
 # Seamless Token Rotation
 
 > **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-17
-> **Related:** [01-market-data-capture.md](./01-market-data-capture.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [Authentication](../01-authentication.md)
+> **Related:** [01-market-data-capture.md](./01-market-data-capture.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [Authentication](../reference/01-authentication.md)
 
 This plan makes Stockbit token rotation seamless and self-healing for the
 headless EC2 collector:
@@ -45,7 +45,7 @@ So the literal "stale env var" symptom does not bite prod. Three real gaps remai
 3. **Refresh-token death has no recovery.** `/login/refresh` 401 →
    `"full login required"` (`session.go:177`) and the collector dies.
 
-**Auth facts** ([01-authentication.md](../01-authentication.md)): access token
+**Auth facts** ([01-authentication.md](../reference/01-authentication.md)): access token
 lives hours, refresh token ~30 days and rotates on every `/login/refresh`;
 concurrent sessions are allowed; `/login/refresh` carries **no** device identifier
 so refresh never re-challenges. Because the EventBridge scheduler **stops/starts**

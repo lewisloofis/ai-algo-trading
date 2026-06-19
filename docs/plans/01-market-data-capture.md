@@ -136,12 +136,12 @@ After `GetWebsocketKey()` returns, the collector sends the first binary frame:
 WebsocketRequest { key, userId, accessToken }
 ```
 
-as described in [02-websocket-streaming.md §3](../02-websocket-streaming.md).
+as described in [02-websocket-streaming.md §3](../reference/02-websocket-streaming.md).
 The WS key is **short-lived and per-connection** — it is re-fetched on every
 (re)connect, never cached across connections.
 
 Token refresh follows the proactive + reactive strategy in
-[01-authentication.md §3](../01-authentication.md): refresh when
+[01-authentication.md §3](../reference/01-authentication.md): refresh when
 `access.expired_at − now() < 60s`; also refresh reactively on any 401. After
 refresh, re-fetch the WS key, re-send auth, re-send subscribe, write a
 `REAUTH` control record.
@@ -151,7 +151,7 @@ refresh, re-fetch the WS key, re-send auth, re-send subscribe, write a
 When `Session.Login()` is called from an **unrecognised device**, the server
 does not return tokens — it returns a `new_device.multi_factor` challenge and
 pushes a verification prompt to an already-trusted device
-([01-authentication.md §1](../01-authentication.md), lines 100–113). A
+([01-authentication.md §1](../reference/01-authentication.md), lines 100–113). A
 headless EC2 instance cannot answer that push.
 
 Therefore the collector **must not** attempt a password login on the server.
@@ -198,7 +198,7 @@ As long as `RefreshMain()` runs before the refresh token's own `expired_at`
 > ⚠️ **Critical design constraint — do not skip this.**
 >
 > `POST /login/refresh` **rotates** the refresh token: the response contains a
-> new one and the old one may be invalidated ([01-authentication.md §3](../01-authentication.md),
+> new one and the old one may be invalidated ([01-authentication.md §3](../reference/01-authentication.md),
 > handled in `auth.go:128–132`). The in-memory `Session` keeps the new token,
 > but **only in memory**. Because EventBridge stops the EC2 instance every
 > evening and restarts it each morning, the process exits each night. On the
@@ -229,7 +229,7 @@ Two implementations are needed:
 ```go
 // Reads and writes ~/.sb-tokens.json (chmod 0600).
 // Never commit this file; add it to .gitignore.
-// Treat the refresh token like a password — see docs/01-authentication.md §5.
+// Treat the refresh token like a password — see docs/reference/01-authentication.md §5.
 type FileTokenStore struct{ Path string }
 
 func (f *FileTokenStore) Load() (string, string, error) { /* read + decrypt */ }
@@ -304,7 +304,7 @@ logic from `collector/main.go`.
 ### 5.2 Subscribe for full microstructure
 
 Subscribe `runningTradeBatch` instead of `runningTrade` for a multi-symbol
-watchlist. Per [02-websocket-streaming.md §4](../02-websocket-streaming.md),
+watchlist. Per [02-websocket-streaming.md §4](../reference/02-websocket-streaming.md),
 `runningTradeBatch` delivers the same `RunningTrade` records but batched,
 reducing per-frame overhead when many symbols are active. Combine with
 `orderBook` and `liveprice`:
@@ -327,7 +327,7 @@ for _, sym := range watchlist {
 The subscription is **replace-mode** (not incremental) — the channel sent
 replaces the current set. Keep the full desired watchlist in memory and resend
 it verbatim on every reconnect and re-auth, as documented in
-[02-websocket-streaming.md §4](../02-websocket-streaming.md).
+[02-websocket-streaming.md §4](../reference/02-websocket-streaming.md).
 
 ### 5.3 Watchlist configuration
 
@@ -404,7 +404,7 @@ Replicate the existing `collector/main.go` logic exactly:
 - **Token refresh:** proactively when `access.expired_at - now() < 60s`. On
   401 error from the server, refresh reactively. After refresh, re-fetch the
   WS key, re-send auth, re-send subscribe, write a `REAUTH` control record.
-  See [01-authentication.md §3](../01-authentication.md) for the full refresh
+  See [01-authentication.md §3](../reference/01-authentication.md) for the full refresh
   strategy (single-flight mutex, retry budget).
 
 ---

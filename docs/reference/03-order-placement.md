@@ -495,6 +495,6 @@ GET  carina.stockbit.com/order/v2/list?filter_criteria.stock_code=BBCA
 | Negotiated | `POST /nego-engine/v1/order` (see §7) |
 
 Prev: [WebSocket streaming ←](./02-websocket-streaming.md) ·
-Index: [README](./README.md)
+Index: [README](../README.md)
 </content>
 </invoke>

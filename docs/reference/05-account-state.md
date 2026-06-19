@@ -498,4 +498,4 @@ crossed, which will happen at an unfavourable price.
 | `GET /trading/info` | Trading token | `margin_trading.*`, `order_count_limit.*`, `split_order.*` |
 
 Prev: [Order placement ←](./03-order-placement.md) ·
-Index: [README](./README.md)
+Index: [README](../README.md)

@@ -4,7 +4,7 @@ This document describes how to authenticate to Stockbit programmatically and how
 to **keep the session alive** (token refresh) so a long-running streaming process
 does not get logged out.
 
-There are two independent sessions (see [README](./README.md)):
+There are two independent sessions (see [README](../README.md)):
 
 1. **Main account session** — username + password → access/refresh tokens.
 2. **Trading (securities) session** — main session + trading PIN → separate

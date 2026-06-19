@@ -512,4 +512,4 @@ trading bots but **not** needed for market data:
 | Re-auth | on `error.code == 401` → refresh token, re-key, re-auth, re-subscribe |
 | Reconnect | backoff `0.75s → 3s`; skip close code `4000` |
 
-Back to [Authentication](./01-authentication.md) · [Index](./README.md)
+Back to [Authentication](./01-authentication.md) · [Index](../README.md)

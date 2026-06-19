@@ -541,7 +541,7 @@ sbcap export s3://sb-marketdata-xxx/raw/dt=2026-01-15/default/seg-014502.binpb.z
 Reconstructs and prints the order book as it stood at a given point in time.
 
 > ⚠️ **Side-assembly detail.** BID and OFFER arrive as **separate** `orderbook`
-> messages (see [02-websocket-streaming.md §5](../02-websocket-streaming.md),
+> messages (see [02-websocket-streaming.md §5](../reference/02-websocket-streaming.md),
 > line 288). The tool replays frames from the start of the segment up to time T,
 > caching the latest BID message and the latest OFFER message per symbol. At T
 > it assembles them into a full ladder — the same side-assembly that
@@ -641,7 +641,7 @@ correspond to the three channel types.
 
 Derived from `runningTradeBatch` frames (`RunningTrade` / `RunningTradeBatch`
 from `collector/datafeed.go`). Field names follow
-[02-websocket-streaming.md §5](../02-websocket-streaming.md).
+[02-websocket-streaming.md §5](../reference/02-websocket-streaming.md).
 
 | Column | Type | Source |
 |--------|------|--------|
@@ -687,7 +687,7 @@ delimited `body` string is parsed (via `parseOrderbookBody` from
 Derived from `liveprice` frames (`LivePrice` from `consumer/entity/v1/entity.proto`).
 Currently `collector/datafeed.go` extracts only `stock_code` and `lastprice` from
 `LivePrice`. The full field set is documented in
-[02-websocket-streaming.md §5](../02-websocket-streaming.md).
+[02-websocket-streaming.md §5](../reference/02-websocket-streaming.md).
 
 | Column | Type | Source |
 |--------|------|--------|

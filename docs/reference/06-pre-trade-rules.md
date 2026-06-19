@@ -557,4 +557,4 @@ them locally:
 | Board type | Hardcoded per instrument type (`RG` / `TN`) | Client constant |
 
 Prev: [Order Placement ←](./03-order-placement.md) ·
-Index: [README](./README.md)
+Index: [README](../README.md)

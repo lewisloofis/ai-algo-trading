@@ -557,4 +557,4 @@ the originating smart order. Source:
 | Polling fallback | `GET carina.stockbit.com/order/v2/list` · `/order/v2/detail?order_id=` |
 | Reconnect | Backoff 0.75 s → cap 3 s; re-send cookie; re-subscribe; poll to reconcile |
 
-Prev: [Order placement ←](./03-order-placement.md) · Index: [README](./README.md)
+Prev: [Order placement ←](./03-order-placement.md) · Index: [README](../README.md)
