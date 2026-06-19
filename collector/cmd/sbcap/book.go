@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"sb-algo-prototype/internal/feed"
-	"sb-algo-prototype/internal/replay"
+	"collector/internal/feed"
+	"collector/internal/replay"
 )
 
 // runBook reconstructs the order book for a symbol at a given point in time.

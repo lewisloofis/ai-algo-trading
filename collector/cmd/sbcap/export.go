@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"sb-algo-prototype/internal/feed"
-	"sb-algo-prototype/internal/replay"
+	"collector/internal/feed"
+	"collector/internal/replay"
 )
 
 // exportRecord is the flat schema emitted for every decoded event.

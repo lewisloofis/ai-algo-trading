@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"sb-algo-prototype/internal/feed"
-	"sb-algo-prototype/internal/sbproto"
+	"collector/internal/feed"
+	"collector/internal/sbproto"
 )
 
 // ---------- Raw protobuf helpers (fixed64-safe) ----------

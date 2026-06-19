@@ -2,29 +2,33 @@
 
 This repo is a demonstration on how to use Stockbit Trading APIs for algo trading purposes.
 
-It focuses on **read-only market-data capture and inspection** — the collector connects to the Stockbit WebSocket, writes raw binary segments to disk, and the inspector lets you query those segments offline. No orders are placed by any tool documented here. The strategy prototype (which can place orders in dry-run or live mode) lives in `collector/README.md`.
+It focuses on **read-only market-data capture and inspection** — the collector connects to the Stockbit WebSocket, writes raw binary segments to disk, and the inspector lets you query those segments offline. No orders are placed by any tool documented here. The strategy prototype (which can place orders in dry-run or live mode) lives in `strategy/README.md`.
 
 ---
 
 ## Layout
 
-| Path | What it is |
-|------|------------|
-| `collector/` | Go module (`module sb-algo-prototype`, Go 1.19). The only `go.mod` in the repo — all `go` commands must run from here. |
-| `collector/cmd/collector/` | Market-data collector binary — connects to Stockbit WebSocket, writes raw binary segments. |
-| `collector/cmd/sbcap/` | Segment inspector binary — stat, dump, export, and order-book reconstruction. |
-| `collector/` (root package) | Orderbook-imbalance strategy prototype (`go run .`). See `collector/README.md`. |
-| `collector/viz/` | Python matplotlib charts (`plot_depth.py`, `plot_price_band.py`). |
-| `bin/` | Compiled binaries (gitignored). |
-| `segments/` | Collector output (gitignored). Layout: `segments/dt=<YYYY-MM-DD>/<watchlistID>/seg-<HHMMSS>.binpb[.zst]`. |
-| `docs/` | Protocol and design documentation. |
+The top-level directories map to the trading-system pillars in
+[`docs/plans/00-roadmap-research-to-live.md`](docs/plans/00-roadmap-research-to-live.md).
+
+| Path | Pillar | What it is |
+|------|--------|------------|
+| `collector/` | **Pillar 4** — Infra & ops | Go module `collector` (Go 1.21). Data-layer only: capture binary (`cmd/collector`), segment inspector (`cmd/sbcap`), shared packages (`internal/`), and Python depth charts (`viz/`). See `collector/README.md`. |
+| `research/` | **Pillar 1** — Alpha factory | Python research environment: microstructure studies (`study/`), fill simulator and backtester (`backtest/`), shared utilities (`lib/`). |
+| `strategy/` | **Pillar 2** — Execution (seed) | Go module `strategy` (Go 1.21). The zero-dependency orderbook-imbalance trading-bot prototype. Can place real orders when armed. See `strategy/README.md`. |
+| `go.work` | — | Go workspace tying `./collector` and `./strategy`. Run `go` commands from the repo root or from within either module directory. |
+| `bin/` | — | Compiled binaries (gitignored). |
+| `segments/` | — | Collector output (gitignored). Layout: `segments/dt=<YYYY-MM-DD>/<watchlistID>/seg-<HHMMSS>.binpb[.zst]`. |
+| `docs/` | — | Protocol, design documentation, plans, and ADRs. |
 
 ---
 
 ## Prerequisites
 
-- **Go 1.19+** (the collector module requires it).
-- **Python + venv** (optional — only needed for the `viz/` charts). The venv is at `collector/viz/.venv/`.
+- **Go 1.21+** (required by both `collector/` and `strategy/`).
+- **Python + venv** (optional — two independent venvs):
+  - `collector/viz/.venv/` — depth and price-band charts (matplotlib).
+  - `research/.venv/` — microstructure studies and backtest harness (pandas, scipy, etc.).
 
 ---
 
@@ -143,7 +147,7 @@ Or run the binary directly (flags must still come first):
 
 ## Visualize
 
-Render a depth ladder chart from a segment (requires the Python venv):
+Render a depth ladder chart from a segment (requires the `collector/viz/.venv` Python venv):
 
 ```bash
 collector/viz/.venv/bin/python collector/viz/plot_depth.py \
@@ -163,5 +167,7 @@ collector/viz/.venv/bin/python collector/viz/plot_depth.py \
 
 ## More
 
-- **Strategy prototype** (orderbook-imbalance, dry-run and live trading): [`collector/README.md`](collector/README.md)
+- **Strategy prototype** (orderbook-imbalance signal, dry-run and live trading): [`strategy/README.md`](strategy/README.md)
+- **Research studies** (microstructure analysis, fill simulator, backtest harness): [`research/`](research/)
 - **Protocol documentation** (auth, WebSocket streaming, order placement, lifecycle): [`docs/`](docs/)
+- **Roadmap** (five pillars, 40 bps cost gate, sequencing): [`docs/plans/00-roadmap-research-to-live.md`](docs/plans/00-roadmap-research-to-live.md)

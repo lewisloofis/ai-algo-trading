@@ -1,6 +1,6 @@
 package feed
 
-import "sb-algo-prototype/internal/sbproto"
+import "collector/internal/sbproto"
 
 // DetectSwitchReset is a cheap partial decoder for the hot capture path.
 // It walks the outer WebsocketWrapMessageChannel looking only for field 10

@@ -26,6 +26,8 @@ matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
 
+from lib.loaders import load_csv as _load_csv_base
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -44,12 +46,8 @@ SESSION_START_H, SESSION_START_M = 9, 0
 # ---------------------------------------------------------------------------
 
 def load_csv(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, dtype=str)
-    df["recv_ns"] = pd.to_numeric(df["recv_ns"], errors="coerce")
-    for col in [c for c in df.columns if c != "iso_wib"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    df = df.sort_values("recv_ns").reset_index(drop=True)
-    df["_wib_dt"] = pd.to_datetime(df["iso_wib"], errors="coerce")
+    """Load features CSV and drop rows with unparseable _wib_dt."""
+    df = _load_csv_base(path)
     df = df.dropna(subset=["_wib_dt"])
     return df
 

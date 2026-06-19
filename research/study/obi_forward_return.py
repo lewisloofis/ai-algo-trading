@@ -15,11 +15,15 @@ Tests per (signal × horizon):
   6. Chronological out-of-sample split (60/40 on long session + short pre-lunch
      segment as a second holdout).
 
-Verdict at top of report.md:
+Verdict at top of report.md (three-state):
   PASS if ≥1 (signal, horizon) on held-out data shows:
     • monotone decile curve, AND
     • correlation / hit-rate clearing the bootstrap null 95th pct, AND
-    • economically meaningful magnitude (|corr| > 0.02 or hit-rate > 0.52).
+    • economically meaningful magnitude (|corr| > 0.02 or hit-rate > 0.52), AND
+    • a de-overlapped OOS hit-rate > 0.52 over ≥ MIN_EFF_N independent moves.
+  INCONCLUSIVE if a (signal, horizon) meets every PASS criterion except that the
+    de-overlapped OOS hit-rate rests on fewer than MIN_EFF_N independent
+    (non-overlapping) moves — directional but needs more days to confirm.
   Otherwise: NO-GO.
 
 Usage:
@@ -31,7 +35,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,11 +43,22 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import scipy.stats as sps
-import statsmodels.api as sm
+
+from lib.loaders import load_csv, clean
+from lib.session import _is_lunch, _crosses_lunch
+from lib.signals import add_forward_returns
+from lib.stats import (
+    _circular_block_resample,
+    bootstrap_null,
+    decile_means,
+    is_monotone,
+    nonoverlap_hit_rate,
+    ols_hac,
+    MIN_EFF_N,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -57,10 +71,6 @@ N_BOOTSTRAP = 500                          # circular block-bootstrap draws
 BOOTSTRAP_BLOCK = 30                       # block length for bootstrap (rows)
 # Minimum fraction of non-zero fwd_mid_ret rows required to run tests.
 MIN_NONZERO_FRAC = 0.001
-
-# Lunch gap (WIB): cross-gap joins are invalid.
-LUNCH_START_H, LUNCH_START_M = 12, 0
-LUNCH_END_H,   LUNCH_END_M   = 13, 30
 
 # Verdict thresholds (economically meaningful on a 1-tick name).
 THRESH_ABS_CORR = 0.02
@@ -96,6 +106,8 @@ class TestResult:
     clears_bootstrap: bool     # real metric > null 95th pct
     is_economical: bool        # |corr| > threshold or hit_rate > threshold
     oos_clears: bool           # OOS hit_rate > bootstrap null 95th pct
+    oos_hit_rate_noov: float   # de-overlapped OOS hit-rate (independent obs)
+    oos_eff_n: int             # number of independent conditional observations
 
 
 @dataclass
@@ -112,39 +124,6 @@ class StudyResults:
 # ---------------------------------------------------------------------------
 # Loading and cleaning
 # ---------------------------------------------------------------------------
-
-def load_csv(path: str) -> pd.DataFrame:
-    """Load the features CSV; coerce all numeric columns; sort by recv_ns."""
-    df = pd.read_csv(path, dtype=str)
-    # Convert recv_ns to int64 first (it is always present and non-empty).
-    df["recv_ns"] = pd.to_numeric(df["recv_ns"], errors="coerce")
-    # Coerce everything else numeric.
-    numeric_cols = [c for c in df.columns if c not in ("iso_wib",)]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    df = df.sort_values("recv_ns").reset_index(drop=True)
-    return df
-
-
-def clean(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Require top-of-book bid and ask; drop rows where either is missing/zero.
-    Parse iso_wib to a tz-aware datetime for gap detection.
-    """
-    df = df.copy()
-    df = df.dropna(subset=["bid_px_0", "ask_px_0", "bid_vol_0", "ask_vol_0"])
-    df = df[(df["bid_px_0"] > 0) & (df["ask_px_0"] > 0)]
-    df = df[(df["bid_vol_0"] > 0) & (df["ask_vol_0"] > 0)]
-
-    # Parse iso_wib (YYYY-MM-DDTHH:MM:SS.mmm) to a naive datetime (already WIB).
-    # Use errors="coerce" so a single bad timestamp doesn't kill the run.
-    df["_wib_dt"] = pd.to_datetime(df["iso_wib"], errors="coerce")
-    df = df.dropna(subset=["_wib_dt"])
-
-    df = df.reset_index(drop=True)
-    return df
-
 
 # ---------------------------------------------------------------------------
 # Signal computation
@@ -210,244 +189,7 @@ def add_signals(df: pd.DataFrame, depth: int) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Forward-return join (lunch-gap aware)
-# ---------------------------------------------------------------------------
-
-def _is_lunch(dt: pd.Timestamp) -> bool:
-    """Return True if dt falls in the lunch gap [12:00, 13:30) WIB."""
-    h, m = dt.hour, dt.minute
-    lunch_start = LUNCH_START_H * 60 + LUNCH_START_M
-    lunch_end   = LUNCH_END_H   * 60 + LUNCH_END_M
-    t_min = h * 60 + m
-    return lunch_start <= t_min < lunch_end
-
-
-def _crosses_lunch(t_ns: int, t_fwd_ns: int, wib_dt: pd.Timestamp) -> bool:
-    """
-    Return True if the forward window crosses the lunch boundary.
-
-    A boundary crossing occurs when the minutes-in-day of t and t_fwd span
-    across [12:00, 13:30). We check by converting t_fwd to a WIB timestamp
-    and seeing if either endpoint is in the gap, or if the gap lies between them.
-    """
-    if pd.isna(wib_dt):
-        return True
-    # Reconstruct approximate fwd timestamp.
-    fwd_dt = wib_dt + pd.Timedelta(nanoseconds=(t_fwd_ns - t_ns))
-    t_min     = wib_dt.hour * 60 + wib_dt.minute
-    fwd_t_min = fwd_dt.hour  * 60 + fwd_dt.minute
-    lunch_s   = LUNCH_START_H * 60 + LUNCH_START_M
-    lunch_e   = LUNCH_END_H   * 60 + LUNCH_END_M
-
-    if _is_lunch(wib_dt) or _is_lunch(fwd_dt):
-        return True
-    # Gap straddle: t before gap, fwd_t after gap.
-    if t_min < lunch_s and fwd_t_min >= lunch_s:
-        return True
-    # (Reverse: fwd_t before gap, t after gap — unlikely with positive h but safe.)
-    if fwd_t_min < lunch_s and t_min >= lunch_s:
-        return True
-    return False
-
-
-def add_forward_returns(df: pd.DataFrame, horizons_s: list[int]) -> pd.DataFrame:
-    """
-    For each horizon h (seconds), join each row at t to the row at t+h via
-    numpy.searchsorted on recv_ns. Drop rows that cross the lunch gap or have
-    no data within a tolerance of a few seconds past t+h.
-
-    Adds columns: fwd_mid_ret_Xs, fwd_last_ret_Xs (secondary).
-    """
-    df = df.copy()
-    recv_ns_arr = df["recv_ns"].to_numpy(dtype=np.int64)
-    mid_arr     = df["mid"].to_numpy(dtype=float)
-    last_arr    = df["last_price"].to_numpy(dtype=float) if "last_price" in df.columns else np.full(len(df), np.nan)
-    wib_arr     = df["_wib_dt"].to_numpy()  # dtype object (Timestamps)
-
-    TOLERANCE_NS = 5 * int(1e9)  # 5 s tolerance: if matched row is > h+5s away, drop
-
-    for h in horizons_s:
-        h_ns = h * int(1e9)
-        fwd_mid  = np.full(len(df), np.nan)
-        fwd_last = np.full(len(df), np.nan)
-        valid    = np.zeros(len(df), dtype=bool)
-
-        for i in range(len(df)):
-            t    = recv_ns_arr[i]
-            t_h  = t + h_ns
-            idx  = int(np.searchsorted(recv_ns_arr, t_h, side="left"))
-            if idx >= len(recv_ns_arr):
-                continue
-            t_matched = recv_ns_arr[idx]
-            # Tolerance: matched row must be within t+h + TOLERANCE_NS.
-            if t_matched > t_h + TOLERANCE_NS:
-                continue
-            # Lunch-gap check.
-            wib_dt = pd.Timestamp(wib_arr[i])
-            if _crosses_lunch(t, t_matched, wib_dt):
-                continue
-            fwd_mid[i]  = mid_arr[idx]  - mid_arr[i]
-            fwd_last[i] = last_arr[idx] - last_arr[i]
-            valid[i]    = True
-
-        fwd_mid[~valid]  = np.nan
-        fwd_last[~valid] = np.nan
-        df[f"fwd_mid_ret_{h}s"]  = fwd_mid
-        df[f"fwd_last_ret_{h}s"] = fwd_last
-
-    return df
-
-
-# ---------------------------------------------------------------------------
-# Block-bootstrap null
-# ---------------------------------------------------------------------------
-
-def _circular_block_resample(arr: np.ndarray, block: int, n_draws: int, rng: np.random.Generator) -> np.ndarray:
-    """
-    Return an array of shape (n_draws, len(arr)) — each row is a circular
-    block-resampled permutation of arr, preserving short-range autocorrelation.
-    """
-    n = len(arr)
-    n_blocks = int(np.ceil(n / block))
-    out = np.empty((n_draws, n), dtype=float)
-    for d in range(n_draws):
-        starts = rng.integers(0, n, size=n_blocks)
-        pieces = []
-        for s in starts:
-            idx = np.arange(s, s + block) % n
-            pieces.append(arr[idx])
-        combined = np.concatenate(pieces)[:n]
-        out[d] = combined
-    return out
-
-
-def bootstrap_null(
-    signal: np.ndarray,
-    target: np.ndarray,
-    block: int = BOOTSTRAP_BLOCK,
-    n_draws: int = N_BOOTSTRAP,
-    seed: int = 42,
-) -> tuple[float, float]:
-    """
-    Compute the 95th percentile of |Pearson corr| and hit-rate under the
-    circular block-bootstrap null (signal shuffled, target fixed).
-
-    Returns (corr_95, hr_95).
-    """
-    rng = np.random.default_rng(seed)
-    valid = np.isfinite(signal) & np.isfinite(target)
-    s = signal[valid]
-    t = target[valid]
-    if len(s) < 50:
-        return np.nan, np.nan
-
-    resampled = _circular_block_resample(s, block, n_draws, rng)
-    nonzero_t = np.abs(t) > 0
-
-    corrs = np.empty(n_draws)
-    hrs   = np.empty(n_draws)
-    for d in range(n_draws):
-        perm = resampled[d]
-        c, _ = sps.pearsonr(perm, t)
-        corrs[d] = abs(c)
-        # Hit-rate under null (only on non-zero target rows).
-        nt   = t[nonzero_t]
-        np_  = perm[nonzero_t]
-        if len(nt) > 0:
-            hrs[d] = np.mean(np.sign(np_) == np.sign(nt))
-        else:
-            hrs[d] = np.nan
-
-    return float(np.nanpercentile(corrs, 95)), float(np.nanpercentile(hrs, 95))
-
-
-# ---------------------------------------------------------------------------
-# Decile analysis
-# ---------------------------------------------------------------------------
-
-def decile_means(signal: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Bin signal into deciles; return (bin_centers, means, sems) for target.
-    Rows where either signal or target is NaN are dropped.
-    """
-    valid = np.isfinite(signal) & np.isfinite(target)
-    s = signal[valid]
-    t = target[valid]
-    if len(s) < 20:
-        return np.full(10, np.nan), np.full(10, np.nan), np.full(10, np.nan)
-
-    decile_edges = np.percentile(s, np.linspace(0, 100, 11))
-    # Force monotone edges to avoid empty bins from ties.
-    decile_edges = np.unique(decile_edges)
-    if len(decile_edges) < 3:
-        return np.full(10, np.nan), np.full(10, np.nan), np.full(10, np.nan)
-
-    bin_idx = np.digitize(s, decile_edges[1:-1])
-    n_bins  = len(decile_edges) - 1
-
-    centers = np.empty(n_bins)
-    means   = np.empty(n_bins)
-    sems    = np.empty(n_bins)
-    for b in range(n_bins):
-        mask   = bin_idx == b
-        vals   = t[mask]
-        sig_b  = s[mask]
-        centers[b] = np.mean(sig_b) if len(sig_b) > 0 else np.nan
-        means[b]   = np.mean(vals)  if len(vals)  > 0 else np.nan
-        sems[b]    = (np.std(vals, ddof=1) / np.sqrt(len(vals))) if len(vals) > 1 else np.nan
-
-    return centers, means, sems
-
-
-def is_monotone(means: np.ndarray, min_frac: float = 0.80) -> bool:
-    """
-    Crude monotonicity check: at least `min_frac` of consecutive (mean[i], mean[i+1])
-    pairs must be non-decreasing (for positive-OBI ⇒ positive-return hypothesis).
-    Returns True for both monotone increasing and decreasing (signal is directional).
-    """
-    valid = means[np.isfinite(means)]
-    if len(valid) < 3:
-        return False
-    diffs = np.diff(valid)
-    n_inc = np.sum(diffs >= 0)
-    n_dec = np.sum(diffs <= 0)
-    n     = len(diffs)
-    return max(n_inc, n_dec) / n >= min_frac
-
-
-# ---------------------------------------------------------------------------
-# OLS with Newey-West HAC
-# ---------------------------------------------------------------------------
-
-def ols_hac(signal: np.ndarray, target: np.ndarray, maxlags: int) -> tuple[float, float, float]:
-    """
-    Fit OLS fwd_mid_ret ~ signal with Newey-West HAC SE.
-
-    Returns (slope, t_stat, r_squared).
-    """
-    valid = np.isfinite(signal) & np.isfinite(target)
-    s = signal[valid]
-    t = target[valid]
-    if len(s) < 30:
-        return np.nan, np.nan, np.nan
-    X = sm.add_constant(s, prepend=True)
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            fit = sm.OLS(t, X).fit(
-                cov_type="HAC",
-                cov_kwds={"maxlags": maxlags, "use_correction": True},
-            )
-        slope  = float(fit.params[1])
-        t_stat = float(fit.tvalues[1])
-        r2     = float(fit.rsquared)
-    except Exception:
-        return np.nan, np.nan, np.nan
-    return slope, t_stat, r2
-
-
-# ---------------------------------------------------------------------------
-# Hit-rate
+# Hit-rate (3-tuple local wrapper used by this script)
 # ---------------------------------------------------------------------------
 
 def conditional_hit_rate(signal: np.ndarray, target: np.ndarray) -> tuple[float, float, int]:
@@ -652,6 +394,7 @@ def run_one(
         short_hit_rate=_nan, short_n=0,
         is_decile_monotone=False, clears_bootstrap=False,
         is_economical=False, oos_clears=False,
+        oos_hit_rate_noov=_nan, oos_eff_n=0,
     )
 
     if n_obs < 30 or n_nonzero < int(n_obs * MIN_NONZERO_FRAC):
@@ -680,12 +423,20 @@ def run_one(
     hit_rate, base_rate, n_cond = conditional_hit_rate(s, t)
 
     # 5. Block-bootstrap null.
-    bs_corr_95, bs_hr_95 = bootstrap_null(s, t)
+    # Adaptive block: at least BOOTSTRAP_BLOCK, at least ~1 horizon's worth of
+    # rows, capped so it stays well below the series length (n).
+    _span_s = max(1.0, (df_all["recv_ns"].iloc[-1] - df_all["recv_ns"].iloc[0]) / 1e9)
+    _rows_per_s = max(1.0, n_obs / _span_s)
+    _adaptive_block = min(
+        max(BOOTSTRAP_BLOCK, int(round(horizon_s * _rows_per_s))),
+        max(50, n_obs // 20),
+    )
+    bs_corr_95, bs_hr_95 = bootstrap_null(s, t, block=_adaptive_block)
 
     # Bootstrap histogram.
     # Re-run bootstrap to collect the full array for plotting.
     rng = np.random.default_rng(42)
-    resampled = _circular_block_resample(s, BOOTSTRAP_BLOCK, N_BOOTSTRAP, rng)
+    resampled = _circular_block_resample(s, _adaptive_block, N_BOOTSTRAP, rng)
     null_corrs = np.array([abs(sps.pearsonr(resampled[d], t)[0]) for d in range(N_BOOTSTRAP)])
     png_paths.append(plot_bootstrap_hist(signal_col, horizon_s, null_corrs, pr, outdir))
 
@@ -703,6 +454,12 @@ def run_one(
     oos_hr, oos_n          = session_hit_rate(oos_s, oos_t)
     oos_clears             = (
         np.isfinite(oos_hr) and np.isfinite(bs_hr_95) and oos_hr > bs_hr_95
+    )
+
+    # De-overlapped OOS hit-rate — the trustworthy independent-sample measure.
+    df_oos = df_long.iloc[int(0.60 * len(df_long)):]
+    oos_hit_rate_noov, oos_eff_n = nonoverlap_hit_rate(
+        df_oos, signal_col, target_col, horizon_s
     )
 
     # Short session holdout.
@@ -737,6 +494,8 @@ def run_one(
         clears_bootstrap=clears_bootstrap,
         is_economical=is_economical,
         oos_clears=oos_clears,
+        oos_hit_rate_noov=oos_hit_rate_noov,
+        oos_eff_n=oos_eff_n,
     )
 
 
@@ -795,8 +554,16 @@ def build_report(study: StudyResults, png_paths: list[str]) -> str:
     if study.verdict == "PASS":
         lines.append(
             f"Signal `{study.verdict_signal}` at `{study.verdict_horizon}s` horizon "
-            "cleared all three criteria on held-out data:\n"
-            "monotone decile curve + bootstrap null + economically meaningful magnitude."
+            "cleared all criteria on held-out data: monotone decile curve + bootstrap null + "
+            "economically meaningful magnitude + de-overlapped eff_n ≥ MIN_EFF_N."
+        )
+    elif study.verdict == "INCONCLUSIVE":
+        lines.append(
+            f"Signal `{study.verdict_signal}` at `{study.verdict_horizon}s` horizon "
+            "passed the directional criteria (monotone decile curve + bootstrap null + "
+            "economically meaningful magnitude) **but the de-overlapped effective sample size "
+            f"is below the minimum of {MIN_EFF_N} independent observations** needed to trust "
+            "the OOS hit-rate. Collect more trading days and re-run to confirm."
         )
     else:
         lines.append(
@@ -848,7 +615,8 @@ def build_report(study: StudyResults, png_paths: list[str]) -> str:
             f"| Hit-rate (cond. on move) | {_fmt(r.hit_rate)} (base≈{_fmt(r.base_rate)}, n={r.n_nonzero}) |",
             f"| Bootstrap corr 95th pct | {_fmt(r.bootstrap_corr_95)} |",
             f"| Bootstrap HR 95th pct | {_fmt(r.bootstrap_hr_95)} |",
-            f"| OOS hit-rate (last 40%) | {_fmt(r.oos_hit_rate)} (n={r.oos_n}) |",
+            f"| OOS hit-rate (raw, overlapping) | {_fmt(r.oos_hit_rate)} (n={r.oos_n}) |",
+            f"| OOS hit-rate (de-overlapped) | {_fmt(r.oos_hit_rate_noov)} (eff n={r.oos_eff_n}) |",
             f"| Short-session holdout HR | {_fmt(r.short_hit_rate)} (n={r.short_n}) |",
             f"| Decile monotone | {'yes' if r.is_decile_monotone else 'no'} |",
             f"| Clears bootstrap null | {'yes' if r.clears_bootstrap else 'no'} |",
@@ -872,6 +640,10 @@ def build_report(study: StudyResults, png_paths: list[str]) -> str:
         "",
         "## Standing caveats",
         "",
+        "- **Raw hit-rates count overlapping windows** — consecutive book-update rows "
+        "share almost the same 5-second future, so raw n counts overstate independent "
+        "evidence by 1–2 orders of magnitude. The de-overlapped hit-rate and effective N "
+        "(eff n) are the trustworthy figures; the raw hit-rate is shown for completeness.",
         "- **One name, one day, two sessions** — feasibility gate only, not generalisable proof.",
         "- **No trade tape** — OFI (the strongest signal per Cont-Kukanov-Stoikov 2014) is "
         "untestable on this data.",
@@ -931,13 +703,28 @@ def run_study(df_raw: pd.DataFrame, depth: int, outdir: str) -> StudyResults:
                 flush=True,
             )
 
-    # Determine verdict — check for any result clearing all three criteria on OOS.
+    # Verdict logic:
+    # PASS         — all criteria met including de-overlapped eff_n >= MIN_EFF_N
+    # INCONCLUSIVE — criteria met except eff_n < MIN_EFF_N (need more data)
+    # NO-GO        — criteria not met
     for r in study.results:
-        if r.is_decile_monotone and r.clears_bootstrap and r.is_economical and r.oos_clears:
+        base_ok = r.is_decile_monotone and r.clears_bootstrap and r.is_economical and r.oos_clears
+        noov_ok = (
+            np.isfinite(r.oos_hit_rate_noov)
+            and r.oos_eff_n >= MIN_EFF_N
+            and r.oos_hit_rate_noov > THRESH_HIT_RATE
+        )
+        if base_ok and noov_ok:
             study.verdict         = "PASS"
             study.verdict_signal  = r.signal
             study.verdict_horizon = r.horizon_s
             break
+        if base_ok and np.isfinite(r.oos_hit_rate_noov) and r.oos_hit_rate_noov > THRESH_HIT_RATE:
+            # Signal looks directional but rests on too few independent moves.
+            if study.verdict == "NO-GO":
+                study.verdict         = "INCONCLUSIVE"
+                study.verdict_signal  = r.signal
+                study.verdict_horizon = r.horizon_s
 
     # Write report.
     report_text = build_report(study, png_paths)

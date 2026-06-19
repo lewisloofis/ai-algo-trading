@@ -3,8 +3,8 @@ package feed_test
 import (
 	"testing"
 
-	"sb-algo-prototype/internal/feed"
-	"sb-algo-prototype/internal/sbproto"
+	"collector/internal/feed"
+	"collector/internal/sbproto"
 )
 
 // buildOrderbookWrap builds a WebsocketWrapMessageChannel frame (field 10 =

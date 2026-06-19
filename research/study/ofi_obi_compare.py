@@ -26,8 +26,18 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import scipy.stats as sps
 import statsmodels.api as sm
+
+from lib.loaders import load_csv, clean
+from lib.session import filter_continuous_session
+from lib.signals import add_forward_returns, add_obi1
+from lib.stats import (
+    bootstrap_null,
+    conditional_hit_rate as _conditional_hit_rate_2tuple,
+    decile_means,
+    is_monotone,
+    ols_hac,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -39,263 +49,24 @@ HORIZONS_S = [1, 5, 10, 30, 60]
 N_BOOTSTRAP = 500
 BOOTSTRAP_BLOCK = 30
 
-LUNCH_START_H, LUNCH_START_M = 12, 0
-LUNCH_END_H, LUNCH_END_M = 13, 30
-
-SESSION_START_H, SESSION_START_M = 9, 0
-SESSION_AM_END_H, SESSION_AM_END_M = 12, 0
-SESSION_PM_START_H, SESSION_PM_START_M = 13, 30
-SESSION_END_H, SESSION_END_M = 16, 15
-
 OFI_INCREMENTAL_THRESHOLD = 0.05  # 5 percentage points
 
 
 # ---------------------------------------------------------------------------
-# Shared utilities (copied from obi_forward_return.py)
+# Local helpers
 # ---------------------------------------------------------------------------
-
-def _is_lunch(dt: pd.Timestamp) -> bool:
-    h, m = dt.hour, dt.minute
-    lunch_start = LUNCH_START_H * 60 + LUNCH_START_M
-    lunch_end = LUNCH_END_H * 60 + LUNCH_END_M
-    t_min = h * 60 + m
-    return lunch_start <= t_min < lunch_end
-
-
-def _crosses_lunch(t_ns: int, t_fwd_ns: int, wib_dt: pd.Timestamp) -> bool:
-    if pd.isna(wib_dt):
-        return True
-    fwd_dt = wib_dt + pd.Timedelta(nanoseconds=(t_fwd_ns - t_ns))
-    t_min = wib_dt.hour * 60 + wib_dt.minute
-    fwd_t_min = fwd_dt.hour * 60 + fwd_dt.minute
-    lunch_s = LUNCH_START_H * 60 + LUNCH_START_M
-    lunch_e = LUNCH_END_H * 60 + LUNCH_END_M
-
-    if _is_lunch(wib_dt) or _is_lunch(fwd_dt):
-        return True
-    if t_min < lunch_s and fwd_t_min >= lunch_s:
-        return True
-    if fwd_t_min < lunch_s and t_min >= lunch_s:
-        return True
-    return False
-
-
-def add_forward_returns(df: pd.DataFrame, horizons_s: list[int]) -> pd.DataFrame:
-    df = df.copy()
-    recv_ns_arr = df["recv_ns"].to_numpy(dtype=np.int64)
-    mid_arr = df["mid"].to_numpy(dtype=float)
-    wib_arr = df["_wib_dt"].to_numpy()
-
-    TOLERANCE_NS = 5 * int(1e9)
-
-    for h in horizons_s:
-        h_ns = h * int(1e9)
-        fwd_mid = np.full(len(df), np.nan)
-        valid = np.zeros(len(df), dtype=bool)
-
-        for i in range(len(df)):
-            t = recv_ns_arr[i]
-            t_h = t + h_ns
-            idx = int(np.searchsorted(recv_ns_arr, t_h, side="left"))
-            if idx >= len(recv_ns_arr):
-                continue
-            t_matched = recv_ns_arr[idx]
-            if t_matched > t_h + TOLERANCE_NS:
-                continue
-            wib_dt = pd.Timestamp(wib_arr[i])
-            if _crosses_lunch(t, t_matched, wib_dt):
-                continue
-            fwd_mid[i] = mid_arr[idx] - mid_arr[i]
-            valid[i] = True
-
-        fwd_mid[~valid] = np.nan
-        df[f"fwd_mid_ret_{h}s"] = fwd_mid
-
-    return df
-
-
-def _circular_block_resample(
-    arr: np.ndarray, block: int, n_draws: int, rng: np.random.Generator
-) -> np.ndarray:
-    n = len(arr)
-    n_blocks = int(np.ceil(n / block))
-    out = np.empty((n_draws, n), dtype=float)
-    for d in range(n_draws):
-        starts = rng.integers(0, n, size=n_blocks)
-        pieces = []
-        for s in starts:
-            idx = np.arange(s, s + block) % n
-            pieces.append(arr[idx])
-        combined = np.concatenate(pieces)[:n]
-        out[d] = combined
-    return out
-
-
-def bootstrap_null(
-    signal: np.ndarray,
-    target: np.ndarray,
-    block: int = BOOTSTRAP_BLOCK,
-    n_draws: int = N_BOOTSTRAP,
-    seed: int = 42,
-) -> tuple[float, float]:
-    rng = np.random.default_rng(seed)
-    valid = np.isfinite(signal) & np.isfinite(target)
-    s = signal[valid]
-    t = target[valid]
-    if len(s) < 50:
-        return np.nan, np.nan
-
-    resampled = _circular_block_resample(s, block, n_draws, rng)
-    nonzero_t = np.abs(t) > 0
-
-    corrs = np.empty(n_draws)
-    hrs = np.empty(n_draws)
-    for d in range(n_draws):
-        perm = resampled[d]
-        c, _ = sps.pearsonr(perm, t)
-        corrs[d] = abs(c)
-        nt = t[nonzero_t]
-        np_ = perm[nonzero_t]
-        if len(nt) > 0:
-            hrs[d] = np.mean(np.sign(np_) == np.sign(nt))
-        else:
-            hrs[d] = np.nan
-
-    return float(np.nanpercentile(corrs, 95)), float(np.nanpercentile(hrs, 95))
-
-
-def ols_hac(
-    signal: np.ndarray, target: np.ndarray, maxlags: int
-) -> tuple[float, float, float]:
-    valid = np.isfinite(signal) & np.isfinite(target)
-    s = signal[valid]
-    t = target[valid]
-    if len(s) < 30:
-        return np.nan, np.nan, np.nan
-    X = sm.add_constant(s, prepend=True)
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            fit = sm.OLS(t, X).fit(
-                cov_type="HAC",
-                cov_kwds={"maxlags": maxlags, "use_correction": True},
-            )
-        return float(fit.params[1]), float(fit.tvalues[1]), float(fit.rsquared)
-    except Exception:
-        return np.nan, np.nan, np.nan
-
 
 def conditional_hit_rate(
     signal: np.ndarray, target: np.ndarray
 ) -> tuple[float, float, int]:
-    valid = np.isfinite(signal) & np.isfinite(target)
-    s, t = signal[valid], target[valid]
-    nonzero = np.abs(t) > 0
-    s_nz, t_nz = s[nonzero], t[nonzero]
-    if len(s_nz) == 0:
-        return np.nan, 0.5, 0
-    return float(np.mean(np.sign(s_nz) == np.sign(t_nz))), 0.5, int(len(s_nz))
-
-
-def decile_means(
-    signal: np.ndarray, target: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    valid = np.isfinite(signal) & np.isfinite(target)
-    s = signal[valid]
-    t = target[valid]
-    if len(s) < 20:
-        return np.full(10, np.nan), np.full(10, np.nan), np.full(10, np.nan)
-
-    decile_edges = np.percentile(s, np.linspace(0, 100, 11))
-    decile_edges = np.unique(decile_edges)
-    if len(decile_edges) < 3:
-        return np.full(10, np.nan), np.full(10, np.nan), np.full(10, np.nan)
-
-    bin_idx = np.digitize(s, decile_edges[1:-1])
-    n_bins = len(decile_edges) - 1
-
-    centers = np.empty(n_bins)
-    means = np.empty(n_bins)
-    sems = np.empty(n_bins)
-    for b in range(n_bins):
-        mask = bin_idx == b
-        vals = t[mask]
-        sig_b = s[mask]
-        centers[b] = np.mean(sig_b) if len(sig_b) > 0 else np.nan
-        means[b] = np.mean(vals) if len(vals) > 0 else np.nan
-        sems[b] = (np.std(vals, ddof=1) / np.sqrt(len(vals))) if len(vals) > 1 else np.nan
-
-    return centers, means, sems
-
-
-def is_monotone(means: np.ndarray, min_frac: float = 0.80) -> bool:
-    valid = means[np.isfinite(means)]
-    if len(valid) < 3:
-        return False
-    diffs = np.diff(valid)
-    n_inc = np.sum(diffs >= 0)
-    n_dec = np.sum(diffs <= 0)
-    n = len(diffs)
-    return max(n_inc, n_dec) / n >= min_frac
-
-
-# ---------------------------------------------------------------------------
-# Data loading and cleaning
-# ---------------------------------------------------------------------------
-
-def load_csv(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, dtype=str)
-    df["recv_ns"] = pd.to_numeric(df["recv_ns"], errors="coerce")
-    numeric_cols = [c for c in df.columns if c not in ("iso_wib",)]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    df = df.sort_values("recv_ns").reset_index(drop=True)
-    return df
-
-
-def clean(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df = df.dropna(subset=["bid_px_0", "ask_px_0", "bid_vol_0", "ask_vol_0"])
-    df = df[(df["bid_px_0"] > 0) & (df["ask_px_0"] > 0)]
-    df = df[(df["bid_vol_0"] > 0) & (df["ask_vol_0"] > 0)]
-    df["_wib_dt"] = pd.to_datetime(df["iso_wib"], errors="coerce")
-    df = df.dropna(subset=["_wib_dt"])
-    return df.reset_index(drop=True)
-
-
-def filter_continuous_session(df: pd.DataFrame) -> pd.DataFrame:
-    h = df["_wib_dt"].dt.hour
-    m = df["_wib_dt"].dt.minute
-    t_min = h * 60 + m
-
-    am_start = SESSION_START_H * 60 + SESSION_START_M
-    am_end = SESSION_AM_END_H * 60 + SESSION_AM_END_M
-    pm_start = SESSION_PM_START_H * 60 + SESSION_PM_START_M
-    pm_end = SESSION_END_H * 60 + SESSION_END_M
-
-    mask = ((t_min >= am_start) & (t_min < am_end)) | (
-        (t_min >= pm_start) & (t_min <= pm_end)
-    )
-    return df[mask].reset_index(drop=True)
+    """3-tuple wrapper around lib.stats.conditional_hit_rate."""
+    hr, n = _conditional_hit_rate_2tuple(signal, target)
+    return hr, 0.5, n
 
 
 # ---------------------------------------------------------------------------
 # Signal computation
 # ---------------------------------------------------------------------------
-
-def add_mid_and_obi1(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    bid0 = df["bid_px_0"].to_numpy(dtype=float)
-    ask0 = df["ask_px_0"].to_numpy(dtype=float)
-    bvol0 = df["bid_vol_0"].to_numpy(dtype=float)
-    avol0 = df["ask_vol_0"].to_numpy(dtype=float)
-    df["mid"] = (bid0 + ask0) / 2.0
-    total = bvol0 + avol0
-    safe_total = np.where(total > 0, total, np.nan)
-    df["OBI1"] = (bvol0 - avol0) / safe_total
-    return df
-
 
 def compute_ofi(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -690,7 +461,7 @@ def run_study(df_raw: pd.DataFrame, depth: int, outdir: str) -> None:
     n_raw = len(df_raw)
 
     df = clean(df_raw)
-    df = add_mid_and_obi1(df)
+    df = add_obi1(df)
 
     df = df.dropna(subset=["delta_bid_vol", "delta_ask_vol"])
     df = filter_continuous_session(df)

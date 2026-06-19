@@ -1,184 +1,174 @@
-# Stockbit Algo-Trading Prototype (Go)
+# collector — Data Layer (Pillar 4)
 
-A small, **dependency-free** Go program that demonstrates end-to-end algorithmic
-trading on Stockbit:
+Go module `collector`. Pure read-only data capture and inspection. This module
+connects to the Stockbit market-data WebSocket, writes raw binary segments to disk,
+ships them to S3, and provides offline inspection and depth-chart tooling. It does
+not place orders and has no dependency on any order or trading API.
 
-```
-login → keep session alive → stream live order book → orderbook-imbalance
-strategy → place buy/sell orders (dry-run by default, live behind safety gates)
-```
+## Contents
 
-It ties together the three docs in [`../docs`](../docs): authentication & token
-refresh, the Protobuf market-data WebSocket, and order placement.
+| Path | What it is |
+|------|------------|
+| `cmd/collector/` | Capture binary — connects to the Stockbit WebSocket, writes raw Protobuf frames to rolling binary segment files, compresses and ships to S3. |
+| `cmd/sbcap/` | Segment inspector/exporter — stat, dump, export, and order-book reconstruction from `.binpb` / `.binpb.zst` files. |
+| `internal/feed/` | WebSocket feed client, SSM-backed config (watchlist, token rotation). |
+| `internal/replay/` | Segment replayer — reads raw segment bytes and feeds a strategy the same event stream it would see live. |
+| `internal/segment/` | Segment file format: append, roll, flush, and manifest logic. |
+| `internal/s3upload/` | S3 upload with retry and progress tracking. |
+| `internal/sbproto/` | Hand-rolled Protobuf codec for the Stockbit market-data wire format. |
+| `internal/zstdio/` | zstd read/write wrappers. |
+| `viz/` | Python depth-ladder and price-band charts (`plot_depth.py`, `plot_price_band.py`). |
 
-> ⚠️ **This can place REAL orders with REAL money** when armed (see *Safety*).
-> By default it runs in **dry-run** mode and sends nothing.
+## Prerequisites
 
-## Why this matters (the pitch)
+- **Go 1.21+**
+- **Python + venv** (optional — only needed for `viz/` charts; venv at `viz/.venv/`)
 
-It shows, on live IDX data, that a machine can (1) ingest the full order book in
-real time, (2) turn microstructure (bid/offer volume imbalance) into a decision
-in microseconds, and (3) act on it under hard risk limits — the loop a human
-trader can't run at that speed or consistency. Swap the strategy file and the
-same harness runs any signal.
+## Build
 
-## Design
-
-Zero third-party dependencies — a hand-rolled minimal Protobuf codec and
-WebSocket client (pure stdlib), so it builds offline on any Go ≥ 1.19. Field
-numbers come straight from the contracts in [`../sb-protos`](../sb-protos).
-
-| File | Responsibility |
-|------|----------------|
-| `config.go` | Env-var config + safety gates |
-| `auth.go` | Exodus login / refresh, Carina PIN login, WebSocket key |
-| `websocket.go` | Minimal RFC 6455 client (TLS handshake, masked frames) |
-| `protobuf.go` | Minimal proto3 reader/writer |
-| `datafeed.go` | Encode `WebsocketRequest`, decode `WebsocketWrapMessageChannel`, parse the order-book `body` string |
-| `strategy.go` | Order-book volume-imbalance signal (pluggable) |
-| `broker.go` | Carina order client: dry-run, live gating, caps, kill switch |
-| `main.go` | Wires it together: connect, subscribe, heartbeat, reconnect, refresh |
-| `prototype_test.go` | Unit tests for the parsing/strategy/codec (no network) |
-
-## Build & test
+From the repo root (Go workspace):
 
 ```bash
-cd collector
+make build
+```
+
+Or from this directory:
+
+```bash
 go build ./...
-go test ./...
 ```
 
-## Verifying trade capture (next market open)
+Both produce `bin/collector` and `bin/sbcap` at the repo root.
 
-IDX hours are approximately 09:00–16:00 WIB. Run these commands during a live
-session to confirm `running_trade_batch` frames are actually being captured:
+## Collect market data
 
-```bash
-# 1. Build the collector and the inspector.
-go build -o /tmp/collector ./cmd/collector
-go build -o /tmp/sbcap     ./cmd/sbcap
+The collector is pure data capture. It connects to the Stockbit market-data WebSocket
+and appends raw Protobuf frames to local binary segments; it does not place any orders.
 
-# 2. Set credentials (one of the three options below):
-#    Option A — username + password (triggers fresh login):
-export SB_USERNAME='your_username'
-export SB_PASSWORD='your_password'
-#    Option B — pre-obtained access token (skips login):
-export SB_ACCESS_TOKEN='<token>'
-#    Option C — persisted token file (FileTokenStore, default path ~/.sb-tokens.json):
-#    just ensure the file exists with valid tokens; no env var needed.
+### Authentication
 
-# 3. Set the capture target and let it run for a few minutes.
-export CAPTURE_DIR="./segments-test"
-export CAPTURE_WATCHLIST_ID="verify"
-# watchlist.txt must list at least one symbol, e.g. BUMI or BBCA.
-/tmp/collector        # Ctrl-C after ~2 minutes
+Supply credentials via environment variables:
 
-# 4. Inspect the resulting segment.
-/tmp/sbcap stat ./segments-test/dt=$(date -u +%Y-%m-%d)/verify/seg-*.binpb.zst
-```
-
-A successful capture shows `running_trade > 0` in the "channels" line.  If it
-still shows zero, confirm the collector log says:
-  `[feed] subscribed runningTradeBatch+orderBook+liveprice+iepiev for N symbol(s)`
-and check that the market is open (pre-open auction 08:55–09:00 WIB may send
-IEPIEV but no running trades; continuous trading starts at 09:00).
-
-## Run (dry-run — safe default)
-
+**Option A — username/password login:**
 ```bash
 export SB_USERNAME='your_stockbit_username'
 export SB_PASSWORD='your_stockbit_password'
-export SB_SYMBOL='BBCA'
-go run .
 ```
 
-Expected output (abridged):
-
-```
-[auth] main session ready (user_id="123456")
-────────────────────────────────────────────
- Stockbit algo prototype — orderbook imbalance
- symbol=BBCA depth=5 threshold=0.30 lots/order=1
- caps: maxOrders=5 maxLots=5 maxNotional=10000000 cooldown=30s
- mode: DRY-RUN (no real orders)
-────────────────────────────────────────────
-[feed] connected to wss://wss-trading.stockbit.com/ws
-[feed] subscribed order_book + liveprice for BBCA
-[book] BID top=9500 x 120000 (10 levels) | imbalance=+0.412 ref=9500 (depth=5, thr=0.30) | signal=BUY
-[broker] DRY-RUN BUY 1 lot(s) BBCA @ 9500  (POST /order/v2/buy {...})
+**Option B — pre-supplied tokens (skips password login):**
+```bash
+export SB_ACCESS_TOKEN='...'
+export SB_REFRESH_TOKEN='...'
 ```
 
-> First login from a new machine may hit a device-verification challenge. Log in
-> once interactively in the Stockbit app from this host/network first, or supply
-> tokens directly via `SB_ACCESS_TOKEN` / `SB_REFRESH_TOKEN` (skips password login).
+> **Device verification:** The first login from a new machine or network may trigger
+> a device-verification challenge. Either log in to the Stockbit app interactively
+> from this host first, or use Option B to supply tokens directly.
 
-## Run (LIVE — real orders, real money)
+### Additional env vars
 
-Three things must all be true, by design:
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `CAPTURE_DIR` | `./segments` | Root directory for segment output. |
+| `CAPTURE_WATCHLIST_ID` | `default` | Watchlist ID — becomes the middle path segment in every segment key. |
+| `SSM_PARAM_PREFIX` | _(unset)_ | When set (e.g. `/sb-collector`), reads watchlist and watchlist_id from AWS SSM Parameter Store at boot instead of env vars. See [ADR-0006](../docs/adr/0006-watchlist-from-ssm.md). |
+
+### Run
 
 ```bash
-export SB_USERNAME=... SB_PASSWORD=...
-export SB_TRADING_PIN='123456'                 # trading (securities) session
-export ALGO_LIVE=true
-export ALGO_CONFIRM='I_UNDERSTAND_LIVE_TRADING' # exact phrase required
-go run .
+make collect
 ```
 
-If `ALGO_LIVE=true` but `ALGO_CONFIRM` is not the exact phrase, it stays in
-dry-run and tells you so. Start tiny: `ALGO_LOTS_PER_ORDER=1`, low
-`ALGO_MAX_ORDERS`, and a small `ALGO_MAX_NOTIONAL_IDR`.
+Or directly:
 
-## Safety model
-
-- **Dry-run by default** — no order leaves the process unless explicitly armed.
-- **Two-key arming** — `ALGO_LIVE=true` *and* the exact `ALGO_CONFIRM` phrase.
-- **Per-order caps** — `ALGO_MAX_LOTS`, `ALGO_MAX_NOTIONAL_IDR`. A breach trips
-  the kill switch.
-- **Session cap** — `ALGO_MAX_ORDERS` total, then the kill switch trips.
-- **Cooldown** — `ALGO_COOLDOWN_SEC` between orders.
-- **No stacking / no shorting** — won't add to an existing long; only sells what
-  this bot bought.
-- **Kill switch** — any order error or cap breach stops all further trading.
-
-This is a **demo**, not production trading software: it doesn't reconcile real
-fills/positions from the account, handle partial fills, or manage exits with
-smart orders (the API for those is in [`../docs/03-order-placement.md`](../docs/03-order-placement.md)).
-
-## Configuration reference
-
-| Env var | Default | Meaning |
-|---------|---------|---------|
-| `SB_USERNAME` / `SB_PASSWORD` | — | Main account login |
-| `SB_TRADING_PIN` | — | Trading PIN (required for live) |
-| `SB_ACCESS_TOKEN` / `SB_REFRESH_TOKEN` | — | Use preset main tokens (skip login) |
-| `SB_TRADING_ACCESS_TOKEN` / `SB_TRADING_REFRESH_TOKEN` | — | Use preset trading tokens (skip PIN) |
-| `SB_SYMBOL` | `BBCA` | Symbol to trade |
-| `SB_EXODUS_HOST` | `https://exodus.stockbit.com` | Auth host |
-| `SB_CARINA_HOST` | `https://carina.stockbit.com` | Trading host |
-| `SB_WS_URL` | `wss://wss-trading.stockbit.com/ws` | Market-data WebSocket |
-| `SB_WS_SUBPROTOCOL` | `web` | WS sub-protocol (`web` / `ios`) |
-| `ALGO_IMBALANCE_THRESHOLD` | `0.30` | \|imbalance\| needed to fire a signal |
-| `ALGO_DEPTH_LEVELS` | `5` | Order-book levels summed for imbalance |
-| `ALGO_LOTS_PER_ORDER` | `1` | Lots per order (1 lot = 100 shares) |
-| `ALGO_COOLDOWN_SEC` | `30` | Min seconds between orders |
-| `ALGO_MAX_ORDERS` | `5` | Session order limit (then kill switch) |
-| `ALGO_MAX_LOTS` | `5` | Per-order lot cap |
-| `ALGO_MAX_NOTIONAL_IDR` | `10000000` | Per-order notional cap |
-| `ALGO_LIVE` | `false` | Enable live trading path |
-| `ALGO_CONFIRM` | — | Must equal `I_UNDERSTAND_LIVE_TRADING` to send live |
-
-## Using the generated Protobuf stubs instead (optional)
-
-On Go ≥ 1.23 you can drop the hand-rolled codec and import the real stubs:
-
-```go
-// go.mod
-require go.stockbit.io/protos v0.0.0
-replace go.stockbit.io/protos => ../sb-protos
+```bash
+CAPTURE_DIR=$(pwd)/segments ./bin/collector
 ```
 
-Then use `datafeed.WebsocketRequest`, `WebsocketChannel`, and
-`WebsocketWrapMessageChannel` from
-`go.stockbit.io/protos/gen/go/securities/transactional/datafeed/v1`, and marshal
-with `google.golang.org/protobuf/proto`. The wire format is identical, so the
-rest of the program is unchanged.
+### Output layout
+
+```
+segments/
+  dt=2026-06-17/
+    default/
+      seg-044221.binpb.zst     # closed segment (zstd-compressed)
+      seg-044221.manifest.json # sidecar: frame count, channels, sha256
+      seg-<HHMMSS>.binpb       # open/active segment (raw, no .zst yet)
+```
+
+Open segments are plain `.binpb`; they are compressed to `.binpb.zst` with a
+sibling `.manifest.json` when closed (at midnight or on clean shutdown). Segments
+roll hourly by default — see [ADR-0004](../docs/adr/0004-hourly-segment-roll-cadence.md).
+
+Channels captured per symbol: `orderbook`, `liveprice`, `running_trade_batch`,
+`iepiev` (IEP/IEV auction data). See [ADR-0007](../docs/adr/0007-iepiev-capture-and-preopening-trades.md).
+
+## Inspect segments with sbcap
+
+```
+sbcap — market-data segment inspector
+
+Usage:
+  sbcap stat   <seg>
+  sbcap dump   <seg> [--symbol S] [--channel trades|orderbook|liveprice] [--from HH:MM] [--to HH:MM]
+  sbcap export <seg> --format ndjson|csv
+  sbcap book   <seg> --symbol S --at HH:MM:SS [--json]
+```
+
+> **Flags-before-path:** Go's flag parser stops at the first positional argument.
+> Always put flags **before** the segment path, not after.
+
+### Examples
+
+Via `make` (convenient for passing args):
+
+```bash
+# Summarise a segment
+make sbcap ARGS="stat segments/dt=2026-06-17/default/seg-044221.binpb.zst"
+
+# Dump orderbook messages for BUMI between 11:50 and 12:00
+make sbcap ARGS="dump --symbol BUMI --channel orderbook --from 11:50 --to 12:00 segments/dt=2026-06-17/default/seg-044221.binpb.zst"
+
+# Reconstruct the order book for BUMI at a specific time (JSON output)
+make sbcap ARGS="book --symbol BUMI --at 11:53:00 --json segments/dt=2026-06-17/default/seg-044221.binpb.zst"
+```
+
+Or run the binary directly:
+
+```bash
+./bin/sbcap stat segments/dt=2026-06-17/default/seg-044221.binpb.zst
+
+./bin/sbcap book --symbol BUMI --at 11:53:00 --json \
+  segments/dt=2026-06-17/default/seg-044221.binpb.zst
+```
+
+## Visualize
+
+Render a depth-ladder chart from a segment (requires the Python venv):
+
+```bash
+# First run: set up the venv
+cd viz
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Render a depth chart
+.venv/bin/python plot_depth.py \
+  ../segments/dt=2026-06-17/default/seg-044221.binpb.zst \
+  --symbol BUMI --at 11:53:00 --out depth.png
+```
+
+## Security
+
+- Tokens are cached to `~/.sb-tokens.json` (mode `0600`). Never commit this file.
+- The refresh token rotates on each refresh; the on-disk cache is updated automatically.
+- This module uses private, undocumented Stockbit endpoints. Use your own account
+  and be respectful of rate limits.
+
+## More
+
+- **Strategy prototype** (orderbook-imbalance signal, dry-run and live trading): [`../strategy/README.md`](../strategy/README.md)
+- **Research studies** (microstructure analysis, backtest harness): [`../research/`](../research/)
+- **Protocol documentation** (auth, WebSocket, order placement, lifecycle): [`../docs/`](../docs/)
+- **Roadmap**: [`../docs/plans/00-roadmap-research-to-live.md`](../docs/plans/00-roadmap-research-to-live.md)

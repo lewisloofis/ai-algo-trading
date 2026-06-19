@@ -9,9 +9,9 @@ import (
 	"sort"
 	"time"
 
-	"sb-algo-prototype/internal/replay"
-	"sb-algo-prototype/internal/segment"
-	"sb-algo-prototype/internal/zstdio"
+	"collector/internal/replay"
+	"collector/internal/segment"
+	"collector/internal/zstdio"
 )
 
 // wib is the fixed UTC+7 zone for Western Indonesia Time.

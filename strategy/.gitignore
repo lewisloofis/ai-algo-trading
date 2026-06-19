@@ -1,0 +1,2 @@
+# Compiled binary (module name == dir name → `go build` emits ./strategy)
+/strategy

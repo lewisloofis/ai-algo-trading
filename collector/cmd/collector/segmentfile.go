@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"sb-algo-prototype/internal/s3upload"
-	"sb-algo-prototype/internal/segment"
-	"sb-algo-prototype/internal/zstdio"
+	"collector/internal/s3upload"
+	"collector/internal/segment"
+	"collector/internal/zstdio"
 )
 
 // segmentFile manages the currently open segment: the backing *os.File, the
@@ -130,6 +130,23 @@ func (sf *segmentFile) trackTime(ns int64) {
 		sf.startNs = ns
 	}
 	sf.endNs = ns
+}
+
+// rollOpenDelay gives the asynchronous closeAndCompress time to detach the
+// active segment (under the lock) before open() installs a new one, so the
+// in-flight compressor cannot accidentally close the freshly-opened segment.
+const rollOpenDelay = 100 * time.Millisecond
+
+// roll closes and compresses the current segment in the background and opens a
+// fresh one. Compression and upload run in a goroutine so the capture hot path
+// is not blocked; rollOpenDelay ensures the close has detached the old segment
+// before the new one is installed. Mirrors the original midnight-roll sequence.
+func (sf *segmentFile) roll(symbols, channels []string) {
+	go sf.closeAndCompress(symbols, channels)
+	time.Sleep(rollOpenDelay)
+	if err := sf.open(time.Now()); err != nil {
+		log.Printf("[segment] open new segment after roll: %v", err)
+	}
 }
 
 // closeAndCompress flushes, closes, compresses, and writes the manifest for

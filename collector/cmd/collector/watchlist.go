@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"sb-algo-prototype/internal/feed"
+	"collector/internal/feed"
 )
 
 // loadWatchlist resolves the symbol list, uppercases all entries, strips blank

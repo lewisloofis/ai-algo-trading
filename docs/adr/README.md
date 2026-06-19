@@ -12,6 +12,7 @@ algo-trading project, using a lightweight [ADR](https://adr.github.io/) format.
 | [0005](./0005-s3-versioning-suspended.md) | Suspend S3 bucket versioning to cap storage cost | Accepted |
 | [0006](./0006-watchlist-from-ssm.md) | Source watchlist and watchlist_id from SSM at boot | Accepted |
 | [0007](./0007-iepiev-capture-and-preopening-trades.md) | Capture IEP/IEV and exclude pre-opening trades from flow features | Accepted |
+| [0008](./0008-top-level-layout-mirrors-pillars.md) | Top-level layout mirrors trading-system pillars | Accepted |
 
 ## When to write an ADR
 

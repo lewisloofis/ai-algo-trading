@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"sb-algo-prototype/internal/replay"
+	"collector/internal/replay"
 )
 
 // runTrades replays one or more captured segments and emits a per-trade CSV

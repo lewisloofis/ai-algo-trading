@@ -19,22 +19,22 @@ cd collector
 go build -o /tmp/sbcap ./cmd/sbcap
 
 # 2. Emit the features CSV for both BUMI segments (one ordered stream)
-mkdir -p study/out
+mkdir -p ../research/study/out
 /tmp/sbcap features \
   segments/dt=2026-06-17/default/seg-044221.binpb.zst \
   segments/dt=2026-06-17/default/seg-062241.binpb.zst \
-  --symbol BUMI --depth 5 > study/out/bumi_features.csv
+  --symbol BUMI --depth 5 > ../research/study/out/bumi_features.csv
 
-wc -l study/out/bumi_features.csv   # sanity: ~33k+ rows
+wc -l ../research/study/out/bumi_features.csv   # sanity: ~33k+ rows
 
-# 3. Set up Python environment (first run only)
-cd study
+# 3. Set up Python environment (first run only), from the research/ root
+cd ../research
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 4. Run the analysis
-python obi_forward_return.py --csv out/bumi_features.csv
+# 4. Run the analysis as a module, from research/ (so `from lib import …` resolves)
+python -m study.obi_forward_return --csv study/out/bumi_features.csv
 
 # Outputs:
 #   out/report.md       — PASS / NO-GO verdict + full metrics table

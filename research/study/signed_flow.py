@@ -25,10 +25,23 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import scipy.stats as sps
 import statsmodels.api as sm
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
+
+from lib.session import (
+    SESSION_START_H,
+    SESSION_START_M,
+    SESSION_AM_END_H,
+    SESSION_AM_END_M,
+    SESSION_PM_START_H,
+    SESSION_PM_START_M,
+    SESSION_END_H,
+    SESSION_END_M,
+)
+from lib.loaders import load_csv, clean
+from lib.signals import add_forward_returns, add_obi1
+from lib.stats import conditional_hit_rate
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -40,14 +53,6 @@ HORIZONS_S = [1, 5, 10, 30, 60]
 N_BOOTSTRAP = 500
 BOOTSTRAP_BLOCK = 30
 
-LUNCH_START_H, LUNCH_START_M = 12, 0
-LUNCH_END_H, LUNCH_END_M = 13, 30
-
-SESSION_START_H, SESSION_START_M = 9, 0
-SESSION_AM_END_H, SESSION_AM_END_M = 12, 0
-SESSION_PM_START_H, SESSION_PM_START_M = 13, 30
-SESSION_END_H, SESSION_END_M = 16, 15
-
 FLOW_WINDOWS_S = [1, 5, 10, 30]
 LOTS_PER_UNIT = 100  # for Kyle's lambda scaling
 
@@ -55,66 +60,9 @@ OFI_INCREMENTAL_THRESHOLD = 0.05
 
 
 # ---------------------------------------------------------------------------
-# Shared utilities
+# Local ols_hac variant — returns 5-tuple (slope, se, t_stat, ci_lo, ci_hi)
+# This differs from lib.stats.ols_hac which returns (slope, t_stat, r2).
 # ---------------------------------------------------------------------------
-
-def _is_lunch(dt: pd.Timestamp) -> bool:
-    h, m = dt.hour, dt.minute
-    lunch_start = LUNCH_START_H * 60 + LUNCH_START_M
-    lunch_end = LUNCH_END_H * 60 + LUNCH_END_M
-    t_min = h * 60 + m
-    return lunch_start <= t_min < lunch_end
-
-
-def _crosses_lunch(t_ns: int, t_fwd_ns: int, wib_dt: pd.Timestamp) -> bool:
-    if pd.isna(wib_dt):
-        return True
-    fwd_dt = wib_dt + pd.Timedelta(nanoseconds=(t_fwd_ns - t_ns))
-    t_min = wib_dt.hour * 60 + wib_dt.minute
-    fwd_t_min = fwd_dt.hour * 60 + fwd_dt.minute
-    lunch_s = LUNCH_START_H * 60 + LUNCH_START_M
-
-    if _is_lunch(wib_dt) or _is_lunch(fwd_dt):
-        return True
-    if t_min < lunch_s and fwd_t_min >= lunch_s:
-        return True
-    if fwd_t_min < lunch_s and t_min >= lunch_s:
-        return True
-    return False
-
-
-def add_forward_returns(df: pd.DataFrame, horizons_s: list[int]) -> pd.DataFrame:
-    df = df.copy()
-    recv_ns_arr = df["recv_ns"].to_numpy(dtype=np.int64)
-    mid_arr = df["mid"].to_numpy(dtype=float)
-    wib_arr = df["_wib_dt"].to_numpy()
-    TOLERANCE_NS = 5 * int(1e9)
-
-    for h in horizons_s:
-        h_ns = h * int(1e9)
-        fwd_mid = np.full(len(df), np.nan)
-        valid = np.zeros(len(df), dtype=bool)
-
-        for i in range(len(df)):
-            t = recv_ns_arr[i]
-            t_h = t + h_ns
-            idx = int(np.searchsorted(recv_ns_arr, t_h, side="left"))
-            if idx >= len(recv_ns_arr):
-                continue
-            t_matched = recv_ns_arr[idx]
-            if t_matched > t_h + TOLERANCE_NS:
-                continue
-            wib_dt = pd.Timestamp(wib_arr[i])
-            if _crosses_lunch(t, t_matched, wib_dt):
-                continue
-            fwd_mid[i] = mid_arr[idx] - mid_arr[i]
-            valid[i] = True
-
-        fwd_mid[~valid] = np.nan
-        df[f"fwd_mid_ret_{h}s"] = fwd_mid
-
-    return df
-
 
 def ols_hac(
     signal: np.ndarray, target: np.ndarray, maxlags: int
@@ -166,31 +114,9 @@ def ols_hac_r2(
         return np.nan
 
 
-def conditional_hit_rate(
-    signal: np.ndarray, target: np.ndarray
-) -> tuple[float, int]:
-    valid = np.isfinite(signal) & np.isfinite(target)
-    s, t = signal[valid], target[valid]
-    nonzero = np.abs(t) > 0
-    s_nz, t_nz = s[nonzero], t[nonzero]
-    if len(s_nz) == 0:
-        return np.nan, 0
-    return float(np.mean(np.sign(s_nz) == np.sign(t_nz))), int(len(s_nz))
-
-
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
-
-def load_features(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, dtype=str)
-    df["recv_ns"] = pd.to_numeric(df["recv_ns"], errors="coerce")
-    for col in [c for c in df.columns if c != "iso_wib"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    df = df.sort_values("recv_ns").reset_index(drop=True)
-    df["_wib_dt"] = pd.to_datetime(df["iso_wib"], errors="coerce")
-    return df
-
 
 def load_trades(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, dtype=str)
@@ -205,14 +131,6 @@ def load_trades(path: str) -> pd.DataFrame:
     return df
 
 
-def clean_features(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df = df.dropna(subset=["bid_px_0", "ask_px_0", "bid_vol_0", "ask_vol_0", "_wib_dt"])
-    df = df[(df["bid_px_0"] > 0) & (df["ask_px_0"] > 0)]
-    df = df[(df["bid_vol_0"] > 0) & (df["ask_vol_0"] > 0)]
-    return df.reset_index(drop=True)
-
-
 def _in_continuous_session(wib_dt: pd.Series) -> pd.Series:
     h = wib_dt.dt.hour
     m = wib_dt.dt.minute
@@ -224,23 +142,6 @@ def _in_continuous_session(wib_dt: pd.Series) -> pd.Series:
     return ((t_min >= am_start) & (t_min < am_end)) | (
         (t_min >= pm_start) & (t_min <= pm_end)
     )
-
-
-# ---------------------------------------------------------------------------
-# Signal computation
-# ---------------------------------------------------------------------------
-
-def add_mid_obi1(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    bid0 = df["bid_px_0"].to_numpy(dtype=float)
-    ask0 = df["ask_px_0"].to_numpy(dtype=float)
-    bvol0 = df["bid_vol_0"].to_numpy(dtype=float)
-    avol0 = df["ask_vol_0"].to_numpy(dtype=float)
-    df["mid"] = (bid0 + ask0) / 2.0
-    total = bvol0 + avol0
-    safe = np.where(total > 0, total, np.nan)
-    df["OBI1"] = (bvol0 - avol0) / safe
-    return df
 
 
 def add_signed_flow(
@@ -612,11 +513,11 @@ def build_report(
 def run_study(feat_path: str, trades_path: str, outdir: str) -> None:
     os.makedirs(outdir, exist_ok=True)
 
-    feat = load_features(feat_path)
+    feat = load_csv(feat_path)
     trades = load_trades(trades_path)
 
-    feat = clean_features(feat)
-    feat = add_mid_obi1(feat)
+    feat = clean(feat)
+    feat = add_obi1(feat)
     feat = feat[_in_continuous_session(feat["_wib_dt"])].reset_index(drop=True)
 
     trades_sess = trades[_in_continuous_session(trades["_wib_dt"])].reset_index(drop=True)

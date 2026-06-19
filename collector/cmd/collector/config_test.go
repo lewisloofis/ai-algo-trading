@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"sb-algo-prototype/internal/feed"
+	"collector/internal/feed"
 )
 
 func TestConfigHasAuth(t *testing.T) {

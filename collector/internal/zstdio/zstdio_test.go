@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"sb-algo-prototype/internal/zstdio"
+	"collector/internal/zstdio"
 )
 
 // TestCompressRoundTrip writes known data to a temp file, compresses it with

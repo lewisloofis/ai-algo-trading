@@ -22,9 +22,9 @@ import (
 	"syscall"
 	"time"
 
-	"sb-algo-prototype/internal/feed"
-	"sb-algo-prototype/internal/s3upload"
-	"sb-algo-prototype/internal/segment"
+	"collector/internal/feed"
+	"collector/internal/s3upload"
+	"collector/internal/segment"
 )
 
 const (
@@ -34,6 +34,11 @@ const (
 	reconnectMax      = 3 * time.Second
 	readDeadline      = 60 * time.Second
 	statsInterval     = 15 * time.Second
+	// rollInterval bounds the data at risk from an unexpected crash: the active
+	// segment is closed, compressed, and uploaded to S3 at every interval
+	// boundary, so at most one interval of capture can be lost. The 00:00 UTC
+	// boundary also advances the dt=<date> partition.
+	rollInterval = time.Hour
 )
 
 // activeChannels enables OrderBook, LivePrice, RunningTradeBatch, and IEPIEV
@@ -151,6 +156,10 @@ func main() {
 		log.Printf("[s3] upload enabled (bucket=%s)", bucket)
 	}
 
+	// Recover any segments left uncompressed by a previous crash or hard kill
+	// before opening a fresh one, so stranded capture still reaches S3.
+	recoverOrphans(cfg.captureDir, sf.uploader, cfg.symbols, activeChannelNames)
+
 	if err := sf.open(time.Now()); err != nil {
 		log.Fatalf("segment open: %v", err)
 	}
@@ -170,9 +179,10 @@ func main() {
 	// Proactive token refresh loop (mirrors prototype/main.go).
 	go refreshLoop(ctx, session, sf)
 
-	// UTC midnight roll: when the date changes, close and compress the current
-	// segment, then open a new one for the new day.
-	go midnightRollLoop(ctx, sf, cfg.symbols)
+	// Periodic roll: close, compress, and upload the active segment at every
+	// rollInterval boundary so a crash loses at most one interval of data, not
+	// the whole session. The 00:00 UTC boundary also rolls the date partition.
+	go rollLoop(ctx, sf, cfg.symbols, rollInterval)
 
 	runWithReconnect(ctx, cfg, session, sf)
 
@@ -208,26 +218,26 @@ func refreshLoop(ctx context.Context, s *feed.Session, sf *segmentFile) {
 	}
 }
 
-// midnightRollLoop watches for UTC midnight and rolls the active segment.
-func midnightRollLoop(ctx context.Context, sf *segmentFile, symbols []string) {
-	for {
-		now := time.Now().UTC()
-		// Next UTC midnight.
-		next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
-		wait := time.Until(next)
+// nextRollBoundary returns the next wall-clock boundary aligned to interval, in
+// UTC. With interval=1h this is the top of the next hour; the 00:00 boundary
+// also advances the dt=<date> partition, subsuming the previous midnight-only
+// roll.
+func nextRollBoundary(now time.Time, interval time.Duration) time.Time {
+	return now.UTC().Truncate(interval).Add(interval)
+}
 
+// rollLoop rolls the active segment at every interval boundary so completed
+// segments are compressed and uploaded to S3 throughout the session, bounding
+// the data at risk from an unexpected crash to a single interval.
+func rollLoop(ctx context.Context, sf *segmentFile, symbols []string, interval time.Duration) {
+	for {
+		wait := time.Until(nextRollBoundary(time.Now(), interval))
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(wait):
-			log.Printf("[segment] UTC midnight — rolling segment")
-			// Close and compress in a goroutine so the capture loop is not blocked.
-			go sf.closeAndCompress(symbols, activeChannelNames)
-			// Small delay to ensure closeAndCompress clears sf.sw before open.
-			time.Sleep(100 * time.Millisecond)
-			if err := sf.open(time.Now()); err != nil {
-				log.Printf("[segment] open new segment after roll: %v", err)
-			}
+			log.Printf("[segment] %s boundary — rolling segment", interval)
+			sf.roll(symbols, activeChannelNames)
 		}
 	}
 }

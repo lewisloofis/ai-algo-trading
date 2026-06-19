@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"sb-algo-prototype/internal/segment"
+	"collector/internal/segment"
 )
 
 // TestRoundTrip writes a mix of data and control records and reads them back,

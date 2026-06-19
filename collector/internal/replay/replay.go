@@ -12,9 +12,9 @@ import (
 	"log"
 	"time"
 
-	"sb-algo-prototype/internal/feed"
-	"sb-algo-prototype/internal/segment"
-	"sb-algo-prototype/internal/zstdio"
+	"collector/internal/feed"
+	"collector/internal/segment"
+	"collector/internal/zstdio"
 )
 
 // EventKind identifies the category of a MarketEvent.

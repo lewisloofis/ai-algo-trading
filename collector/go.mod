@@ -1,4 +1,4 @@
-module sb-algo-prototype
+module collector
 
 go 1.21
 

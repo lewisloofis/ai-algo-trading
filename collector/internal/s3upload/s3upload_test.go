@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"sb-algo-prototype/internal/s3upload"
+	"collector/internal/s3upload"
 )
 
 // TestSegmentKey verifies the S3 key format for segment files and manifests.

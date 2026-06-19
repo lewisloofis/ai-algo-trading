@@ -6,10 +6,10 @@ import (
 	"os"
 	"testing"
 
-	"sb-algo-prototype/internal/feed"
-	"sb-algo-prototype/internal/replay"
-	"sb-algo-prototype/internal/sbproto"
-	"sb-algo-prototype/internal/segment"
+	"collector/internal/feed"
+	"collector/internal/replay"
+	"collector/internal/sbproto"
+	"collector/internal/segment"
 )
 
 // buildTradeFrameF encodes a single RunningTrade wrapped in a

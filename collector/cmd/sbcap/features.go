@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"sb-algo-prototype/internal/feed"
-	"sb-algo-prototype/internal/replay"
+	"collector/internal/feed"
+	"collector/internal/replay"
 )
 
 // runFeatures replays one or more captured segments and emits a consolidated

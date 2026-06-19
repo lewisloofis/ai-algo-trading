@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"sb-algo-prototype/internal/feed"
-	"sb-algo-prototype/internal/replay"
+	"collector/internal/feed"
+	"collector/internal/replay"
 )
 
 // runDump decodes and prints events one per line with optional filters.

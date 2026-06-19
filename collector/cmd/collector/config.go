@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"sb-algo-prototype/internal/feed"
+	"collector/internal/feed"
 )
 
 // collectorVersion is embedded in every manifest sidecar.
