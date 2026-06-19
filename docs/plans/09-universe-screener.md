@@ -176,9 +176,18 @@ remain deferred (see §2 and §9).
   trading-limit intersection** (emitten subsectors, live-verified); ranked by
   liquidity; edge-cap and thinness carried as **annotations**
   (`min_edge_to_clear_bps`, `is_edge_capped`, `is_thin`), not drops (see §2
-  revision). Writes `research/out/universe_screen.md`. The ranked list becomes
-  the next capture watchlist — feeds the collector via the SSM watchlist
-  (ADR-0006) — and the input to [plan 10](./10-strategy-fit-and-portfolio.md).
+  revision). Writes `research/out/universe_screen.md` and the input to
+  [plan 10](./10-strategy-fit-and-portfolio.md).
+- [x] **7.2b** Capture-watchlist emit — `select_capture_watchlist` takes a
+  top-N (default 30) **broad/diverse slice** across friction bands (round-robin
+  tight `<20 bps` / moderate `20–40` / wide `≥40`, liquidity-first within each)
+  and writes `research/out/watchlist.txt` in the collector's exact
+  `CAPTURE_WATCHLIST_FILE` format (bare symbol per line, metadata on `#` lines,
+  plus a ready-to-paste `watchlist = "…"` tfvars line). **The screener does not
+  write SSM directly:** the operator pastes the line into `terraform.tfvars` and
+  runs `tofu apply`, keeping the capture set as auditable IaC per
+  [ADR-0006](../adr/0006-watchlist-from-ssm.md) (effective on the collector's
+  next boot). This closes the screen → capture loop.
 - [ ] **7.3** Tier B refine (deferred) — order-book metrics (time-weighted L1
   depth, realised relative spread bps, quote update rate) via `sbcap features`;
   re-rank Tier-A candidates once their data is captured.
