@@ -1,6 +1,6 @@
 # Seamless Token Rotation
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-17
+> **Status:** 🚧 In progress (Phase 0 ✅ gate passed) · **Owner:** @lewis · **Updated:** 2026-06-19
 > **Related:** [01-market-data-capture.md](./01-market-data-capture.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [Authentication](../reference/01-authentication.md)
 
 This plan makes Stockbit token rotation seamless and self-healing for the
@@ -79,15 +79,36 @@ credentials + `player_id` in SSM, and the collector can re-login headlessly on
 refresh-token death — the server sees a trusted `player_id` and returns tokens
 directly, no challenge.
 
-**Two unknowns remain that only an empirical test settles (Phase 0):**
+**Both Phase 0 unknowns are now RESOLVED — empirically validated 2026-06-19** via
+the standalone `collector/cmd/authprobe` probe (committed; stdlib-only):
 
-- Does a v6 password login with a chosen `player_id` and **no `signature`** succeed
-  against the server (the proto says optional; web/iOS corroborate, but untested by us)?
-- Does trust survive an **IP change**? Trust is keyed on `player_id` not IP, and
-  IP/geo is only recorded server-side (not a login field), so a scheduled EC2's
-  changing public IP *should not* re-challenge — but server-side risk heuristics on
-  a drastic geo jump are possible. A scheduled EC2 gets a new public IP per
-  stop/start unless an Elastic IP is attached; Phase 0 determines whether one is needed.
+- ✅ **No-signature v6 login works.** A v6 password login with a chosen random
+  `player_id` and **no `signature`** is accepted. First use returns a new-device
+  challenge; after a one-time approval, the same `player_id` returns a token pair
+  directly.
+- ✅ **Trust survives an IP change.** Re-login with the trusted `player_id` from a
+  **different network (personal hotspot)** still returned a valid token pair. Trust
+  is bound to the `player_id`, not the egress IP — so a scheduled EC2 with a
+  changing public IP will **not** re-challenge. **No Elastic IP is required.**
+
+**Challenge sub-type observed.** The account (`lewisloofis@gmail.com`) hits the
+**`trusted_device`** sub-type, not `multi_factor`. This is a push-to-approve flow,
+**not** the OTP/PIN chain, and uses the **v4 prompt endpoints** (which coexist with
+the v6 verify path — they are not old-vs-new). Three calls, all on
+`exodus.stockbit.com` with Android-interceptor headers
+(`X-Platform: android`, `X-AppVersion`, `X-DeviceType`, `Accept-Language`):
+
+1. `POST /login/v4/new-device/prompt/send {"token": login_token}` — dispatches the
+   approval push to the trusted device (iPhone 15 Plus). **This trigger call is what
+   actually sends the notification** — the login response only *announces* the
+   challenge; it pushes nothing by itself (this was the "no notification" red herring).
+2. poll `GET /mfa/v1/prompt/verified/result?token=<prompt_token>` until
+   `PROMPT_STATUS_APPROVED` (yields an `acknowledge_token`).
+3. `POST /login/v4/new-device/prompt/verify {"token": login_token, "acknowledge_token": ...}`
+   → token pair, trust established for that `player_id`.
+
+(For accounts on `multi_factor`, the chain finalises at `/login/v6/new-device/verify`
+with `{multi_factor:{login_token}}` instead — the probe handles both.)
 
 ## 2. Locked decisions
 
@@ -106,28 +127,26 @@ directly, no challenge.
 
 ## 3. Implementation
 
-### Phase 0 — Trust + IP validation spike (GATING)
+### Phase 0 — Trust + IP validation spike (GATING) — ✅ COMPLETE (2026-06-19)
 
-De-risk the two unknowns before building the in-collector path. A throwaway
-standalone probe is enough; do not wire it into the collector yet.
+De-risked the two unknowns with the standalone `collector/cmd/authprobe` probe
+(committed `70b5e2c`; stdlib-only, not wired into the collector).
 
-- [ ] Build a small Go probe (or extend `sbcap`) that POSTs `/login/v6/username`
-  with `{user, password, player_id}` and **no `signature`**, and prints whether the
-  response is a token pair or a `new_device` challenge.
-- [ ] Pick a fixed random UUID as `player_id`. Run the probe; expect a `new_device`
-  challenge on first use.
-- [ ] Complete the new-device verification **once** (multi_factor OTP or trusted-device
-  approval from your phone) for that `player_id`. Record the exact verify call shape
-  observed (the proto's `VerifyNewDeviceLoginRequest` multi_factor vs trusted_device).
-- [ ] Re-run the probe with the same `player_id` from the **same** network → expect
-  tokens directly (trust established, no signature needed). **Confirms unknown #1.**
-- [ ] Re-run from a **different IP** (tether/VPN, or an EC2 box in `ap-southeast-3`)
-  with the same `player_id` → check whether it returns tokens or re-challenges.
-  **Confirms unknown #2** and decides whether an Elastic IP is required.
+- [x] Built `cmd/authprobe`: POSTs `/login/v6/username` with `{user, password, player_id}`
+  and **no `signature`**, prints whether the response is a token pair or a `new_device`
+  challenge, and drives the full new-device verification headlessly.
+- [x] Picked a fixed random UUID `player_id` (`cdf268b9-…`). First run returned a
+  `NEW_DEVICE_CHALLENGE` of sub-type **`trusted_device`** (not `multi_factor`).
+- [x] Completed the new-device verification **once** via the `trusted_device`
+  push-to-approve flow (3 v4 prompt calls — see §1.1) — approved on the iPhone 15 Plus.
+- [x] Re-ran with the same `player_id` (same network), `-verify=false` → **`TOKEN_PAIR`
+  directly**. **Unknown #1 confirmed** (no-signature login + trust both work).
+- [x] Re-ran from a **different IP** (personal hotspot) with the same `player_id` →
+  **still `TOKEN_PAIR`**. **Unknown #2 confirmed: trust is IP-independent — no EIP needed.**
 
-**Gate:** if both pass, proceed with headless re-login as primary. If the IP test
-re-challenges, either attach an Elastic IP (`infra/ec2.tf`) or fall back to
-reconcile + loud-fail + laptop-swap as the recovery path (and downgrade re-login).
+**Gate: ✅ PASSED.** Both checks passed → headless re-login proceeds as the primary
+refresh-death recovery, and **no Elastic IP is required** (drop the conditional
+`aws_eip` from Phase 4).
 
 ### Phase 1 — Versioned token store (detect external rotation)
 
@@ -198,8 +217,8 @@ Expose SSM's monotonic version so the session can tell "I wrote this" from
 - [ ] `cmd/collector/main.go` / `config.go`: when using the SSM store, load
   `username`/`password`/`player_id` from SSM into `feed.Config` at boot (mirrors the
   token load). Do **not** put the password in the systemd unit.
-- [ ] If Phase 0 showed IP sensitivity: add an `aws_eip` + association in
-  `infra/ec2.tf` so the instance keeps a stable public IP across stop/start.
+- [x] ~~If Phase 0 showed IP sensitivity: add an `aws_eip`.~~ **Not needed** — Phase 0
+  proved trust is IP-independent (hotspot re-login returned tokens). No EIP.
 - [ ] Document the **one-time trust-establishment** procedure (in `infra/README.md`
   or `docs/`): generate the UUID → seed `/sb-collector/player_id` → run the Phase 0
   probe / a `collector --establish-trust` mode from a machine → complete the
