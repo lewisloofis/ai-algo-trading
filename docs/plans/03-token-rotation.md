@@ -1,6 +1,6 @@
 # Seamless Token Rotation
 
-> **Status:** 🚧 In progress (Phase 0 ✅ gate passed) · **Owner:** @lewis · **Updated:** 2026-06-19
+> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-19
 > **Related:** [01-market-data-capture.md](./01-market-data-capture.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [Authentication](../reference/01-authentication.md)
 
 This plan makes Stockbit token rotation seamless and self-healing for the
@@ -153,7 +153,7 @@ refresh-death recovery, and **no Elastic IP is required** (drop the conditional
 Expose SSM's monotonic version so the session can tell "I wrote this" from
 "someone else rotated this." Detection keys on the **refresh** parameter's version.
 
-- [ ] Add optional interface in `collector/internal/feed/tokenstore.go`:
+- [x] Add optional interface in `collector/internal/feed/tokenstore.go`:
 
   ```go
   type VersionedTokenStore interface {
@@ -163,24 +163,24 @@ Expose SSM's monotonic version so the session can tell "I wrote this" from
   }
   ```
 
-- [ ] `ssmtokenstore.go`: implement both, capturing `GetParameterOutput.Parameter.Version`
+- [x] `ssmtokenstore.go`: implement both, capturing `GetParameterOutput.Parameter.Version`
   and `PutParameterOutput.Version`. Keep `Load`/`Save` as thin wrappers.
-- [ ] `tokenstore.go` (FileTokenStore): add a `"version"` int to `tokenFile`,
+- [x] `tokenstore.go` (FileTokenStore): add a `"version"` int to `tokenFile`,
   increment on `SaveVersioned` — lets hot-reload be exercised in local dev.
 
 ### Phase 2 — Session: reconcile + typed errors + headless re-login (`session.go`)
 
-- [ ] Add `lastStoreVersion int64` + `SetStoreVersion(v int64)` (set once at boot).
-- [ ] In `RefreshMain`, prefer `SaveVersioned` and record the returned version.
-- [ ] Add `ErrRefreshExpired = errors.New("refresh token expired")`; return it
+- [x] Add `lastStoreVersion int64` + `SetStoreVersion(v int64)` (set once at boot).
+- [x] In `RefreshMain`, prefer `SaveVersioned` and record the returned version.
+- [x] Add `ErrRefreshExpired = errors.New("refresh token expired")`; return it
   (wrapped) from the HTTP 401 branch (`session.go:176`).
-- [ ] Add `ReconcileFromStore() (adopted bool, err error)`: no-op unless the store
+- [x] Add `ReconcileFromStore() (adopted bool, err error)`: no-op unless the store
   is `VersionedTokenStore`. `LoadVersioned`; if `version > lastStoreVersion` **and**
   the stored refresh differs, adopt both tokens under the lock, advance
   `lastStoreVersion`, refresh `userID`, return `true`.
-- [ ] Add a `PlayerID` field to `feed.Config` and **send `player_id` in `Login()`'s
+- [x] Add a `PlayerID` field to `feed.Config` and **send `player_id` in `Login()`'s
   request body** (omit `signature`). Source it from SSM at boot (Phase 4).
-- [ ] Add `Relogin() error`: clear the in-memory access token under the lock (so
+- [x] Add `Relogin() error`: clear the in-memory access token under the lock (so
   `Login` won't early-return at `session.go:124`) and re-run the password login with
   `player_id`. Surface a typed `ErrLoginChallenge` when the response carries
   `new_device`/`unfreeze` (via the existing JSON walkers) instead of a token pair —
@@ -188,16 +188,16 @@ Expose SSM's monotonic version so the session can tell "I wrote this" from
 
 ### Phase 3 — Wire-up (`cmd/collector/main.go`)
 
-- [ ] **Harden precedence:** when the SSM store is selected, treat it as
+- [x] **Harden precedence:** when the SSM store is selected, treat it as
   authoritative. Use `LoadVersioned` at boot, call `SetStoreVersion(v)`, and when SSM
   returns a non-empty token use it **even if `SB_ACCESS_TOKEN` env is set** — log a
   `WARN` that the env token is ignored. File store keeps env-wins for dev.
-- [ ] **Reconcile before refresh** in `refreshLoop` (`main.go:162`): call
+- [x] **Reconcile before refresh** in `refreshLoop` (`main.go:162`): call
   `ReconcileFromStore()` first; if it adopted, write `ReauthEvent("external-reload")`
   and `continue`.
-- [ ] **Reactive 401 path** in `getKeyWithRefresh` (`main.go:249`): `ReconcileFromStore()`
+- [x] **Reactive 401 path** in `getKeyWithRefresh` (`main.go:249`): `ReconcileFromStore()`
   before the reactive `RefreshMain`.
-- [ ] **Refresh-token-death recovery** (both loops) when `RefreshMain` returns
+- [x] **Refresh-token-death recovery** (both loops) when `RefreshMain` returns
   `ErrRefreshExpired`, in order:
   1. `ReconcileFromStore()` — an external swap may already have fixed it; if adopted, continue.
   2. **`Relogin()`** (headless, primary) — on success persist via the store
@@ -209,21 +209,21 @@ Expose SSM's monotonic version so the session can tell "I wrote this" from
 
 ### Phase 4 — Infra, credentials & operator runbook
 
-- [ ] `infra/ssm.tf`: add three SecureString params under the prefix —
+- [x] `infra/ssm.tf`: add three SecureString params under the prefix —
   `/sb-collector/username`, `/sb-collector/password`, `/sb-collector/player_id`
   (placeholders + `lifecycle { ignore_changes = [value] }`, seeded out-of-band like
   the tokens). The IAM wildcard `parameter/sb-collector/*` (`infra/iam.tf`) already
   covers them — no IAM change.
-- [ ] `cmd/collector/main.go` / `config.go`: when using the SSM store, load
+- [x] `cmd/collector/main.go` / `config.go`: when using the SSM store, load
   `username`/`password`/`player_id` from SSM into `feed.Config` at boot (mirrors the
   token load). Do **not** put the password in the systemd unit.
 - [x] ~~If Phase 0 showed IP sensitivity: add an `aws_eip`.~~ **Not needed** — Phase 0
   proved trust is IP-independent (hotspot re-login returned tokens). No EIP.
-- [ ] Document the **one-time trust-establishment** procedure (in `infra/README.md`
+- [x] Document the **one-time trust-establishment** procedure (in `infra/README.md`
   or `docs/`): generate the UUID → seed `/sb-collector/player_id` → run the Phase 0
   probe / a `collector --establish-trust` mode from a machine → complete the
   new-device challenge once → seed `username`/`password`. After this, EC2 self-heals.
-- [ ] Document the two **swap runbooks**: (a) stopped instance — `put-parameter`
+- [x] Document the two **swap runbooks**: (a) stopped instance — `put-parameter`
   refresh then access → next start adopts at boot; (b) live instance — `put-parameter`
   both → adopted within ≤20 min via version reconcile, no restart, no clobber.
 
@@ -274,20 +274,20 @@ design trading-ready with **zero infra rework**:
 
 ## 7. Verification
 
-- [ ] **Phase 0 spike (gating):** no-signature v6 login with a chosen `player_id`
+- [x] **Phase 0 spike (gating):** no-signature v6 login with a chosen `player_id`
   returns a challenge first, then tokens after one-time verify; and the IP-change
   test returns tokens (or tells us an EIP is needed).
-- [ ] **Unit (TDD, table-driven, `go test -race ./...`):**
+- [x] **Unit (TDD, table-driven, `go test -race ./...`):**
   - Fake SSM client returns incrementing versions; `SaveVersioned` bumps, `LoadVersioned` reports.
   - `ReconcileFromStore`: unchanged version → no-op; external bump + new refresh → adopts + advances version; non-versioned store → no-op.
   - `RefreshMain` returns `ErrRefreshExpired` on a 401 stub.
   - `Login()` includes `player_id` and omits `signature` in the request body.
   - `Relogin()` surfaces `ErrLoginChallenge` on a `new_device` stub response.
   - **No clobber:** after an external version bump, a refresh cycle adopts (not overwrites).
-- [ ] **Local manual (FileTokenStore):** while running, edit the token file with a
+- [x] **Local manual (FileTokenStore):** while running, edit the token file with a
   new refresh + bumped version; confirm `adopted externally-rotated token` within one
   refresh tick and no overwrite.
-- [ ] **EC2 e2e:** (a) live `put-parameter` swap adopted within ≤20 min, no restart,
+- [x] **EC2 e2e:** (a) live `put-parameter` swap adopted within ≤20 min, no restart,
   SSM retains the laptop-seeded value; (b) stopped-instance seed adopted at boot
   (`loaded tokens from store`); (c) **refresh-death self-heal** — invalidate/expire
   the refresh token (or simulate a 401) and confirm the collector re-logins headlessly
