@@ -1,3 +1,7 @@
+# ---------------------------------------------------------------------------
+# Project-specific
+# ---------------------------------------------------------------------------
+
 # Compiled command binaries (rebuildable via `make build`).
 /bin/
 
@@ -15,3 +19,70 @@
 /sb-ios/
 /sb-protos/
 /sb-web/
+
+# Study/analysis outputs (regenerable from segments).
+out/
+*.png
+
+# ---------------------------------------------------------------------------
+# Go
+# ---------------------------------------------------------------------------
+
+# Test binaries and profiling output.
+*.test
+*.out
+*.prof
+
+# Coverage.
+coverage.txt
+coverage.html
+
+# Go workspace file (machine-local).
+go.work
+go.work.sum
+
+# Dependency vendor dir (uncomment if not vendoring).
+# vendor/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+
+# Byte-compiled / optimized.
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments.
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging / build.
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Test / coverage / type-check caches.
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# Jupyter.
+.ipynb_checkpoints/
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

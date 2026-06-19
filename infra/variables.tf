@@ -39,16 +39,17 @@ variable "extra_tags" {
 variable "watchlist" {
   description = "Symbols to subscribe. Written to /sb-collector/watchlist in SSM."
   type        = list(string)
-  # Popular LQ45 mining names (coal + nickel/metals) plus BUMI (heavily-traded
-  # coal retail name, not a stable LQ45 member). Verify against the current
-  # official LQ45 list before each apply — membership rotates every Feb & Aug.
-  default = ["ADRO", "PTBA", "ITMG", "INDY", "ANTM", "INCO", "MDKA", "HRUM", "BUMI"]
+  # Mining names (coal + nickel/metals) plus BUMI/DEWA (heavily-traded retail
+  # names, not stable LQ45 members). DEWA adds tick-band-2 (Rp200–499) coverage
+  # that the prior all-mining set lacked. Verify against the current official
+  # LQ45 list before each apply — membership rotates every Feb & Aug.
+  default = ["ITMG", "INDY", "ANTM", "MDKA", "BUMI", "DEWA"]
 }
 
 variable "watchlist_id" {
   description = "Short stable identifier for this symbol set; used as S3 key prefix segment."
   type        = string
-  default     = "lq45-mining"
+  default     = "mining-sample"
 }
 
 # --- Compute ---------------------------------------------------------------------
