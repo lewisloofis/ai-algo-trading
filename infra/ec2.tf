@@ -61,3 +61,23 @@ resource "aws_instance" "collector" {
     ignore_changes = [ami, user_data]
   }
 }
+
+# §4 (Plan 03) — Elastic IP for stable public IP across stop/start
+#
+# Uncomment only if Plan 03 Phase 0 shows the changing public IP re-challenges
+# device trust (i.e. the IP-change probe returns a new_device challenge instead
+# of tokens directly). If Phase 0 confirms trust survives IP changes, leave
+# this commented out — the EIP incurs cost (~$3.60/month when unattached).
+#
+# resource "aws_eip" "collector" {
+#   domain = "vpc"
+#
+#   tags = {
+#     Name = "${local.name_prefix}-collector"
+#   }
+# }
+#
+# resource "aws_eip_association" "collector" {
+#   instance_id   = aws_instance.collector.id
+#   allocation_id = aws_eip.collector.id
+# }

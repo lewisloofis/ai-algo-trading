@@ -39,6 +39,7 @@ func loadConfig() (collectorConfig, error) {
 		feedCfg: feed.Config{
 			Username:     os.Getenv("SB_USERNAME"),
 			Password:     os.Getenv("SB_PASSWORD"),
+			PlayerID:     os.Getenv("SB_PLAYER_ID"),
 			AccessToken:  os.Getenv("SB_ACCESS_TOKEN"),
 			RefreshToken: os.Getenv("SB_REFRESH_TOKEN"),
 			ExodusHost:   envDefault("SB_EXODUS_HOST", "https://exodus.stockbit.com"),

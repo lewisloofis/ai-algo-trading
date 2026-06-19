@@ -33,6 +33,9 @@ out/
 *.out
 *.prof
 
+# Compiled Go binaries (e.g. collector/bin/authprobe).
+collector/bin/
+
 # Coverage.
 coverage.txt
 coverage.html

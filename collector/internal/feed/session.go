@@ -18,15 +18,29 @@ import (
 // HTTP 401. Callers can detect it with errors.Is to trigger a token refresh.
 var ErrUnauthorized = errors.New("unauthorized")
 
+// ErrRefreshExpired is returned by RefreshMain when the server responds with
+// HTTP 401, indicating the refresh token has expired and a full re-login is
+// required.
+var ErrRefreshExpired = errors.New("refresh token expired")
+
+// ErrLoginChallenge is returned by Relogin when the server requires a
+// device-trust challenge (new_device or unfreeze response), meaning the
+// player_id is not yet trusted on this server.
+var ErrLoginChallenge = errors.New("login requires device-trust challenge")
+
 var httpClient = &http.Client{Timeout: 20 * time.Second}
 
-// Config carries only the fields needed by the feed package.  It is a subset
+// Config carries only the fields needed by the feed package. It is a subset
 // of the root prototype's Config — strategy-specific fields are omitted.
 type Config struct {
 	// Credentials (password login or pre-obtained tokens).
 	Username   string
 	Password   string
 	TradingPIN string
+
+	// PlayerID is a stable device identifier (random UUID) used in headless
+	// re-login to skip the device-trust challenge on a trusted player_id.
+	PlayerID string
 
 	// Optional: pre-seeded tokens skip the password/PIN login flows.
 	AccessToken         string
@@ -59,12 +73,13 @@ type Session struct {
 	cfg   Config
 	store TokenStore // may be nil
 
-	mu             sync.RWMutex
-	accessToken    string
-	refreshToken   string
-	tradingToken   string
-	tradingRefresh string
-	userID         string
+	mu               sync.RWMutex
+	accessToken      string
+	refreshToken     string
+	tradingToken     string
+	tradingRefresh   string
+	userID           string
+	lastStoreVersion int64
 }
 
 // NewSession creates a Session from cfg, pre-loading any tokens that were
@@ -79,12 +94,21 @@ func NewSession(cfg Config) *Session {
 	}
 }
 
-// SetTokenStore attaches a store to the session.  After each successful
+// SetTokenStore attaches a store to the session. After each successful
 // RefreshMain call the new token pair is persisted via store.Save.
 // It is safe to call this before or after Login.
 func (s *Session) SetTokenStore(store TokenStore) {
 	s.mu.Lock()
 	s.store = store
+	s.mu.Unlock()
+}
+
+// SetStoreVersion records the version of the token store that was last read or
+// written by this process. Call this once at boot after loading tokens from the
+// store so ReconcileFromStore can detect externally-bumped versions.
+func (s *Session) SetStoreVersion(v int64) {
+	s.mu.Lock()
+	s.lastStoreVersion = v
 	s.mu.Unlock()
 }
 
@@ -117,19 +141,30 @@ func (s *Session) baseHeaders(req *http.Request) {
 	req.Header.Set("Accept", "application/json")
 }
 
-// Login performs the main username/password login.  If an access token is
+// Login performs the main username/password login. If an access token is
 // already set (either from cfg or a prior call), Login is a no-op — the
 // collector's headless boot path relies on this behaviour.
+// PlayerID is included in the request body when set; signature is omitted.
 func (s *Session) Login() error {
 	if s.accessToken != "" {
 		s.ensureUserID()
 		return nil
 	}
-	body, _ := json.Marshal(map[string]string{
+	return s.doLogin()
+}
+
+// doLogin performs the actual HTTP login request without checking for an
+// existing access token.
+func (s *Session) doLogin() error {
+	body := map[string]string{
 		"user":     s.cfg.Username,
 		"password": s.cfg.Password,
-	})
-	req, _ := http.NewRequest("POST", s.cfg.ExodusHost+"/login/v6/username", bytes.NewReader(body))
+	}
+	if s.cfg.PlayerID != "" {
+		body["player_id"] = s.cfg.PlayerID
+	}
+	encoded, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", s.cfg.ExodusHost+"/login/v6/username", bytes.NewReader(encoded))
 	s.baseHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -138,7 +173,14 @@ func (s *Session) Login() error {
 		return fmt.Errorf("login request: %w", err)
 	}
 	if status != http.StatusOK {
+		if hasLoginChallenge(raw) {
+			return fmt.Errorf("login challenge (HTTP %d): %w", status, ErrLoginChallenge)
+		}
 		return fmt.Errorf("login failed (HTTP %d): %s", status, snippet(raw))
+	}
+	// Check for device-trust challenge in a 200 response body.
+	if hasLoginChallenge(raw) {
+		return fmt.Errorf("login challenge in response: %w", ErrLoginChallenge)
 	}
 	access, refresh, ok := findTokenPair(raw)
 	if !ok {
@@ -152,10 +194,93 @@ func (s *Session) Login() error {
 	return nil
 }
 
-// RefreshMain refreshes the main access + refresh tokens.  After a
+// Relogin clears the in-memory access token and re-runs the password login
+// with player_id. It is used for headless recovery when the refresh token has
+// expired. On success the freshly-issued token pair is persisted through the
+// store (so a cold boot after re-login reflects the live tokens and
+// lastStoreVersion advances). Returns ErrLoginChallenge (wrapped) when the
+// server requires a device-trust challenge — this is the signal that the
+// player_id is not yet trusted and operator intervention is required.
+//
+// SECURITY: never log token values.
+func (s *Session) Relogin() error {
+	s.mu.Lock()
+	s.accessToken = ""
+	s.mu.Unlock()
+
+	if err := s.doLogin(); err != nil {
+		return err
+	}
+
+	s.mu.RLock()
+	access := s.accessToken
+	refresh := s.refreshToken
+	s.mu.RUnlock()
+	s.persistTokens(access, refresh)
+	return nil
+}
+
+// persistTokens writes the token pair through the attached store (if any),
+// preferring SaveVersioned and recording the returned version into
+// lastStoreVersion. A persist failure is non-fatal: it is logged as a warning
+// and does not affect the in-memory session.
+//
+// SECURITY: never include token values in the log message.
+func (s *Session) persistTokens(access, refresh string) {
+	s.mu.RLock()
+	store := s.store
+	s.mu.RUnlock()
+	if store == nil {
+		return
+	}
+	if vs, ok := store.(VersionedTokenStore); ok {
+		v, err := vs.SaveVersioned(access, refresh)
+		if err != nil {
+			log.Printf("WARN: token persist failed: %v — next restart may require re-login", err)
+			return
+		}
+		s.mu.Lock()
+		s.lastStoreVersion = v
+		s.mu.Unlock()
+		return
+	}
+	if err := store.Save(access, refresh); err != nil {
+		log.Printf("WARN: token persist failed: %v — next restart may require re-login", err)
+	}
+}
+
+// hasLoginChallenge reports whether the JSON response contains a new_device or
+// unfreeze challenge — the signal that this player_id is not yet trusted.
+func hasLoginChallenge(raw map[string]interface{}) bool {
+	return findString(raw, "new_device", "unfreeze") != "" ||
+		hasKey(raw, "new_device") ||
+		hasKey(raw, "unfreeze")
+}
+
+// hasKey reports whether the JSON tree rooted at node contains the given key
+// at any depth.
+func hasKey(node interface{}, key string) bool {
+	m, ok := node.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	if _, exists := m[key]; exists {
+		return true
+	}
+	for _, v := range m {
+		if hasKey(v, key) {
+			return true
+		}
+	}
+	return false
+}
+
+// RefreshMain refreshes the main access + refresh tokens. After a
 // successful refresh the rotated token pair is persisted via the TokenStore
-// (if set).  A persist failure is logged as a warning but does NOT fail the
+// (if set). A persist failure is logged as a warning but does NOT fail the
 // refresh — the in-memory session remains valid.
+//
+// Returns ErrRefreshExpired (wrapped) when the server responds with HTTP 401.
 //
 // SECURITY: token values must never appear in log output.
 func (s *Session) RefreshMain() error {
@@ -174,7 +299,7 @@ func (s *Session) RefreshMain() error {
 		return err
 	}
 	if status == http.StatusUnauthorized {
-		return fmt.Errorf("refresh token expired — full login required")
+		return fmt.Errorf("refresh token expired — full login required: %w", ErrRefreshExpired)
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("refresh failed (HTTP %d): %s", status, snippet(raw))
@@ -191,22 +316,58 @@ func (s *Session) RefreshMain() error {
 	}
 	newAccess := s.accessToken
 	newRefresh := s.refreshToken
-	store := s.store
 	s.mu.Unlock()
 
 	// Derive userID from the new token if not yet known.
 	s.ensureUserID()
 
 	// Persist rotated tokens. A failure here is non-fatal: the in-memory
-	// session is valid and the process can continue. Log a warning so the
-	// operator knows the next cold boot may require re-login.
-	// NOTE: do NOT include token values in the log message.
-	if store != nil {
-		if err := store.Save(newAccess, newRefresh); err != nil {
-			log.Printf("WARN: token persist failed: %v — next restart may require re-login", err)
-		}
-	}
+	// session is valid and the process can continue.
+	s.persistTokens(newAccess, newRefresh)
 	return nil
+}
+
+// ReconcileFromStore checks whether the token store has been externally updated
+// (e.g. by an operator seeding a new token from a laptop). It is a no-op when
+// the store does not implement VersionedTokenStore.
+//
+// If the store's current version is greater than lastStoreVersion AND the
+// stored refresh token differs from the in-memory refresh token,
+// ReconcileFromStore adopts the stored tokens under the lock, advances
+// lastStoreVersion, and re-derives the userID. Returns adopted=true in that case.
+func (s *Session) ReconcileFromStore() (adopted bool, err error) {
+	s.mu.RLock()
+	store := s.store
+	lastVersion := s.lastStoreVersion
+	inMemRefresh := s.refreshToken
+	s.mu.RUnlock()
+
+	vs, ok := store.(VersionedTokenStore)
+	if !ok {
+		return false, nil
+	}
+
+	access, refresh, version, err := vs.LoadVersioned()
+	if err != nil {
+		return false, fmt.Errorf("reconcile: load versioned: %w", err)
+	}
+
+	if version <= lastVersion || refresh == inMemRefresh {
+		return false, nil
+	}
+
+	// External rotation detected: adopt the stored tokens.
+	newUID := userIDFromJWT(access)
+	s.mu.Lock()
+	s.accessToken = access
+	s.refreshToken = refresh
+	if newUID != "" {
+		s.userID = newUID
+	}
+	s.lastStoreVersion = version
+	s.mu.Unlock()
+
+	return true, nil
 }
 
 // TradingLogin establishes the PIN-gated Carina trading session. Skips if a

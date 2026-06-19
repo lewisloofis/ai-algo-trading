@@ -66,8 +66,8 @@ func main() {
 	ssmPrefix := os.Getenv("SSM_PARAM_PREFIX")
 
 	// Build the param reader for plain (non-secret) SSM config when the prefix
-	// is set. The collector reads these (watchlist, watchlist_id) but never
-	// writes them — Terraform stays authoritative.
+	// is set. The collector reads these (watchlist, watchlist_id, player_id) but
+	// never writes them — Terraform stays authoritative.
 	var paramReader *feed.SSMParamReader
 	if ssmPrefix != "" {
 		paramReader, err = feed.NewSSMParamReader(ssmPrefix)
@@ -93,6 +93,15 @@ func main() {
 		}
 	}
 
+	// Load headless re-login credentials (username, password, player_id) from
+	// SSM SecureString params when the SSM store is active and the corresponding
+	// env var is empty. On EC2 systemd sets only SSM_PARAM_PREFIX, so these are
+	// the sole source of creds for the ErrRefreshExpired→Relogin recovery path.
+	// Env vars win for local dev. NEVER log the secret values.
+	if ssmPrefix != "" && paramReader != nil {
+		loadSecureCreds(paramReader, &cfg.feedCfg)
+	}
+
 	// Token store selection: use SSMTokenStore when SSM_PARAM_PREFIX is set;
 	// otherwise fall back to the local FileTokenStore.
 	var store feed.TokenStore
@@ -108,16 +117,46 @@ func main() {
 		log.Printf("[auth] using file token store (%s)", cfg.tokenFile)
 	}
 
-	// Token bootstrap: if no access token in env, try loading from the store.
-	if cfg.feedCfg.AccessToken == "" {
-		acc, ref, err := store.Load()
-		if err != nil {
-			log.Fatalf("token store load: %v", err)
+	// Token bootstrap: SSM wins over env var; file store: env var wins.
+	// Always call LoadVersioned when supported to record the initial version.
+	var storeVersion int64
+	if vs, ok := store.(feed.VersionedTokenStore); ok {
+		acc, ref, ver, loadErr := vs.LoadVersioned()
+		if loadErr != nil {
+			log.Fatalf("token store load: %v", loadErr)
 		}
-		if acc != "" {
-			cfg.feedCfg.AccessToken = acc
-			cfg.feedCfg.RefreshToken = ref
-			log.Printf("[auth] loaded tokens from store")
+		storeVersion = ver
+		if ssmPrefix != "" {
+			// SSM is authoritative — always prefer store over env token.
+			if acc != "" {
+				if cfg.feedCfg.AccessToken != "" {
+					log.Printf("[auth] SSM token takes precedence over SB_ACCESS_TOKEN env var")
+				}
+				cfg.feedCfg.AccessToken = acc
+				cfg.feedCfg.RefreshToken = ref
+				log.Printf("[auth] loaded tokens from SSM store (version=%d)", ver)
+			}
+		} else {
+			// File store: env token wins (dev workflow).
+			if cfg.feedCfg.AccessToken == "" && acc != "" {
+				cfg.feedCfg.AccessToken = acc
+				cfg.feedCfg.RefreshToken = ref
+				log.Printf("[auth] loaded tokens from file store")
+			}
+		}
+	} else {
+		// Non-versioned store (should not occur with current implementations,
+		// but keeps the code path safe).
+		if cfg.feedCfg.AccessToken == "" {
+			acc, ref, loadErr := store.Load()
+			if loadErr != nil {
+				log.Fatalf("token store load: %v", loadErr)
+			}
+			if acc != "" {
+				cfg.feedCfg.AccessToken = acc
+				cfg.feedCfg.RefreshToken = ref
+				log.Printf("[auth] loaded tokens from store")
+			}
 		}
 	}
 
@@ -129,6 +168,7 @@ func main() {
 
 	session := feed.NewSession(cfg.feedCfg)
 	session.SetTokenStore(store)
+	session.SetStoreVersion(storeVersion)
 
 	if err := session.Login(); err != nil {
 		log.Fatalf("login: %v", err)
@@ -139,9 +179,16 @@ func main() {
 	// access token before the first proactive refresh. Pass the refresh token we
 	// currently hold (from env or the store) rather than "" — an empty value is
 	// rejected by SSM and would clobber a good token.
-	if err := store.Save(session.AccessToken(), cfg.feedCfg.RefreshToken); err != nil {
-		// Non-fatal: we can still capture; warn the operator.
-		log.Printf("WARN: initial token persist failed: %v", err)
+	if vs, ok := store.(feed.VersionedTokenStore); ok {
+		if v, persistErr := vs.SaveVersioned(session.AccessToken(), cfg.feedCfg.RefreshToken); persistErr != nil {
+			log.Printf("WARN: initial token persist failed: %v", persistErr)
+		} else {
+			session.SetStoreVersion(v)
+		}
+	} else {
+		if persistErr := store.Save(session.AccessToken(), cfg.feedCfg.RefreshToken); persistErr != nil {
+			log.Printf("WARN: initial token persist failed: %v", persistErr)
+		}
 	}
 
 	sf := newSegmentFile(cfg.captureDir, cfg.watchlistID)
@@ -193,6 +240,7 @@ func main() {
 }
 
 // refreshLoop proactively refreshes the main access token on a fixed interval.
+// Before each refresh it checks for externally-rotated tokens in the store.
 // After a successful refresh it writes a REAUTH control record to the segment.
 func refreshLoop(ctx context.Context, s *feed.Session, sf *segmentFile) {
 	t := time.NewTicker(tokenRefreshEvery)
@@ -202,19 +250,96 @@ func refreshLoop(ctx context.Context, s *feed.Session, sf *segmentFile) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := s.RefreshMain(); err != nil {
+			// Check for externally-seeded tokens before trying to refresh.
+			if adopted, err := s.ReconcileFromStore(); err != nil {
+				log.Printf("[auth] reconcile error: %v", err)
+			} else if adopted {
+				log.Printf("[auth] external token rotation detected — adopted store tokens")
+				writeReauthControl(sf, "external-reload")
+				continue
+			}
+
+			if err := recoverRefresh(ctx, s, sf); err != nil {
 				log.Printf("[auth] proactive refresh failed: %v", err)
 				continue
 			}
 			log.Printf("[auth] main token refreshed")
-			payload, err := segment.ReauthEvent("proactive")
-			if err != nil {
-				continue
-			}
-			if err := sf.WriteControl(time.Now().UnixNano(), payload); err != nil {
-				log.Printf("[segment] reauth control record: %v", err)
-			}
+			writeReauthControl(sf, "proactive")
 		}
+	}
+}
+
+// loadSecureCreds fills empty credential fields (username, password, player_id)
+// from SSM SecureString params. An env-provided value always wins (dev path);
+// only empty fields are filled. A read error is logged as a WARN and skipped —
+// missing creds surface later as a re-login challenge, not a boot failure.
+//
+// SECURITY: never log the password or any secret value.
+func loadSecureCreds(r *feed.SSMParamReader, cfg *feed.Config) {
+	type secret struct {
+		name  string
+		field *string
+		label string
+	}
+	secrets := []secret{
+		{"username", &cfg.Username, "username"},
+		{"password", &cfg.Password, "password"},
+		{"player_id", &cfg.PlayerID, "player_id"},
+	}
+	for _, s := range secrets {
+		if *s.field != "" {
+			continue
+		}
+		v, err := r.GetSecure(s.name)
+		if err != nil {
+			log.Printf("WARN: ssm %s read failed: %v", s.label, err)
+			continue
+		}
+		if v != "" {
+			*s.field = v
+			log.Printf("[auth] %s loaded from SSM", s.label)
+		}
+	}
+}
+
+// recoverRefresh runs RefreshMain and, on ErrRefreshExpired, attempts Relogin.
+// Returns nil on success. Returns an error if both paths fail or if
+// Relogin requires a device-trust challenge (ErrLoginChallenge) — in that
+// case, operator intervention is required.
+func recoverRefresh(ctx context.Context, s *feed.Session, sf *segmentFile) error {
+	err := s.RefreshMain()
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, feed.ErrRefreshExpired) {
+		return err
+	}
+
+	log.Printf("[auth] refresh token expired — attempting headless re-login")
+	if ctx.Err() != nil {
+		return fmt.Errorf("context cancelled before re-login")
+	}
+	reloginErr := s.Relogin()
+	if reloginErr != nil {
+		if errors.Is(reloginErr, feed.ErrLoginChallenge) {
+			return fmt.Errorf("headless re-login blocked by device-trust challenge — operator must seed new tokens: %w", reloginErr)
+		}
+		return fmt.Errorf("headless re-login failed: %w", reloginErr)
+	}
+	log.Printf("[auth] headless re-login succeeded (user_id=%q)", s.UserID())
+	writeReauthControl(sf, "headless-relogin")
+	return nil
+}
+
+// writeReauthControl writes a REAUTH control record to the segment. Errors are
+// logged but not propagated — a missing control record is non-fatal.
+func writeReauthControl(sf *segmentFile, reason string) {
+	payload, err := segment.ReauthEvent(reason)
+	if err != nil {
+		return
+	}
+	if err := sf.WriteControl(time.Now().UnixNano(), payload); err != nil {
+		log.Printf("[segment] reauth control record: %v", err)
 	}
 }
 
@@ -279,9 +404,9 @@ func runWithReconnect(ctx context.Context, cfg collectorConfig, s *feed.Session,
 }
 
 // getKeyWithRefresh fetches a websocket key, performing one reactive token
-// refresh on a 401 before retrying. It writes a REAUTH control record on
-// success so the segment captures the auth event.
-func getKeyWithRefresh(s *feed.Session, sf *segmentFile) (string, error) {
+// refresh on a 401 before retrying. It checks for externally-rotated tokens
+// before the reactive refresh. It writes a REAUTH control record on success.
+func getKeyWithRefresh(ctx context.Context, s *feed.Session, sf *segmentFile) (string, error) {
 	key, err := s.GetWebsocketKey()
 	if err == nil {
 		return key, nil
@@ -290,18 +415,22 @@ func getKeyWithRefresh(s *feed.Session, sf *segmentFile) (string, error) {
 		return "", err
 	}
 
-	log.Printf("[auth] websocket key rejected (401) — refreshing token")
-	if refreshErr := s.RefreshMain(); refreshErr != nil {
+	log.Printf("[auth] websocket key rejected (401) — checking for external token rotation")
+	// Check for externally-seeded tokens before triggering a full refresh.
+	if adopted, reconcileErr := s.ReconcileFromStore(); reconcileErr != nil {
+		log.Printf("[auth] reconcile error: %v", reconcileErr)
+	} else if adopted {
+		log.Printf("[auth] adopted externally-rotated tokens")
+		writeReauthControl(sf, "external-reload")
+		return s.GetWebsocketKey()
+	}
+
+	log.Printf("[auth] refreshing token after 401")
+	if refreshErr := recoverRefresh(ctx, s, sf); refreshErr != nil {
 		return "", fmt.Errorf("reactive refresh after 401 failed: %w", refreshErr)
 	}
 	log.Printf("[auth] token refreshed after 401")
-
-	payload, err := segment.ReauthEvent("reactive-401")
-	if err == nil {
-		if werr := sf.WriteControl(time.Now().UnixNano(), payload); werr != nil {
-			log.Printf("[segment] reauth control record: %v", werr)
-		}
-	}
+	writeReauthControl(sf, "reactive-401")
 
 	return s.GetWebsocketKey()
 }
@@ -309,7 +438,7 @@ func getKeyWithRefresh(s *feed.Session, sf *segmentFile) (string, error) {
 // runOnce connects, authenticates, subscribes, and pumps raw frames to disk
 // until an error or context cancellation.
 func runOnce(ctx context.Context, cfg collectorConfig, s *feed.Session, sf *segmentFile) error {
-	key, err := getKeyWithRefresh(s, sf)
+	key, err := getKeyWithRefresh(ctx, s, sf)
 	if err != nil {
 		return err
 	}

@@ -51,3 +51,56 @@ resource "aws_ssm_parameter" "watchlist_id" {
   type        = "String"
   value       = var.watchlist_id
 }
+
+# §4 (Plan 03) — Credentials + stable device identity for headless re-login
+#
+# These three params support refresh-token-death self-healing (docs/plans/03-token-rotation.md).
+# When the refresh token dies the collector re-logs-in headlessly using username +
+# password + a pre-trusted player_id UUID, then re-seeds the token params above.
+#
+# Like the token params, all three use lifecycle { ignore_changes = [value] }:
+#   1. TF writes the placeholder on first apply only.
+#   2. Real values are seeded out-of-band (see infra/README.md §Plan 03).
+#   3. Credentials NEVER enter TF state.
+#
+# IAM coverage: the existing SSMParameters statement in iam.tf already grants
+# ssm:GetParameter/ssm:GetParameters/ssm:PutParameter on
+# arn:aws:ssm:<region>:<account>:parameter/sb-collector/*
+# which covers /sb-collector/username, /sb-collector/password, and
+# /sb-collector/player_id with no IAM change required.
+
+resource "aws_ssm_parameter" "username" {
+  name        = "/sb-collector/username"
+  description = "Stockbit account username for headless re-login (Plan 03). Seeded out-of-band; never set via TF after initial apply."
+  type        = "SecureString"
+  value       = "PLACEHOLDER_SEED_OUT_OF_BAND"
+
+  lifecycle {
+    # Prevent TF from reverting the credential seeded out-of-band.
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "password" {
+  name        = "/sb-collector/password"
+  description = "Stockbit account password for headless re-login (Plan 03). Seeded out-of-band; never set via TF after initial apply."
+  type        = "SecureString"
+  value       = "PLACEHOLDER_SEED_OUT_OF_BAND"
+
+  lifecycle {
+    # Prevent TF from reverting the credential seeded out-of-band.
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "player_id" {
+  name        = "/sb-collector/player_id"
+  description = "Stable random UUID used as Stockbit device identity (player_id). Established once interactively; trusted thereafter. Seeded out-of-band; never set via TF after initial apply."
+  type        = "SecureString"
+  value       = "PLACEHOLDER_SEED_OUT_OF_BAND"
+
+  lifecycle {
+    # Prevent TF from reverting the player_id seeded out-of-band.
+    ignore_changes = [value]
+  }
+}

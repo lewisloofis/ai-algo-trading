@@ -60,39 +60,62 @@ func newSSMTokenStoreWithClient(client ssmAPI, prefix string) *SSMTokenStore {
 
 // Load reads the access and refresh tokens from SSM. Returns ("", "", nil)
 // when neither parameter exists yet (first boot, before any Save).
+// Load is a thin wrapper around LoadVersioned that discards the version.
 func (s *SSMTokenStore) Load() (access, refresh string, err error) {
-	access, err = s.getParam(s.prefix + "/access")
-	if err != nil {
-		return "", "", fmt.Errorf("ssm load access token: %w", err)
-	}
-	refresh, err = s.getParam(s.prefix + "/refresh")
-	if err != nil {
-		return "", "", fmt.Errorf("ssm load refresh token: %w", err)
-	}
-	return access, refresh, nil
+	access, refresh, _, err = s.LoadVersioned()
+	return
 }
 
-// Save writes both tokens to SSM. The refresh token is written first because
-// it is restart-critical: a crash between the two PutParameter calls must never
-// leave a stale refresh token in the store while a fresh one exists only in
-// memory.
+// Save writes both tokens to SSM. Save is a thin wrapper around SaveVersioned
+// that discards the returned version.
 //
 // SECURITY: token values must never appear in log output.
 func (s *SSMTokenStore) Save(access, refresh string) error {
-	// An empty value means "leave the stored token unchanged": SSM rejects
-	// zero-length values, and overwriting a valid token with "" is data loss.
+	_, err := s.SaveVersioned(access, refresh)
+	return err
+}
+
+// LoadVersioned reads the access and refresh tokens from SSM, returning the
+// refresh parameter's SSM version as the authoritative version counter.
+// Returns ("", "", 0, nil) when neither parameter exists yet.
+func (s *SSMTokenStore) LoadVersioned() (access, refresh string, version int64, err error) {
+	access, err = s.getParam(s.prefix + "/access")
+	if err != nil {
+		return "", "", 0, fmt.Errorf("ssm load access token: %w", err)
+	}
+	refresh, version, err = s.getParamVersioned(s.prefix + "/refresh")
+	if err != nil {
+		return "", "", 0, fmt.Errorf("ssm load refresh token: %w", err)
+	}
+	return access, refresh, version, nil
+}
+
+// SaveVersioned writes both tokens to SSM. The refresh token is written first
+// because it is restart-critical: a crash between the two PutParameter calls
+// must never leave a stale refresh token in the store while a fresh one exists
+// only in memory. Returns the SSM version of the refresh parameter after the
+// write.
+//
+// An empty value means "leave the stored token unchanged": SSM rejects
+// zero-length values, and overwriting a valid token with "" is data loss.
+//
+// SECURITY: token values must never appear in log output.
+func (s *SSMTokenStore) SaveVersioned(access, refresh string) (int64, error) {
+	var version int64
 	// Write refresh first — restart-critical.
 	if refresh != "" {
-		if err := s.putParam(s.prefix+"/refresh", refresh); err != nil {
-			return fmt.Errorf("ssm save refresh token: %w", err)
+		v, err := s.putParamVersioned(s.prefix+"/refresh", refresh)
+		if err != nil {
+			return 0, fmt.Errorf("ssm save refresh token: %w", err)
 		}
+		version = v
 	}
 	if access != "" {
 		if err := s.putParam(s.prefix+"/access", access); err != nil {
-			return fmt.Errorf("ssm save access token: %w", err)
+			return 0, fmt.Errorf("ssm save access token: %w", err)
 		}
 	}
-	return nil
+	return version, nil
 }
 
 // getParam fetches one SecureString parameter with decryption. Returns "" when
@@ -103,7 +126,6 @@ func (s *SSMTokenStore) getParam(name string) (string, error) {
 		WithDecryption: aws.Bool(true),
 	})
 	if err != nil {
-		// ParameterNotFound is expected on first boot — treat as empty.
 		var notFound *types.ParameterNotFound
 		if errors.As(err, &notFound) {
 			return "", nil
@@ -116,6 +138,26 @@ func (s *SSMTokenStore) getParam(name string) (string, error) {
 	return *out.Parameter.Value, nil
 }
 
+// getParamVersioned fetches a SecureString parameter and its SSM version.
+// Returns ("", 0, nil) when the parameter does not exist.
+func (s *SSMTokenStore) getParamVersioned(name string) (value string, version int64, err error) {
+	out, err := s.client.GetParameter(context.Background(), &ssm.GetParameterInput{
+		Name:           aws.String(name),
+		WithDecryption: aws.Bool(true),
+	})
+	if err != nil {
+		var notFound *types.ParameterNotFound
+		if errors.As(err, &notFound) {
+			return "", 0, nil
+		}
+		return "", 0, err
+	}
+	if out.Parameter == nil || out.Parameter.Value == nil {
+		return "", 0, nil
+	}
+	return *out.Parameter.Value, out.Parameter.Version, nil
+}
+
 // putParam writes one SecureString parameter with Overwrite=true.
 func (s *SSMTokenStore) putParam(name, value string) error {
 	_, err := s.client.PutParameter(context.Background(), &ssm.PutParameterInput{
@@ -125,4 +167,19 @@ func (s *SSMTokenStore) putParam(name, value string) error {
 		Overwrite: aws.Bool(true),
 	})
 	return err
+}
+
+// putParamVersioned writes one SecureString parameter and returns the SSM
+// version assigned by the service after the write.
+func (s *SSMTokenStore) putParamVersioned(name, value string) (int64, error) {
+	out, err := s.client.PutParameter(context.Background(), &ssm.PutParameterInput{
+		Name:      aws.String(name),
+		Value:     aws.String(value),
+		Type:      types.ParameterTypeSecureString,
+		Overwrite: aws.Bool(true),
+	})
+	if err != nil {
+		return 0, err
+	}
+	return out.Version, nil
 }

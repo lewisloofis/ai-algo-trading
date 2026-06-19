@@ -4,6 +4,42 @@ import (
 	"testing"
 )
 
+// TestSSMParamReaderGetSecurePresent verifies that GetSecure returns the stored
+// value when the parameter exists under the expected key.
+func TestSSMParamReaderGetSecurePresent(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeSSMClient()
+	client.params["/sb-test/player_id"] = "uuid-abc-123"
+
+	reader := newSSMParamReaderWithClient(client, "/sb-test")
+
+	got, err := reader.GetSecure("player_id")
+	if err != nil {
+		t.Fatalf("GetSecure unexpected error: %v", err)
+	}
+	if got != "uuid-abc-123" {
+		t.Errorf("GetSecure: got %q, want %q", got, "uuid-abc-123")
+	}
+}
+
+// TestSSMParamReaderGetSecureNotFound verifies that GetSecure returns ("", nil)
+// when the parameter does not exist.
+func TestSSMParamReaderGetSecureNotFound(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeSSMClient()
+	reader := newSSMParamReaderWithClient(client, "/sb-test")
+
+	got, err := reader.GetSecure("player_id")
+	if err != nil {
+		t.Fatalf("GetSecure unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("GetSecure: got %q, want empty string", got)
+	}
+}
+
 // TestSSMParamReaderGetPresent verifies that Get returns the stored value when
 // the parameter exists under the expected key.
 func TestSSMParamReaderGetPresent(t *testing.T) {

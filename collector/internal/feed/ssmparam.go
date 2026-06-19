@@ -54,3 +54,24 @@ func (r *SSMParamReader) Get(name string) (string, error) {
 	}
 	return *out.Parameter.Value, nil
 }
+
+// GetSecure reads "<prefix>/<name>" as a SecureString (with KMS decryption).
+// Returns "" (nil error) when the parameter does not exist, so callers can
+// fall back to an env default.
+func (r *SSMParamReader) GetSecure(name string) (string, error) {
+	out, err := r.client.GetParameter(context.Background(), &ssm.GetParameterInput{
+		Name:           aws.String(r.prefix + "/" + name),
+		WithDecryption: aws.Bool(true),
+	})
+	if err != nil {
+		var notFound *types.ParameterNotFound
+		if errors.As(err, &notFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	if out.Parameter == nil || out.Parameter.Value == nil {
+		return "", nil
+	}
+	return *out.Parameter.Value, nil
+}
