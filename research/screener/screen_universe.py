@@ -1,8 +1,11 @@
 """
-screen_universe.py — Tier A forward screener for the IDX algo-trading universe.
+screen_universe.py — IDX funding-eligible universe characterizer.
 
-Three-layer selection: funding-eligible ∩ liquid ∩ not-tick-capped.
-Deliberately excludes alpha/opportunity signals (those belong in Step 4).
+Defines the investable universe as the funding-eligible set (day-trade ∩
+trading-limit subsectors, i.e. "all funding options unlocked") and annotates
+each name with structural friction metrics.  No strategy-specific filtering
+is encoded here — edge-cap and thinness are informational flags only.
+Strategy fit is decided downstream by backtest (plan 10).
 
 Pipeline shape: fan-out per symbol (compute metrics) → barrier → rank.
 
@@ -15,10 +18,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import datetime
 import io
 import json
 import logging
 import os
+import ssl
 import sys
 import urllib.request
 from dataclasses import dataclass
@@ -75,13 +80,51 @@ EDGE_CAP_THRESHOLD_BPS: float = ROUND_TRIP_BPS  # 40.0 bps
 TOO_THIN_TURNOVER_IDR: float = 5_000_000_000.0  # 5 B IDR (PLACEHOLDER)
 
 # Live API defaults
-# TODO: confirm exact host and that HTTP/JSON transcoding is live with one
-# manual read-only call (e.g. curl the catalog endpoint with a real token).
 DEFAULT_API_HOST = os.environ.get("SB_API_HOST", "exodus.stockbit.com")
-CATALOG_BASE_URL = f"https://{DEFAULT_API_HOST}/oms/catalog"
-HISTORY_BASE_URL = f"https://{DEFAULT_API_HOST}/company-price-feed/historical/summary"
+
+# Funding-universe (emitten) endpoints — VERIFIED live (HTTP 200).
+# The funding gate is the INTERSECTION of these two subsectors
+# (day-trade ∩ trading-limit — "all funding options unlocked").
+EMITTEN_BASE_URL = f"https://{DEFAULT_API_HOST}/emitten/v3/sector/88/subsector"
+SUBSECTOR_DAY_TRADE = "1000004658"      # day-trade eligible
+SUBSECTOR_TRADING_LIMIT = "1000005139"  # trading-limit eligible
+
+# OHLCV daily history endpoint — VERIFIED live (HTTP 200).
+# date semantics: from=NEWER bound, to=OLDER bound (descending range), limit=0 = unlimited.
+CHARTBIT_BASE_URL = f"https://{DEFAULT_API_HOST}/chartbit"
+
+# Default history lookback (calendar days). ~365 cal days ≈ ~245 trading days —
+# enough rows for a stable realised_vol stdev and a robust median daily turnover
+# even on thinly-traded names. chartbit's limit=0 returns the full window in one
+# call, so a wider window costs one extra response, not extra requests.
+DEFAULT_LOOKBACK_DAYS = 365
 
 logger = logging.getLogger(__name__)
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """
+    Build an SSL context for outbound API requests.
+
+    Controlled by two env vars:
+    - SB_INSECURE_TLS=1/true/yes  — disable certificate verification entirely
+      (use ONLY behind a trusted corporate MITM proxy).
+    - SB_CA_BUNDLE=<path>         — path to a CA bundle PEM for custom roots.
+    """
+    insecure = os.environ.get("SB_INSECURE_TLS", "").lower() in ("1", "true", "yes")
+    ca = os.environ.get("SB_CA_BUNDLE")
+    if insecure:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        logger.warning(
+            "SB_INSECURE_TLS set — TLS certificate verification DISABLED "
+            "(use only behind a trusted proxy)"
+        )
+        return ctx
+    if ca:
+        return ssl.create_default_context(cafile=ca)
+    return ssl.create_default_context()
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +139,10 @@ class DataSource(Protocol):
     """
 
     def funding_universe(self) -> set[str]:
-        """Return union of DBX and MBX catalog memberships (the hard gate)."""
+        """
+        Return the intersection of day-trade ∩ trading-limit catalog memberships
+        (the hard funding gate — "all funding options unlocked").
+        """
         ...
 
     def daily_history(
@@ -133,6 +179,7 @@ class FixtureDataSource:
         self._dir = fixtures_dir
 
     def funding_universe(self) -> set[str]:
+        """Return the intersection of DBX ∩ MBX catalog memberships (the hard gate)."""
         path = os.path.join(self._dir, "catalog.csv")
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Catalog fixture not found: {path}")
@@ -143,7 +190,7 @@ class FixtureDataSource:
             ):
                 if (
                     row.get("dbx", "").strip().lower() == "true"
-                    or row.get("mbx", "").strip().lower() == "true"
+                    and row.get("mbx", "").strip().lower() == "true"
                 ):
                     symbols.add(row["symbol"].strip().upper())
         return symbols
@@ -184,9 +231,8 @@ class LiveDataSource:
     Requires SB_BEARER_TOKEN env var (pre-obtained; this class does NOT
     perform login or token refresh — see docs/auth for that flow).
 
-    TODO: confirm exact API host and that HTTP/JSON transcoding for the
-    catalog and historical-summary endpoints is live by making one manual
-    read-only call before relying on this in production.
+    Funding universe: emitten subsector endpoints (VERIFIED HTTP 200).
+    OHLCV history: chartbit endpoint (VERIFIED HTTP 200).
     """
 
     def __init__(self, bearer_token: str | None = None) -> None:
@@ -196,45 +242,72 @@ class LiveDataSource:
                 "SB_BEARER_TOKEN env var must be set to use LiveDataSource"
             )
         self._token = token
-        self._catalog_logged = False
+        self._ssl_ctx = _build_ssl_context()
 
     def _get(self, url: str) -> dict:
         """Make an authenticated GET request; return parsed JSON body."""
         req = urllib.request.Request(
             url,
-            headers={"Authorization": f"Bearer {self._token}"},
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "User-Agent": "okhttp/4.9.3",
+                "X-Platform": "android",
+                "X-AppVersion": "7.0.0",
+                "X-DeviceType": "algo-prototype",
+                "Accept-Language": "id",
+                "Accept": "application/json",
+            },
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15, context=self._ssl_ctx) as resp:
             return json.loads(resp.read().decode())
+
+    def _fetch_subsector_symbols(self, label: str, subsector_id: str) -> set[str]:
+        """
+        GET one emitten subsector endpoint and return the uppercased symbol set.
+
+        On exception, logs a warning and returns an empty set so a single
+        dead endpoint does not silently corrupt the intersection.
+        """
+        url = f"{EMITTEN_BASE_URL}/{subsector_id}/company"
+        try:
+            body = self._get(url)
+            rows = body.get("data") or []
+            symbols = {row["symbol"].strip().upper() for row in rows if row.get("symbol")}
+            logger.info(
+                "emitten %s subsector (%s): %d symbols returned",
+                label, subsector_id, len(symbols),
+            )
+            return symbols
+        except Exception as exc:
+            logger.warning(
+                "emitten fetch failed for %s subsector (%s): %s",
+                label, subsector_id, exc,
+            )
+            return set()
 
     def funding_universe(self) -> set[str]:
         """
-        Fetch DBX and MBX catalog membership and return the union.
+        Return the intersection of day-trade ∩ trading-limit emitten subsectors
+        as uppercase symbol strings (the hard funding gate —
+        "all funding options unlocked").
 
-        The catalog endpoint returns CatalogData with a stock list and a
-        catalog[] array.  On first call, logs the returned catalog labels
-        so the operator can confirm the mapping.
+        If either subsector returns an empty set (fetch failed), the intersection
+        is naturally empty — that is the correct, visible behavior.
         """
-        symbols: set[str] = set()
-        for catalog_type in ("CATALOG_TYPE_DBX", "CATALOG_TYPE_MBX"):
-            url = f"{CATALOG_BASE_URL}?catalog_type={catalog_type}"
-            try:
-                body = self._get(url)
-            except Exception as exc:
-                logger.warning("catalog fetch failed for %s: %s", catalog_type, exc)
-                continue
-            data = body.get("data", {})
-            if not self._catalog_logged:
-                logger.info(
-                    "catalog labels from API (first call): %s",
-                    data.get("catalog", []),
-                )
-                self._catalog_logged = True
-            for stock in data.get("stock", []):
-                code = (stock.get("code") or "").strip().upper()
-                if code:
-                    symbols.add(code)
-        return symbols
+        day_trade = self._fetch_subsector_symbols("day-trade", SUBSECTOR_DAY_TRADE)
+        trading_limit = self._fetch_subsector_symbols("trading-limit", SUBSECTOR_TRADING_LIMIT)
+
+        if not day_trade:
+            logger.warning("day-trade subsector returned 0 symbols — intersection will be empty")
+        if not trading_limit:
+            logger.warning("trading-limit subsector returned 0 symbols — intersection will be empty")
+
+        intersection = day_trade & trading_limit
+        logger.info(
+            "funding intersection: %d day-trade ∩ %d trading-limit = %d symbols",
+            len(day_trade), len(trading_limit), len(intersection),
+        )
+        return intersection
 
     def daily_history(
         self,
@@ -243,24 +316,40 @@ class LiveDataSource:
         end: str,
     ) -> pd.DataFrame:
         """
-        Fetch daily OHLCV summary bars from the historical-summary endpoint.
+        Fetch daily OHLCV bars from the chartbit endpoint.
 
-        Route: GET /company-price-feed/historical/summary/{symbol}
-               ?start_date=<start>&end_date=<end>&period=daily
+        Route: GET /chartbit/{SYMBOL}/price/daily?from={end}&to={start}&limit=0
+
+        Date semantics (API quirk): ``from`` is the NEWER bound, ``to`` is the
+        OLDER bound (rows arrive newest-first).  We pass ``end`` as ``from`` and
+        ``start`` as ``to`` so that ``screener.start``/``end`` keep their
+        conventional (older/newer) meaning.
+
+        Rows are re-sorted ASCENDING by date before returning so that
+        ``close.iloc[-1]`` is always the latest price, consistent with the
+        FixtureDataSource contract.
+
+        Response shape:
+            {"data": {"chartbit": [<rows>], ...}}
+        Row keys used: date, open, high, low, close, volume, value.
         """
         url = (
-            f"{HISTORY_BASE_URL}/{symbol.upper()}"
-            f"?start_date={start}&end_date={end}&period=daily"
+            f"{CHARTBIT_BASE_URL}/{symbol.upper()}/price/daily"
+            f"?from={end}&to={start}&limit=0"
         )
         body = self._get(url)
-        records = body.get("data", {}).get("summaries", [])
-        if not records:
-            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
-        df = pd.DataFrame(records)
+        rows = body.get("data", {}).get("chartbit", [])
+        if not rows:
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "value"])
+        df = pd.DataFrame(rows)
+        df["date"] = df["date"].astype(str)
         df["close"] = pd.to_numeric(df.get("close", pd.Series(dtype=float)), errors="coerce")
         df["volume"] = pd.to_numeric(df.get("volume", pd.Series(dtype=float)), errors="coerce")
+        df["value"] = pd.to_numeric(df.get("value", pd.Series(dtype=float)), errors="coerce")
         df = df.dropna(subset=["close", "volume"])
-        return df.reset_index(drop=True)
+        # Re-sort ascending so iloc[-1] == latest row
+        df = df.sort_values("date").reset_index(drop=True)
+        return df
 
 
 # ---------------------------------------------------------------------------
@@ -280,14 +369,13 @@ class SymbolMetrics:
     min_spread_bps_val: float    # one-tick min spread in bps
     median_daily_turnover_idr: float  # median daily IDR value traded
     realised_vol_bps_val: float  # daily close-to-close vol in bps
-    fundable: bool               # in DBX or MBX catalog
+    fundable: bool               # in DBX ∩ MBX catalog
 
 
 # ---------------------------------------------------------------------------
-# Tag enum (strings, not an Enum, to stay JSON-friendly)
+# Tag constants (strings, not an Enum, to stay JSON-friendly)
 # ---------------------------------------------------------------------------
 
-TAG_TRADEABLE = "TRADEABLE"
 TAG_EDGE_CAPPED = "EDGE-CAPPED"
 TAG_TOO_THIN = "TOO-THIN"
 
@@ -298,20 +386,31 @@ TAG_TOO_THIN = "TOO-THIN"
 
 @dataclass(frozen=True)
 class RankedSymbol:
-    """A symbol that passed all gates with its tag and rank."""
+    """
+    A funding-eligible symbol with its rank and structural friction annotations.
+
+    min_edge_to_clear_bps: the floor a strategy's net per-trade edge must beat
+      on this name (one-tick spread + 40 bps round-trip fee).
+    is_edge_capped: True if min_spread_bps_val >= EDGE_CAP_THRESHOLD_BPS (40 bps).
+    is_thin: True if median_daily_turnover_idr < TOO_THIN_TURNOVER_IDR.
+
+    These flags are informational — no names are excluded for structural reasons.
+    """
     rank: int
     symbol: str
-    tag: str
     latest_price: float
     tick_sz: int
     min_spread_bps_val: float
+    min_edge_to_clear_bps: float   # = min_spread_bps_val + ROUND_TRIP_BPS
     median_daily_turnover_idr: float
     realised_vol_bps_val: float
+    is_edge_capped: bool           # min_spread_bps_val >= EDGE_CAP_THRESHOLD_BPS
+    is_thin: bool                  # median_daily_turnover_idr < TOO_THIN_TURNOVER_IDR
 
 
 @dataclass(frozen=True)
 class DroppedSymbol:
-    """A symbol excluded from the tradeable list with its reason."""
+    """A symbol excluded from the ranked list with its reason."""
     symbol: str
     reason: str
     detail: str
@@ -319,8 +418,14 @@ class DroppedSymbol:
 
 @dataclass(frozen=True)
 class RankedUniverse:
-    """Output of rank_universe — tradeable ranked list + dropped names."""
-    tradeable: list[RankedSymbol]
+    """
+    Output of rank_universe — funding-eligible ranked list + safety drops.
+
+    ranked: all funding-eligible names, sorted by liquidity, annotated with
+      structural friction flags (is_edge_capped, is_thin).
+    dropped: non-fundable safety exclusions only (reason = NOT-FUNDABLE).
+    """
+    ranked: list[RankedSymbol]
     dropped: list[DroppedSymbol]
 
 
@@ -330,26 +435,21 @@ class RankedUniverse:
 
 def rank_universe(records: list[SymbolMetrics]) -> RankedUniverse:
     """
-    Rank symbols into TRADEABLE, EDGE-CAPPED, and TOO-THIN tiers.
+    Characterize all funding-eligible symbols and sort by liquidity.
 
-    Ranking rules (in order of priority):
-    1. Non-fundable symbols are excluded entirely (never enter).
-    2. EDGE-CAPPED if min_spread_bps >= EDGE_CAP_THRESHOLD_BPS (40 bps).
-       Rationale: one tick must beat the round-trip fee gate; if it doesn't,
-       the structural arithmetic is unfavourable regardless of signal quality.
-    3. TOO-THIN if median_daily_turnover < TOO_THIN_TURNOVER_IDR.
-       Note: a symbol can be both thin and edge-capped; EDGE-CAPPED wins
-       (edge-cap is the harder structural constraint).
-    4. Within TRADEABLE: sort by median_daily_turnover_idr descending
-       (tie-break: realised_vol_bps_val descending, then symbol ascending).
-
-    The returned tradeable list has contiguous ranks 1..N.
-    Dropped symbols are annotated with reason + detail.
+    Behavior (annotate-don't-drop):
+    1. Non-fundable symbols are excluded with reason NOT-FUNDABLE (safety guard).
+    2. All fundable symbols enter ``ranked``; none are dropped for structural
+       reasons.  Edge-cap and thinness are computed and carried as boolean
+       annotations on each RankedSymbol.
+    3. Sort order: median_daily_turnover_idr descending, then
+       realised_vol_bps_val descending, then symbol ascending.
+    4. Contiguous ranks 1..N are assigned after sorting.
 
     This function is pure — it creates and returns new objects without
     mutating the input list.
     """
-    tradeable: list[SymbolMetrics] = []
+    fundable_records: list[SymbolMetrics] = []
     dropped: list[DroppedSymbol] = []
 
     for m in records:
@@ -357,38 +457,14 @@ def rank_universe(records: list[SymbolMetrics]) -> RankedUniverse:
             dropped.append(DroppedSymbol(
                 symbol=m.symbol,
                 reason="NOT-FUNDABLE",
-                detail="not in DBX or MBX catalog",
+                detail="not in DBX ∩ MBX catalog",
             ))
             continue
+        fundable_records.append(m)
 
-        edge_capped = m.min_spread_bps_val >= EDGE_CAP_THRESHOLD_BPS
-        too_thin = m.median_daily_turnover_idr < TOO_THIN_TURNOVER_IDR
-
-        if edge_capped:
-            dropped.append(DroppedSymbol(
-                symbol=m.symbol,
-                reason=TAG_EDGE_CAPPED,
-                detail=(
-                    f"min_spread={m.min_spread_bps_val:.1f} bps >= "
-                    f"gate={EDGE_CAP_THRESHOLD_BPS:.0f} bps "
-                    f"(tick={m.tick_sz} IDR at price={m.latest_price:.0f})"
-                ),
-            ))
-        elif too_thin:
-            dropped.append(DroppedSymbol(
-                symbol=m.symbol,
-                reason=TAG_TOO_THIN,
-                detail=(
-                    f"median_turnover={m.median_daily_turnover_idr/1e9:.2f} B IDR < "
-                    f"floor={TOO_THIN_TURNOVER_IDR/1e9:.1f} B IDR (PLACEHOLDER)"
-                ),
-            ))
-        else:
-            tradeable.append(m)
-
-    # Sort TRADEABLE: primary turnover desc, secondary vol desc, tertiary symbol asc
-    tradeable_sorted = sorted(
-        tradeable,
+    # Sort: primary turnover desc, secondary vol desc, tertiary symbol asc
+    sorted_fundable = sorted(
+        fundable_records,
         key=lambda m: (-m.median_daily_turnover_idr, -m.realised_vol_bps_val, m.symbol),
     )
 
@@ -396,17 +472,19 @@ def rank_universe(records: list[SymbolMetrics]) -> RankedUniverse:
         RankedSymbol(
             rank=i + 1,
             symbol=m.symbol,
-            tag=TAG_TRADEABLE,
             latest_price=m.latest_price,
             tick_sz=m.tick_sz,
             min_spread_bps_val=m.min_spread_bps_val,
+            min_edge_to_clear_bps=m.min_spread_bps_val + ROUND_TRIP_BPS,
             median_daily_turnover_idr=m.median_daily_turnover_idr,
             realised_vol_bps_val=m.realised_vol_bps_val,
+            is_edge_capped=m.min_spread_bps_val >= EDGE_CAP_THRESHOLD_BPS,
+            is_thin=m.median_daily_turnover_idr < TOO_THIN_TURNOVER_IDR,
         )
-        for i, m in enumerate(tradeable_sorted)
+        for i, m in enumerate(sorted_fundable)
     ]
 
-    return RankedUniverse(tradeable=ranked_list, dropped=dropped)
+    return RankedUniverse(ranked=ranked_list, dropped=dropped)
 
 
 # ---------------------------------------------------------------------------
@@ -475,59 +553,81 @@ def _fmt_idr(v: float) -> str:
     return f"{v:.0f}"
 
 
+def _flags_cell(r: RankedSymbol) -> str:
+    """Render the Flags table cell from boolean annotations."""
+    parts = []
+    if r.is_edge_capped:
+        parts.append(TAG_EDGE_CAPPED.lower())
+    if r.is_thin:
+        parts.append(TAG_TOO_THIN.lower())
+    return ", ".join(parts) if parts else "—"
+
+
 def build_report(universe: RankedUniverse) -> str:
     """
-    Render a markdown report: ranked table + dropped names table.
+    Render a markdown report: ranked annotated table + safety-drop section.
 
-    The ranked TRADEABLE list is intended as the next capture watchlist.
+    The universe = all funding-eligible names (day-trade ∩ trading-limit,
+    "all funding options unlocked"), ranked by liquidity.  Edge-cap and thin
+    are informational flags, not exclusions.  No strategy assumption is
+    encoded — strategy fit is decided downstream by backtest (plan 10).
     """
     lines: list[str] = [
         "# IDX Universe Screen",
         "",
-        "Three-layer filter: **funding-eligible** (DBX/MBX catalog) ∩ "
-        "**liquid** (median daily turnover) ∩ **not-tick-capped** "
-        "(one-tick spread < fee gate).  "
-        "No alpha signal is encoded here — that belongs in Step 4.",
+        "Universe = **funding-eligible** (day-trade ∩ trading-limit — "
+        "\"all funding options unlocked\"), ranked by liquidity.  "
+        "Edge-capped and thin are **informational flags only** — no names are "
+        "excluded for structural reasons.  "
+        "No alpha signal or strategy assumption is encoded here — "
+        "strategy fit is decided downstream by backtest (plan 10).",
         "",
-        f"Edge-cap gate: min_spread_bps ≥ **{EDGE_CAP_THRESHOLD_BPS:.0f} bps** "
-        f"(= full round-trip fee gate: buy {BUY_BPS:.0f} bps + sell {SELL_BPS:.0f} bps).  ",
-        f"Thin gate: median daily turnover < **{TOO_THIN_TURNOVER_IDR/1e9:.1f} B IDR** "
+        f"Edge-cap threshold: min_spread_bps ≥ **{EDGE_CAP_THRESHOLD_BPS:.0f} bps** "
+        f"(= full round-trip fee: buy {BUY_BPS:.0f} bps + sell {SELL_BPS:.0f} bps).  ",
+        f"Thin threshold: median daily turnover < **{TOO_THIN_TURNOVER_IDR/1e9:.1f} B IDR** "
         "(PLACEHOLDER — pending position-size derivation).",
         "",
         "---",
         "",
-        "## Tradeable — ranked capture watchlist",
+        "## Ranked Universe — funding-eligible, sorted by liquidity",
         "",
     ]
 
-    if universe.tradeable:
+    if universe.ranked:
         lines += [
             "| Rank | Symbol | Price (IDR) | Tick | min_spread (bps) "
-            "| Median Turnover | Vol (bps/day) |",
+            "| min_edge_to_clear (bps) | Median Turnover | Vol (bps/day) | Flags |",
             "|------|--------|-------------|------|------------------"
-            "|-----------------|---------------|",
+            "|-------------------------|-----------------|---------------|-------|",
         ]
-        for r in universe.tradeable:
+        for r in universe.ranked:
             lines.append(
                 f"| {r.rank} | {r.symbol} | {r.latest_price:.0f} | {r.tick_sz} "
                 f"| {r.min_spread_bps_val:.1f} "
+                f"| {r.min_edge_to_clear_bps:.1f} "
                 f"| {_fmt_idr(r.median_daily_turnover_idr)} "
-                f"| {r.realised_vol_bps_val:.0f} |"
+                f"| {r.realised_vol_bps_val:.0f} "
+                f"| {_flags_cell(r)} |"
             )
     else:
-        lines.append("_No tradeable names found._")
+        lines.append("_No funding-eligible names found._")
 
     lines += [
         "",
         "---",
         "",
-        "## Dropped names",
+        "## Excluded (non-fundable safety drops)",
         "",
-        "| Symbol | Reason | Detail |",
-        "|--------|--------|--------|",
     ]
-    for d in sorted(universe.dropped, key=lambda x: x.reason):
-        lines.append(f"| {d.symbol} | {d.reason} | {d.detail} |")
+    if universe.dropped:
+        lines += [
+            "| Symbol | Reason | Detail |",
+            "|--------|--------|--------|",
+        ]
+        for d in sorted(universe.dropped, key=lambda x: x.reason):
+            lines.append(f"| {d.symbol} | {d.reason} | {d.detail} |")
+    else:
+        lines.append("_none_")
 
     lines += [
         "",
@@ -537,6 +637,12 @@ def build_report(universe: RankedUniverse) -> str:
         "",
         "- Fixture data is **synthetic** — prices and volumes are made-up for pipeline "
         "testing only. Replace with real captured data before using this list.",
+        "- **min_edge_to_clear_bps** = one-tick spread + 40 bps round-trip fee.  "
+        "This is the floor a strategy's net per-trade edge must beat on that name; "
+        "it is informational, not a filter.",
+        "- **edge-capped** and **thin** flags are informational annotations only — "
+        "they do not exclude names from the universe.  Strategy fit is determined "
+        "downstream by backtest (plan 10).",
         "- The TOO-THIN floor is a placeholder; derive from "
         "`max_position_for_budget` once a target position size is agreed.",
         f"- Constants: `EDGE_CAP_THRESHOLD_BPS={EDGE_CAP_THRESHOLD_BPS}`, "
@@ -563,10 +669,10 @@ def run_screen(
     """
     os.makedirs(outdir, exist_ok=True)
 
-    # Layer 1: funding gate
-    print("Fetching funding universe…", flush=True)
+    # Layer 1: funding gate (day-trade ∩ trading-limit intersection)
+    print("Fetching funding universe (day-trade ∩ trading-limit)…", flush=True)
     fundable_set = ds.funding_universe()
-    print(f"  {len(fundable_set)} fundable symbols: {sorted(fundable_set)}", flush=True)
+    print(f"  {len(fundable_set)} symbols in intersection: {sorted(fundable_set)}", flush=True)
 
     # Fan-out: compute metrics per symbol
     # NOTE: a Claude workflow would run these as parallel agents (plan 08 §3).
@@ -590,9 +696,11 @@ def run_screen(
     universe = rank_universe(all_metrics)
 
     # Print summary
-    print(f"\nTRADEABLE ({len(universe.tradeable)}):")
-    for r in universe.tradeable:
-        print(f"  #{r.rank} {r.symbol}")
+    print(f"\nRANKED UNIVERSE ({len(universe.ranked)}):")
+    for r in universe.ranked:
+        flags = _flags_cell(r)
+        flag_str = f"  [{flags}]" if flags != "—" else ""
+        print(f"  #{r.rank} {r.symbol}{flag_str}")
     print(f"\nDROPPED ({len(universe.dropped)}):")
     for d in universe.dropped:
         print(f"  {d.symbol}: {d.reason} — {d.detail}")
@@ -613,7 +721,11 @@ def run_screen(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="IDX universe screener — funding-eligible ∩ liquid ∩ not-tick-capped."
+        description=(
+            "IDX universe characterizer — defines the funding-eligible investable "
+            "universe (day-trade ∩ trading-limit, 'all funding options unlocked') "
+            "and annotates each name with structural friction metrics."
+        )
     )
     p.add_argument(
         "--source", choices=["fixture", "live"], default="fixture",
@@ -628,14 +740,34 @@ def parse_args() -> argparse.Namespace:
         help="Output directory for universe_screen.md (default: research/out/).",
     )
     p.add_argument(
-        "--start", default="2026-06-01",
-        help="Start date for daily history (YYYY-MM-DD).",
+        "--days", type=int, default=DEFAULT_LOOKBACK_DAYS, metavar="N",
+        help=(
+            "History lookback in calendar days, ending today "
+            f"(default: {DEFAULT_LOOKBACK_DAYS}). Ignored if both --start and --end are given."
+        ),
     )
     p.add_argument(
-        "--end", default="2026-06-19",
-        help="End date for daily history (YYYY-MM-DD).",
+        "--start", default=None,
+        help="Start date for daily history (YYYY-MM-DD). Overrides --days.",
     )
-    return p.parse_args()
+    p.add_argument(
+        "--end", default=None,
+        help="End date for daily history (YYYY-MM-DD). Defaults to today.",
+    )
+    args = p.parse_args()
+
+    # Resolve the history window. Explicit --start/--end win; otherwise derive
+    # a `--days` lookback ending today so the default window is always fresh.
+    end_date = (
+        datetime.date.fromisoformat(args.end) if args.end else datetime.date.today()
+    )
+    if args.start:
+        start_date = datetime.date.fromisoformat(args.start)
+    else:
+        start_date = end_date - datetime.timedelta(days=args.days)
+    args.start = start_date.isoformat()
+    args.end = end_date.isoformat()
+    return args
 
 
 def main() -> None:
