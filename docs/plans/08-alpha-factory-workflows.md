@@ -1,6 +1,7 @@
 # Alpha Factory as Orchestrated Workflows — Fan-Out the Research Loop
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-19
+> **Status:** 🔨 In Progress · **Owner:** @lewis · **Updated:** 2026-06-19
+> _(Workflow A / 7.2 — the universe screener — done & live-verified via [plan 09](./09-universe-screener.md); Workflow B 7.3–7.5 not started.)_
 > **Related:** [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) · [04-microstructure-study.md](./04-microstructure-study.md) · [05-ofi-trade-flow-study.md](./05-ofi-trade-flow-study.md) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [09-universe-screener.md](./09-universe-screener.md) · [Plans index](./README.md)
 
 > **What this is.** An idea, not yet a buildable ticket. The roadmap's
@@ -185,10 +186,12 @@ session to pool — it is worthless on a single day.
 - [ ] **7.1** Confirm `research/lib/loaders.py` + `sbcap` expose everything the
       screening metrics need per symbol (turnover, L1 depth, spread, tick/price,
       vol, update rate); add any missing column.
-- [ ] **7.2** Build the universe screener (deterministic Python, not a Workflow) per
+- [x] **7.2** Build the universe screener (deterministic Python, not a Workflow) per
       [plan 09](./09-universe-screener.md): `metrics.py` pure functions → `screen_universe.py`
-      Tier A orchestrator → `research/out/universe_screen.md`. Run it; use the
-      ranked universe as the unbiased input set for the next study.
+      Tier A orchestrator → `research/out/universe_screen.md`. **Done & live-verified
+      (2026-06-19).** Strategy fit over the ranked universe is now its own
+      [plan 10](./10-strategy-fit-and-portfolio.md) — the data-centric body that
+      Workflow B (7.3–7.5) will orchestrate.
 - [ ] **7.3** Define the candidate-hypothesis spec format (name + signal
       construction + horizon) the battery pipeline consumes, seeded with the
       lower-frequency families the 40 bps gate permits (§1.2 last bullet).

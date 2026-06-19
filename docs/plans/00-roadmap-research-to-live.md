@@ -56,12 +56,14 @@ few look good by chance.*
 
 ### Phase 1.2 — What makes it a factory (missing)
 
-- [ ] **Universe screening** — choose names from *data*, not memory. Rank/filter
+- [x] **Universe screening** — choose names from *data*, not memory. Rank/filter
       on median daily turnover (value), L1 displayed depth, time-weighted relative
       spread (bps), **tick-size-as-fraction-of-price** (this bounds the achievable
       edge for an imbalance signal), volatility, and quote/trade update rate.
       *Upstream of everything — the current 5–6 miners are a convenience sample, so
-      every verdict so far inherits that selection bias.* → [plan 09](./09-universe-screener.md).
+      every verdict so far inherits that selection bias.* → [plan 09](./09-universe-screener.md)
+      **(Tier A done & live-verified).** Which strategy fits each name is now
+      [plan 10](./10-strategy-fit-and-portfolio.md).
 - [ ] **More data across regimes** — multi-day capture so a verdict rests on
       trending/choppy/high-low-vol days, not one session. Depends on pillar 4.1.
 - [ ] **Day-aware multi-day pooling** in the study harness — concat N days, split

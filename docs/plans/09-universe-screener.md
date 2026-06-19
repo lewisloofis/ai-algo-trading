@@ -1,7 +1,7 @@
 # Universe Screener — Objective, Layered, Signal-Agnostic
 
-> **Status:** 🔨 In Progress · **Owner:** @lewis · **Updated:** 2026-06-19
-> **Related:** [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) (§7.1) · [08-alpha-factory-workflows.md](./08-alpha-factory-workflows.md) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [docs/reference/06-pre-trade-rules.md](../reference/06-pre-trade-rules.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md)
+> **Status:** ✔️ Done · **Tier A live-verified** (Tier B + opportunity scan deferred) · **Owner:** @lewis · **Updated:** 2026-06-19
+> **Related:** [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) (§7.1) · [08-alpha-factory-workflows.md](./08-alpha-factory-workflows.md) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [docs/reference/06-pre-trade-rules.md](../reference/06-pre-trade-rules.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [ADR-0009: universe = funding intersection](../adr/0009-universe-is-funding-intersection-strategy-fit-downstream.md)
 
 > **What this is.** The concrete build of the roadmap §7.1 "Universe screening"
 > item — a three-layer funnel that ranks the IDX funding-eligible universe from
@@ -162,19 +162,23 @@ statistical reasoning and adversarial verification across three attack angles.
 
 ## 7. Implementation
 
-Steps 1 and 2 are currently in progress.
+Steps 7.1 and 7.2 are complete and live-verified (2026-06-19). 7.3 and 7.4
+remain deferred (see §2 and §9).
 
-- [ ] **7.1** `research/screener/metrics.py` — pure functions, no I/O:
+- [x] **7.1** `research/screener/metrics.py` — pure functions, no I/O:
   `tick_size(price)`, `min_spread_bps(price)`, `median_daily_turnover(ohlcv)`,
   `realised_vol_bps(ohlcv)`, `impact_bps(half_spread, vol, position, adv)`,
   `max_position_for_budget(half_spread, vol, adv, budget_bps)`.
   Unit-tested against hand-worked numbers: BUMI at 168 → `min_spread_bps ≈ 59`.
-- [ ] **7.2** `research/screener/screen_universe.py` — Tier A orchestrator:
+- [x] **7.2** `research/screener/screen_universe.py` — Tier A orchestrator:
   fan-out per symbol → barrier collect → rank. Pluggable data source (fixture
-  default; thin live HTTP given a bearer token). Catalog DBX ∪ MBX gate,
-  tick-floor-led ranking, three-state tags (TRADEABLE / EDGE-CAPPED / TOO-THIN),
-  writes `research/out/universe_screen.md`. The ranked list becomes the next
-  capture watchlist — feeds the collector via the SSM watchlist (ADR-0006).
+  default; thin live HTTP given a bearer token). **Funding gate = day-trade ∩
+  trading-limit intersection** (emitten subsectors, live-verified); ranked by
+  liquidity; edge-cap and thinness carried as **annotations**
+  (`min_edge_to_clear_bps`, `is_edge_capped`, `is_thin`), not drops (see §2
+  revision). Writes `research/out/universe_screen.md`. The ranked list becomes
+  the next capture watchlist — feeds the collector via the SSM watchlist
+  (ADR-0006) — and the input to [plan 10](./10-strategy-fit-and-portfolio.md).
 - [ ] **7.3** Tier B refine (deferred) — order-book metrics (time-weighted L1
   depth, realised relative spread bps, quote update rate) via `sbcap features`;
   re-rank Tier-A candidates once their data is captured.
@@ -183,17 +187,22 @@ Steps 1 and 2 are currently in progress.
 
 ## 8. Verification
 
-- **Unit tests** for every function in `metrics.py` against hand-worked values;
-  BUMI 168 → ~59 bps is the canonical reference case.
-- **Integration test** — one live read-only Catalog + historical OHLCV call
-  with a valid bearer token: confirm the funding gate returns DBX/MBX labels,
-  ADV is plausible, BUMI is tagged EDGE-CAPPED.
-- **End-to-end** — `universe_screen.md` is produced; ranked names include drop
-  reasons; the top names differ from the 5–6-name convenience sample (the
-  selection-bias fix is visible).
-- **Cost-gate consistency** — FEE constants imported from
+- [x] **Unit tests** for every function in `metrics.py` against hand-worked
+  values; BUMI 168 → ~59 bps is the canonical reference case. _(16 tests pass:
+  8 in `test_metrics.py` + 8 in `test_screen_universe.py`.)_
+- [x] **Integration test** — live read-only funding + OHLCV calls with a valid
+  bearer token. _(Done 2026-06-19: the funding gate is the **intersection** of
+  the two emitten subsectors, not the old `/oms/catalog` guess; OHLCV via the
+  chartbit endpoint. BUMI is annotated `edge-capped` at 59.5 bps and **kept** in
+  the universe — the revised, non-dropping behaviour. Endpoints recorded in the
+  `sb-screener-live-endpoints` note.)_
+- [x] **End-to-end** — `universe_screen.md` is produced; every funded name is
+  ranked with friction annotations; the universe differs from the 5–6-name
+  convenience sample (the selection-bias fix is visible).
+- [x] **Cost-gate consistency** — FEE constants imported from
   `research/backtest/backtest.py`; no duplicated 40 bps value anywhere in
-  `screener/`.
+  `screener/`. `min_edge_to_clear_bps` = one-tick spread + the imported
+  round-trip fee.
 
 ## 9. Out of scope
 

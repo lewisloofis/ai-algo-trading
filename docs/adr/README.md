@@ -13,6 +13,7 @@ algo-trading project, using a lightweight [ADR](https://adr.github.io/) format.
 | [0006](./0006-watchlist-from-ssm.md) | Source watchlist and watchlist_id from SSM at boot | Accepted |
 | [0007](./0007-iepiev-capture-and-preopening-trades.md) | Capture IEP/IEV and exclude pre-opening trades from flow features | Accepted |
 | [0008](./0008-top-level-layout-mirrors-pillars.md) | Top-level layout mirrors trading-system pillars | Accepted |
+| [0009](./0009-universe-is-funding-intersection-strategy-fit-downstream.md) | Universe is the funding intersection; strategy fit decided downstream | Accepted |
 
 ## When to write an ADR
 
