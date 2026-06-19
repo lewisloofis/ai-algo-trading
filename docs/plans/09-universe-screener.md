@@ -18,9 +18,18 @@ The funnel keeps three concerns strictly separated to preserve objectivity:
 
 | Layer | Question | Source | Nature |
 |---|---|---|---|
-| 1. Eligibility gate | Can I fund it? | Stockbit Catalog API (DBX ∪ MBX) | Binary filter |
-| 2. Tradeability rank | Liquid enough to exit? Edge tick-capped? | Daily bars + tick ladder | Continuous rank |
+| 1. Eligibility gate | Can I fund it *every way*? | emitten subsectors (day-trade ∩ trading-limit) | Binary filter |
+| 2. Tradeability annotation | How liquid? How tick-capped? | Daily bars + tick ladder | Continuous rank + **annotations** (not drops) |
 | 3. Opportunity scan | Is *now* a good moment? (e.g. Bollinger) | Daily / intraday bars | Signal — runs *inside* the universe, never defines it |
+
+> **Revision (2026-06-19).** Two original decisions below are superseded: (a) the
+> funding gate is now the **intersection** (day-trade ∩ trading-limit, "all
+> funding options unlocked"), not the union; (b) edge-cap and thinness are now
+> **annotations** carried on every name, not drops — they encoded a single
+> intraday strategy's friction budget, which belongs to the `(name, strategy)`
+> pair, not the universe. Strategy fit is decided downstream by backtest in
+> [plan 10](./10-strategy-fit-and-portfolio.md). The struck-through decisions in
+> §2 are kept for provenance.
 
 **Layer 3 is explicitly not part of this plan.** Opportunity signals run as a
 separate scan inside the fixed universe, after it is established. Baking a
@@ -42,16 +51,22 @@ universe of one — useless. Tier B (order-book microstructure refinement via
 `sbcap features`) is deferred until Tier-A-selected names are actually in the
 capture pipeline.
 
-**Funding gate = trading-limit OR day-trade (union).** Either catalog type
-qualifies a name for consideration. The gate is binary: present in DBX or MBX
-→ eligible; absent → dropped.
+**Funding gate = day-trade ∩ trading-limit (intersection).** _(Revised — was
+"union".)_ A name qualifies only when **all** funding options are unlocked: it
+must appear in **both** the day-trade and trading-limit emitten subsectors. This
+keeps the universe strategy-agnostic — every member supports every holding style
+(intraday leverage *and* overnight margin), so the universe never quietly favours
+one strategy. ~~Either catalog type qualifies a name (union).~~
 
-**Liquidity floor deferred until edge + size are fixed.** The rank is computed
-now (ADV, vol, depth proxy from tick ladder); the numeric pass/fail floor that
-converts a rank into a hard TRADEABLE / TOO-THIN tag is derived later once a
-target edge and position size are settled. Until then, the three-state output
-tags names as TRADEABLE (passes current soft floors), EDGE-CAPPED
-(structurally tick-floor-capped), or TOO-THIN (placeholder floor exceeded).
+**Edge-cap and thinness are annotations, not drops.** _(Revised — was a
+three-state drop.)_ The screener computes, per name, `min_edge_to_clear_bps`
+(one-tick spread + 40 bps round-trip fee), `is_edge_capped`, and `is_thin`, and
+**keeps every funded name** in the ranked output carrying those flags. ~~A name
+whose one tick exceeds the 40 bps gate was dropped as EDGE-CAPPED.~~ That cap
+only rejects a name *for an intraday liquidity-taking strategy*; it does not make
+the name untradeable for a wider-edge horizon. Which strategy a name supports is
+decided by backtest in [plan 10](./10-strategy-fit-and-portfolio.md), where the
+per-name friction floor is the pass threshold.
 
 ## 3. The objectivity principle — cutoffs from the cost gate, not taste
 
