@@ -279,7 +279,9 @@ def run_event_family(
 
     hit_rate = float(np.mean(np.sign(sig_v) == np.sign(fwd_v)))
     gross_edge_bps = float(np.nanmean(fwd_v) * 1e4)
-    net_edge_bps = gross_edge_bps - ROUND_TRIP_BPS
+    # net_edge_bps is NOT pre-computed here: the runner computes true
+    # net-after-full-cost as (gross - hurdle) to avoid double-counting the
+    # friction floor.  The key is preserved in the dict for API stability.
     p_value = bootstrap_hit_rate_pvalue(sig_v, fwd_v, hit_rate)
 
     return {
@@ -288,6 +290,6 @@ def run_event_family(
         "hit_rate": hit_rate,
         "eff_n": eff_n_valid,
         "gross_edge_bps": gross_edge_bps,
-        "net_edge_bps": net_edge_bps,
+        "net_edge_bps": None,
         "p_value": p_value,
     }

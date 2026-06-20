@@ -211,10 +211,10 @@ def _run_single_pair(
 
     eff_n = n_blocks
     gross_edge_bps = float((hit_rate - 0.5) * 200.0)  # rough: 1% per winning block
-
-    # Cost-stack floor: SUM of both legs' min_edge (each leg is a separate order).
-    pair_min_edge = min_edge_a + min_edge_b
-    net_edge_bps = gross_edge_bps - pair_min_edge
+    # net_edge_bps is NOT pre-computed here: the runner computes true
+    # net-after-full-cost as (gross - hurdle) to avoid double-counting the
+    # friction floor (sum of both legs).  The correct sum-of-legs floor is
+    # applied by the runner in _run_pairs_cell.
 
     # Bootstrap p-value (sign permutation on spread blocks).
     block_signs = np.array([
@@ -237,7 +237,6 @@ def _run_single_pair(
         "eff_n": eff_n,
         "hit_rate": hit_rate,
         "gross_edge_bps": gross_edge_bps,
-        "net_edge_bps": net_edge_bps,
         "p_value": p_value,
         "half_life": half_life,
         "beta": beta,
@@ -361,19 +360,18 @@ def run_pairs_family(
             "eff_n": eff_n,
             "hit_rate": best_result["hit_rate"],
             "gross_edge_bps": best_result["gross_edge_bps"],
-            "net_edge_bps": best_result["net_edge_bps"],
+            "net_edge_bps": None,
             "p_value": best_result["p_value"],
         }
 
     logger.info(
         "pairs: best pair=%s, eff_n=%d, hit_rate=%.3f, gross_edge=%.1f bps, "
-        "net_edge=%.1f bps, half_life=%.1f days, p=%.3f. "
+        "half_life=%.1f days, p=%.3f. "
         "%d cointegrated pairs found.",
         best_result["pair"],
         eff_n,
         best_result["hit_rate"],
         best_result["gross_edge_bps"],
-        best_result["net_edge_bps"],
         best_result.get("half_life", float("nan")),
         best_result["p_value"],
         n_cointegrated,
@@ -385,6 +383,6 @@ def run_pairs_family(
         "eff_n": eff_n,
         "hit_rate": best_result["hit_rate"],
         "gross_edge_bps": best_result["gross_edge_bps"],
-        "net_edge_bps": best_result["net_edge_bps"],
+        "net_edge_bps": None,
         "p_value": best_result["p_value"],
     }

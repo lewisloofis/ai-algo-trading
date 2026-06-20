@@ -224,13 +224,18 @@ def _run_single_name_cell(
         )
 
     # 4. Cost gate at best-feasible entry_dow (cheapest financing day).
+    # Gate on GROSS edge vs the full cost stack (floor + impact + financing).
+    # The family's net_edge_bps already subtracted the friction floor, so we
+    # must NOT use it for the gate — that would count the floor twice.
+    # net_after_cost = gross - hurdle: > 0 for survivors, ≤ 0 for rejections.
     hurdle, entry_dow = best_feasible_hurdle_bps(
         min_edge_to_clear_bps=min_edge_to_clear_bps,
         modelled_impact_bps=MODELLED_IMPACT_BPS,
         hold_trading_days=family.horizon_trading_days,
     )
-    net_edge = result["net_edge_bps"] or 0.0
-    cost_pass = net_edge > hurdle
+    gross_edge = result["gross_edge_bps"] or 0.0
+    cost_pass = gross_edge > hurdle
+    net_after_cost = gross_edge - hurdle
 
     return CellResult(
         symbol=symbol,
@@ -241,7 +246,7 @@ def _run_single_name_cell(
         hit_rate=result["hit_rate"],
         eff_n=result["eff_n"],
         gross_edge_bps=result["gross_edge_bps"],
-        net_edge_bps=result["net_edge_bps"],
+        net_edge_bps=net_after_cost,
         p_value=result["p_value"],
         decay_status=decay_status,
         decay_metric=wf.mean_sharpe,
@@ -289,14 +294,18 @@ def _run_event_cell(
         )
 
     # Use the median min_edge as the friction floor for the pooled event family.
+    # Gate on GROSS edge vs the full cost stack (floor + impact + financing).
+    # The family's net_edge_bps already subtracted ROUND_TRIP_BPS, so we
+    # must NOT use it for the gate — that would count the floor twice.
     median_min_edge = float(np.median(list(universe_min_edge_map.values()))) if universe_min_edge_map else ROUND_TRIP_BPS
     hurdle, entry_dow = best_feasible_hurdle_bps(
         min_edge_to_clear_bps=median_min_edge,
         modelled_impact_bps=MODELLED_IMPACT_BPS,
         hold_trading_days=family.horizon_trading_days,
     )
-    net_edge = result["net_edge_bps"] or 0.0
-    cost_pass = net_edge > hurdle
+    gross_edge = result["gross_edge_bps"] or 0.0
+    cost_pass = gross_edge > hurdle
+    net_after_cost = gross_edge - hurdle
 
     return CellResult(
         symbol=symbol,
@@ -307,7 +316,7 @@ def _run_event_cell(
         hit_rate=result["hit_rate"],
         eff_n=result["eff_n"],
         gross_edge_bps=result["gross_edge_bps"],
-        net_edge_bps=result["net_edge_bps"],
+        net_edge_bps=net_after_cost,
         p_value=result["p_value"],
         passes_cost_gate=cost_pass,
         min_edge_hurdle_bps=hurdle,
@@ -353,14 +362,18 @@ def _run_cross_sectional_cell(
 
     # Cost-stack floor: median min_edge (cross-sectional L/S — documented in
     # families_cross_sectional.py; uses median, not sum-of-legs).
+    # Gate on GROSS edge vs the full cost stack (floor + impact + financing).
+    # The family's net_edge_bps already subtracted cs_min_edge, so we must NOT
+    # use it for the gate — that would count the floor twice.
     median_min_edge = float(np.median(list(universe_min_edge_map.values()))) if universe_min_edge_map else ROUND_TRIP_BPS
     hurdle, entry_dow = best_feasible_hurdle_bps(
         min_edge_to_clear_bps=median_min_edge,
         modelled_impact_bps=MODELLED_IMPACT_BPS,
         hold_trading_days=family.horizon_trading_days,
     )
-    net_edge = result["net_edge_bps"] or 0.0
-    cost_pass = net_edge > hurdle
+    gross_edge = result["gross_edge_bps"] or 0.0
+    cost_pass = gross_edge > hurdle
+    net_after_cost = gross_edge - hurdle
 
     return CellResult(
         symbol=symbol,
@@ -371,7 +384,7 @@ def _run_cross_sectional_cell(
         hit_rate=result["hit_rate"],
         eff_n=result["eff_n"],
         gross_edge_bps=result["gross_edge_bps"],
-        net_edge_bps=result["net_edge_bps"],
+        net_edge_bps=net_after_cost,
         p_value=result["p_value"],
         passes_cost_gate=cost_pass,
         min_edge_hurdle_bps=hurdle,
@@ -417,6 +430,9 @@ def _run_pairs_cell(
 
     # Cost-stack floor: sum of both legs' min_edge (each leg is a separate order).
     # Documented in families_pairs.py; use sum, not median, for pairs.
+    # Gate on GROSS edge vs the full cost stack (floor + impact + financing).
+    # The family's net_edge_bps already subtracted pair_min_edge, so we must NOT
+    # use it for the gate — that would count the floor twice.
     if universe_min_edge_map:
         edges = sorted(universe_min_edge_map.values())
         # Use the two smallest friction floors as a proxy for the cheapest pair legs.
@@ -428,8 +444,9 @@ def _run_pairs_cell(
         modelled_impact_bps=MODELLED_IMPACT_BPS,
         hold_trading_days=family.horizon_trading_days,
     )
-    net_edge = result["net_edge_bps"] or 0.0
-    cost_pass = net_edge > hurdle
+    gross_edge = result["gross_edge_bps"] or 0.0
+    cost_pass = gross_edge > hurdle
+    net_after_cost = gross_edge - hurdle
 
     return CellResult(
         symbol=symbol,
@@ -440,7 +457,7 @@ def _run_pairs_cell(
         hit_rate=result["hit_rate"],
         eff_n=result["eff_n"],
         gross_edge_bps=result["gross_edge_bps"],
-        net_edge_bps=result["net_edge_bps"],
+        net_edge_bps=net_after_cost,
         p_value=result["p_value"],
         passes_cost_gate=cost_pass,
         min_edge_hurdle_bps=hurdle,

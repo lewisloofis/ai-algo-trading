@@ -358,7 +358,9 @@ def run_single_name_family(
     # A strategy trades in the signal direction; expected P&L per trade = this.
     signed_returns = np.sign(sig_vals[valid_mask]) * fwd[valid_mask]
     gross_edge_bps = float(np.nanmean(signed_returns) * 1e4)
-    net_edge_bps = gross_edge_bps - ROUND_TRIP_BPS
+    # net_edge_bps is NOT pre-computed here: the runner computes true
+    # net-after-full-cost as (gross - hurdle) to avoid double-counting the
+    # friction floor.  The key is preserved in the dict for API stability.
 
     sig = deoverlapped["signal"].to_numpy(dtype=float)
     p_value = bootstrap_hit_rate_pvalue(sig, fwd, hit_rate)
@@ -369,6 +371,6 @@ def run_single_name_family(
         "hit_rate": hit_rate,
         "eff_n": eff_n,
         "gross_edge_bps": gross_edge_bps,
-        "net_edge_bps": net_edge_bps,
+        "net_edge_bps": None,
         "p_value": p_value,
     }

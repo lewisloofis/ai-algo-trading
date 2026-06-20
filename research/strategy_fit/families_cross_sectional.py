@@ -42,7 +42,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sps
 
-from strategy_fit.families_single_name import ROUND_TRIP_BPS, N_BOOTSTRAP_FAMILIES, bootstrap_hit_rate_pvalue
+from strategy_fit.families_single_name import N_BOOTSTRAP_FAMILIES, bootstrap_hit_rate_pvalue
 
 try:
     from lib.stats import MIN_EFF_N
@@ -193,17 +193,11 @@ def run_cross_sectional_family(
     # Gross edge proxy: mean IC × cross-sectional vol × 1e4.
     # Using mean absolute return as a proxy for cross-sectional vol.
     gross_edge_bps = float(mean_ic * 100.0)  # 1% cross-sec vol assumption; rough proxy
-
-    # Cost-stack floor: median min_edge_to_clear_bps across all names.
-    # design: for cross-sectional L/S, using the median (not sum) of both legs'
-    # floors because in a market-neutral book the legs partly offset friction.
-    # This is a documented conservative floor; revise to sum-of-legs if the
-    # execution model changes (e.g. full gross-up of both sides).
-    if universe_min_edge_map:
-        cs_min_edge = float(np.median(list(universe_min_edge_map.values())))
-    else:
-        cs_min_edge = ROUND_TRIP_BPS
-    net_edge_bps = gross_edge_bps - cs_min_edge
+    # net_edge_bps is NOT pre-computed here: the runner computes true
+    # net-after-full-cost as (gross - hurdle) to avoid double-counting the
+    # friction floor.  The key is preserved in the dict for API stability.
+    # The correct floor for cross-sectional L/S (median, not sum-of-legs) is
+    # applied by the runner in _run_cross_sectional_cell.
 
     # Bootstrap p-value via sign permutation of IC series.
     rng = np.random.default_rng(42)
@@ -228,5 +222,5 @@ def run_cross_sectional_family(
         "p_value": p_value,
         "hit_rate": hit_rate,
         "gross_edge_bps": gross_edge_bps,
-        "net_edge_bps": net_edge_bps,
+        "net_edge_bps": None,
     }

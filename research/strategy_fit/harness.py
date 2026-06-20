@@ -250,7 +250,10 @@ class CellResult:
     gross_edge_bps : float or None
         Mean forward return × 1e4 (before fees and friction).
     net_edge_bps : float or None
-        Gross edge minus ROUND_TRIP_BPS (fees only; financing is separate).
+        True net-after-full-cost edge per trade in bps: gross_edge_bps minus the
+        full cost hurdle (floor + modelled_impact + financing).  Positive for
+        survivors (passes_cost_gate=True), non-positive otherwise.  Computed by
+        the runner, not the family, to count the friction floor exactly once.
     p_value : float or None
         Bootstrap p-value (fraction of null draws with hit_rate ≥ observed).
     decay_status : str or None
