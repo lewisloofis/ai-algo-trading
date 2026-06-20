@@ -805,6 +805,7 @@ def run_strategy_fit(
     end: str = HISTORY_END,
     is_synthetic: bool = True,
     impact_sweep: bool = False,
+    intraday_store_dir: str | None = None,
 ) -> str:
     """
     Run the full strategy-fit pipeline and emit strategy_portfolio.md.
@@ -824,13 +825,27 @@ def run_strategy_fit(
         When True, also run the impact sensitivity sweep and write
         impact_sweep.md to outdir.  Default False; normal output is unchanged
         when False.
+    intraday_store_dir : str | None
+        When set, wrap ds in IntraStorePrefDataSource so that the intraday
+        walk-forward loop (intraday_walk_forward.py) uses the accrued parquet
+        store when it has more distinct trading days than a fresh live pull.
+        Has no effect on daily/event/cross-sectional/pairs cells.
+        Ignored when None (default; fixture path unchanged).
 
     Returns
     -------
     str
         Path to the written strategy_portfolio.md.
     """
-    cells = run_grid(ds=ds, start=start, end=end)
+    effective_ds = ds
+    if intraday_store_dir is not None:
+        from screener.intraday_store import IntraStorePrefDataSource
+        effective_ds = IntraStorePrefDataSource(
+            live_ds=ds, store_dir=intraday_store_dir
+        )
+        logger.info("Intraday store-aware wrapper active: %s", intraday_store_dir)
+
+    cells = run_grid(ds=effective_ds, start=start, end=end)
     cells = apply_fdr_to_grid(cells)
     path = emit_strategy_portfolio(cells=cells, outdir=outdir, is_synthetic=is_synthetic)
 
@@ -882,6 +897,16 @@ def main(argv: list[str] | None = None) -> None:
             "POSITION_NOTIONAL_IDR ∈ {15M, 30M, 60M} IDR.  Default: off."
         ),
     )
+    parser.add_argument(
+        "--intraday-store-dir",
+        default=None,
+        help=(
+            "Path to the intraday accrual store directory "
+            "(populated by screener/intraday_store.py snapshot).  When set, "
+            "the intraday walk-forward loop prefers the store when it has more "
+            "distinct trading days than the live pull.  Default: not used."
+        ),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -909,6 +934,7 @@ def main(argv: list[str] | None = None) -> None:
         end=args.end,
         is_synthetic=is_synthetic,
         impact_sweep=args.impact_sweep,
+        intraday_store_dir=args.intraday_store_dir,
     )
     print(f"strategy_portfolio.md written to: {path}")
     if args.impact_sweep:
