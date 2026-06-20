@@ -31,13 +31,15 @@ import pandas as pd
 
 from strategy_fit.harness import (
     MAX_HOLD_TRADING_DAYS,
+    SHAPE_CROSS_SECTIONAL,
     SHAPE_EVENT_DRIVEN,
+    SHAPE_PAIRS,
     SHAPE_SINGLE_NAME,
     CellResult,
     StrategyFamily,
     reject_horizon_exceeded,
 )
-from strategy_fit.financing import full_pass_hurdle_bps, passes_gate
+from strategy_fit.financing import best_feasible_hurdle_bps, full_pass_hurdle_bps, passes_gate
 from strategy_fit.families_single_name import (
     daily_momentum_signal,
     mean_reversion_signal,
@@ -46,6 +48,8 @@ from strategy_fit.families_single_name import (
     ROUND_TRIP_BPS,
 )
 from strategy_fit.families_event import run_event_family, EVENT_DETECTORS
+from strategy_fit.families_cross_sectional import run_cross_sectional_family
+from strategy_fit.families_pairs import run_pairs_family
 from strategy_fit.walk_forward import (
     walk_forward_cell,
     WalkForwardResult,
@@ -219,11 +223,10 @@ def _run_single_name_cell(
             decay_metric=wf.mean_sharpe,
         )
 
-    # 4. Cost gate at worst-case entry_dow = Thursday.
-    hurdle = full_pass_hurdle_bps(
+    # 4. Cost gate at best-feasible entry_dow (cheapest financing day).
+    hurdle, entry_dow = best_feasible_hurdle_bps(
         min_edge_to_clear_bps=min_edge_to_clear_bps,
         modelled_impact_bps=MODELLED_IMPACT_BPS,
-        entry_dow=WORST_CASE_ENTRY_DOW,
         hold_trading_days=family.horizon_trading_days,
     )
     net_edge = result["net_edge_bps"] or 0.0
@@ -244,6 +247,7 @@ def _run_single_name_cell(
         decay_metric=wf.mean_sharpe,
         passes_cost_gate=cost_pass,
         min_edge_hurdle_bps=hurdle,
+        best_entry_dow=entry_dow,
     )
 
 
@@ -286,10 +290,9 @@ def _run_event_cell(
 
     # Use the median min_edge as the friction floor for the pooled event family.
     median_min_edge = float(np.median(list(universe_min_edge_map.values()))) if universe_min_edge_map else ROUND_TRIP_BPS
-    hurdle = full_pass_hurdle_bps(
+    hurdle, entry_dow = best_feasible_hurdle_bps(
         min_edge_to_clear_bps=median_min_edge,
         modelled_impact_bps=MODELLED_IMPACT_BPS,
-        entry_dow=WORST_CASE_ENTRY_DOW,
         hold_trading_days=family.horizon_trading_days,
     )
     net_edge = result["net_edge_bps"] or 0.0
@@ -308,6 +311,140 @@ def _run_event_cell(
         p_value=result["p_value"],
         passes_cost_gate=cost_pass,
         min_edge_hurdle_bps=hurdle,
+        best_entry_dow=entry_dow,
+    )
+
+
+def _run_cross_sectional_cell(
+    hist_dict: dict[str, pd.DataFrame],
+    family: StrategyFamily,
+    universe_min_edge_map: dict[str, float],
+) -> CellResult:
+    """Run one cross-sectional family cell end-to-end."""
+    symbol = "(cross_sectional)"
+
+    rejection = reject_horizon_exceeded(family)
+    if rejection:
+        return CellResult(
+            symbol=symbol,
+            family_name=family.name,
+            shape=family.shape,
+            horizon_trading_days=family.horizon_trading_days,
+            status=rejection["status"],
+            skip_reason=rejection["skip_reason"],
+        )
+
+    result = run_cross_sectional_family(
+        hist_dict=hist_dict,
+        horizon_trading_days=family.horizon_trading_days,
+        universe_min_edge_map=universe_min_edge_map,
+    )
+
+    if result["status"] != "tested":
+        return CellResult(
+            symbol=symbol,
+            family_name=family.name,
+            shape=family.shape,
+            horizon_trading_days=family.horizon_trading_days,
+            status=result["status"],
+            skip_reason=result["skip_reason"],
+            eff_n=result.get("eff_n"),
+        )
+
+    # Cost-stack floor: median min_edge (cross-sectional L/S — documented in
+    # families_cross_sectional.py; uses median, not sum-of-legs).
+    median_min_edge = float(np.median(list(universe_min_edge_map.values()))) if universe_min_edge_map else ROUND_TRIP_BPS
+    hurdle, entry_dow = best_feasible_hurdle_bps(
+        min_edge_to_clear_bps=median_min_edge,
+        modelled_impact_bps=MODELLED_IMPACT_BPS,
+        hold_trading_days=family.horizon_trading_days,
+    )
+    net_edge = result["net_edge_bps"] or 0.0
+    cost_pass = net_edge > hurdle
+
+    return CellResult(
+        symbol=symbol,
+        family_name=family.name,
+        shape=family.shape,
+        horizon_trading_days=family.horizon_trading_days,
+        status="tested",
+        hit_rate=result["hit_rate"],
+        eff_n=result["eff_n"],
+        gross_edge_bps=result["gross_edge_bps"],
+        net_edge_bps=result["net_edge_bps"],
+        p_value=result["p_value"],
+        passes_cost_gate=cost_pass,
+        min_edge_hurdle_bps=hurdle,
+        best_entry_dow=entry_dow,
+    )
+
+
+def _run_pairs_cell(
+    hist_dict: dict[str, pd.DataFrame],
+    family: StrategyFamily,
+    universe_min_edge_map: dict[str, float],
+) -> CellResult:
+    """Run one pairs / cointegration family cell end-to-end."""
+    symbol = "(pairs)"
+
+    rejection = reject_horizon_exceeded(family)
+    if rejection:
+        return CellResult(
+            symbol=symbol,
+            family_name=family.name,
+            shape=family.shape,
+            horizon_trading_days=family.horizon_trading_days,
+            status=rejection["status"],
+            skip_reason=rejection["skip_reason"],
+        )
+
+    result = run_pairs_family(
+        hist_dict=hist_dict,
+        horizon_trading_days=family.horizon_trading_days,
+        universe_min_edge_map=universe_min_edge_map,
+    )
+
+    if result["status"] not in ("tested",):
+        return CellResult(
+            symbol=symbol,
+            family_name=family.name,
+            shape=family.shape,
+            horizon_trading_days=family.horizon_trading_days,
+            status=result["status"],
+            skip_reason=result["skip_reason"],
+            eff_n=result.get("eff_n"),
+        )
+
+    # Cost-stack floor: sum of both legs' min_edge (each leg is a separate order).
+    # Documented in families_pairs.py; use sum, not median, for pairs.
+    if universe_min_edge_map:
+        edges = sorted(universe_min_edge_map.values())
+        # Use the two smallest friction floors as a proxy for the cheapest pair legs.
+        pair_min_edge = float(sum(edges[:2])) if len(edges) >= 2 else float(sum(edges))
+    else:
+        pair_min_edge = ROUND_TRIP_BPS * 2.0
+    hurdle, entry_dow = best_feasible_hurdle_bps(
+        min_edge_to_clear_bps=pair_min_edge,
+        modelled_impact_bps=MODELLED_IMPACT_BPS,
+        hold_trading_days=family.horizon_trading_days,
+    )
+    net_edge = result["net_edge_bps"] or 0.0
+    cost_pass = net_edge > hurdle
+
+    return CellResult(
+        symbol=symbol,
+        family_name=family.name,
+        shape=family.shape,
+        horizon_trading_days=family.horizon_trading_days,
+        status="tested",
+        hit_rate=result["hit_rate"],
+        eff_n=result["eff_n"],
+        gross_edge_bps=result["gross_edge_bps"],
+        net_edge_bps=result["net_edge_bps"],
+        p_value=result["p_value"],
+        passes_cost_gate=cost_pass,
+        min_edge_hurdle_bps=hurdle,
+        best_entry_dow=entry_dow,
     )
 
 
@@ -391,6 +528,34 @@ def run_grid(
             )
             all_cells.append(cell)
 
+    # --- Cross-sectional family ---
+    for hold in [1, 2]:
+        family = StrategyFamily(
+            name="cross_sectional_momentum",
+            shape=SHAPE_CROSS_SECTIONAL,
+            horizon_trading_days=hold,
+        )
+        cell = _run_cross_sectional_cell(
+            hist_dict=hist_dict,
+            family=family,
+            universe_min_edge_map=min_edge_map,
+        )
+        all_cells.append(cell)
+
+    # --- Pairs / cointegration family ---
+    for hold in [1, 2]:
+        family = StrategyFamily(
+            name="pairs_cointegration",
+            shape=SHAPE_PAIRS,
+            horizon_trading_days=hold,
+        )
+        cell = _run_pairs_cell(
+            hist_dict=hist_dict,
+            family=family,
+            universe_min_edge_map=min_edge_map,
+        )
+        all_cells.append(cell)
+
     # --- Add a deferred >2-day hold entry per family for coverage ---
     for family_name in SINGLE_NAME_SIGNAL_FNS:
         family = StrategyFamily(
@@ -463,6 +628,7 @@ def apply_fdr_to_grid(cells: list[CellResult], alpha: float = FDR_ALPHA) -> list
                     decay_metric=c.decay_metric,
                     passes_cost_gate=c.passes_cost_gate,
                     min_edge_hurdle_bps=c.min_edge_hurdle_bps,
+                    best_entry_dow=c.best_entry_dow,
                     fdr_accepted=fdr_map[i],
                 )
             )

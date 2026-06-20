@@ -30,8 +30,8 @@ SHAPE_SINGLE_NAME: str = "single_name_time_series"
 SHAPE_EVENT_DRIVEN: str = "event_driven"
 
 # Deferred shapes — defined as constants so coverage tables can reference them.
-SHAPE_CROSS_SECTIONAL: str = "cross_sectional"   # deferred: plan-10 §7.5
-SHAPE_PAIRS: str = "pairs"                        # deferred: plan-10 §7.6
+SHAPE_CROSS_SECTIONAL: str = "cross_sectional"   # plan-10 §7.5, now testable
+SHAPE_PAIRS: str = "pairs"                        # plan-10 §7.6, now testable
 
 # ---------------------------------------------------------------------------
 # Capital-ceiling constant (ADR-0011)
@@ -258,9 +258,12 @@ class CellResult:
     decay_metric : float or None
         Mean rolling Sharpe across walk-forward windows.
     passes_cost_gate : bool or None
-        Result of passes_gate(net_edge_bps, …) at worst-case entry_dow=Thu.
+        Result of net_edge_bps > min_hurdle_bps at the best feasible entry day.
     min_edge_hurdle_bps : float or None
-        Full cost hurdle at Thursday entry (worst case).
+        Full cost hurdle at the best-feasible entry day (cheapest financing).
+    best_entry_dow : int or None
+        Day-of-week (0=Mon … 4=Fri) with the cheapest financing cost for this
+        strategy's hold horizon.  Chosen by best_feasible_hurdle_bps.
     fdr_accepted : bool | None
         Whether this cell survived Benjamini-Hochberg FDR correction.
     """
@@ -280,4 +283,5 @@ class CellResult:
     decay_metric: float | None = None
     passes_cost_gate: bool | None = None
     min_edge_hurdle_bps: float | None = None
+    best_entry_dow: int | None = None
     fdr_accepted: bool | None = None

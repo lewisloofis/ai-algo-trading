@@ -7,6 +7,7 @@ from strategy_fit.financing import (
     financing_bps,
     full_pass_hurdle_bps,
     passes_gate,
+    best_feasible_hurdle_bps,
 )
 
 
@@ -139,3 +140,86 @@ def test_passes_gate_dow_changes_outcome():
     )
     assert passes_mon is True   # 40 > 35
     assert passes_thu is False  # 40 < 55
+
+
+# ---------------------------------------------------------------------------
+# best_feasible_hurdle_bps — Change 1 tests (TDD RED → GREEN)
+# ---------------------------------------------------------------------------
+
+class TestBestFeasibleHurdle:
+    """Tests for best_feasible_hurdle_bps: cheapest-entry-day cost gate."""
+
+    def test_returns_tuple_of_hurdle_and_dow(self):
+        """Return type is (float, int)."""
+        result = best_feasible_hurdle_bps(
+            min_edge_to_clear_bps=10.0,
+            modelled_impact_bps=5.0,
+            hold_trading_days=1,
+        )
+        hurdle, dow = result
+        assert isinstance(hurdle, float)
+        assert isinstance(dow, int)
+        assert 0 <= dow <= 4
+
+    def test_same_day_hold_is_zero_financing_any_dow(self):
+        """hold=0: financing=0 for every dow, hurdle = min_edge + impact."""
+        hurdle, dow = best_feasible_hurdle_bps(
+            min_edge_to_clear_bps=20.0,
+            modelled_impact_bps=5.0,
+            hold_trading_days=0,
+        )
+        assert hurdle == pytest.approx(25.0)
+        # All days tie at the same hurdle; best_entry_dow is any valid weekday.
+        assert 0 <= dow <= 4
+
+    def test_cheapest_entry_is_monday_or_wednesday_for_hold1(self):
+        """For hold=1, Mon and Wed both give 2 cal days (cheapest).
+        Best dow should be Mon=0 or Wed=2 (the tie-breaker is min index → Mon)."""
+        hurdle, dow = best_feasible_hurdle_bps(
+            min_edge_to_clear_bps=10.0,
+            modelled_impact_bps=0.0,
+            hold_trading_days=1,
+        )
+        # Mon: 2 cal days → financing=20; hurdle=30
+        # Tue: 2 cal days → financing=20; hurdle=30
+        # Wed: 2 cal days → financing=20; hurdle=30
+        # Thu: 4 cal days → financing=40; hurdle=50
+        # Fri: 4 cal days → financing=40; hurdle=50
+        assert hurdle == pytest.approx(30.0)   # cheapest hurdle
+        assert dow in (0, 1, 2)                # Mon/Tue/Wed all tie
+
+    def test_monday_cheaper_than_thursday_for_hold1(self):
+        """With hold=1, Mon hurdle < Thu hurdle.
+        edge=40, min=10, impact=5:
+          Mon hurdle = 10+5+20=35; Thu hurdle = 10+5+40=55.
+          best_feasible returns the Mon-level hurdle."""
+        hurdle, best_dow = best_feasible_hurdle_bps(
+            min_edge_to_clear_bps=10.0,
+            modelled_impact_bps=5.0,
+            hold_trading_days=1,
+        )
+        # Best hurdle must be well below the Thursday hurdle.
+        thu_hurdle = full_pass_hurdle_bps(10.0, 5.0, entry_dow=3, hold_trading_days=1)
+        assert hurdle < thu_hurdle
+
+    def test_cell_that_clears_monday_but_not_thursday_now_passes(self):
+        """Regression: edge=40 passes Mon hurdle=35 but not Thu hurdle=55.
+        With best_feasible, this cell now passes the gate."""
+        edge = 40.0
+        min_edge = 10.0
+        impact = 5.0
+        hurdle, _ = best_feasible_hurdle_bps(min_edge, impact, hold_trading_days=1)
+        assert edge > hurdle, (
+            f"edge={edge} should exceed best-feasible hurdle={hurdle}"
+        )
+
+    def test_best_entry_dow_is_recorded(self):
+        """best_entry_dow is in 0..4 and is not None."""
+        _, dow = best_feasible_hurdle_bps(10.0, 0.0, hold_trading_days=2)
+        assert dow is not None
+        assert 0 <= dow <= 4
+
+    def test_all_days_tie_when_no_financing(self):
+        """hold=0: all days have 0 financing; returned hurdle equals min_edge+impact."""
+        hurdle, _ = best_feasible_hurdle_bps(50.0, 10.0, hold_trading_days=0)
+        assert hurdle == pytest.approx(60.0)

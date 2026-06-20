@@ -195,6 +195,51 @@ def full_pass_hurdle_bps(
     return min_edge_to_clear_bps + modelled_impact_bps + financing_bps(entry_dow, hold_trading_days)
 
 
+def best_feasible_hurdle_bps(
+    min_edge_to_clear_bps: float,
+    modelled_impact_bps: float,
+    hold_trading_days: int,
+) -> tuple[float, int]:
+    """
+    Return the minimum cost hurdle achievable by choosing the cheapest entry day.
+
+    The allocator CHOOSES when to enter — so deployability should be tested at
+    the best (cheapest financing) feasible entry day, not the worst-case Thursday.
+    For same-day (hold=0) financing is 0 regardless of entry day.
+
+    Iterates over all weekdays (Mon=0 … Fri=4), computes ``full_pass_hurdle_bps``
+    at each, and returns the minimum with the corresponding day-of-week.  Ties
+    are broken by the lowest dow index (Mon wins over Tue when equal).
+
+    Parameters
+    ----------
+    min_edge_to_clear_bps : float
+        Structural friction floor (one-tick spread + ROUND_TRIP_BPS).
+    modelled_impact_bps : float
+        Estimated market-impact / slippage.
+    hold_trading_days : int
+        Position hold in trading days (0 = intraday/same-day).
+
+    Returns
+    -------
+    tuple[float, int]
+        ``(min_hurdle_bps, best_entry_dow)`` where ``best_entry_dow`` is 0–4.
+    """
+    best_hurdle: float = float("inf")
+    best_dow: int = 0
+    for dow in range(5):
+        hurdle = full_pass_hurdle_bps(
+            min_edge_to_clear_bps=min_edge_to_clear_bps,
+            modelled_impact_bps=modelled_impact_bps,
+            entry_dow=dow,
+            hold_trading_days=hold_trading_days,
+        )
+        if hurdle < best_hurdle:
+            best_hurdle = hurdle
+            best_dow = dow
+    return best_hurdle, best_dow
+
+
 def passes_gate(
     net_edge_bps: float,
     min_edge_to_clear_bps: float,

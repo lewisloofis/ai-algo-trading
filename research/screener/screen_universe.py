@@ -162,8 +162,12 @@ class DataSource(Protocol):
         Return daily OHLCV bars.
 
         Columns required: date (str), close (float), volume (float).
-        Optional: value (pre-computed daily IDR turnover — used by
-        median_daily_turnover when present).
+        Optional:
+          - value (pre-computed daily IDR turnover — used by median_daily_turnover).
+          - foreignbuy, foreignsell (daily foreign buy/sell volume in shares).
+          - net_foreign (foreignbuy - foreignsell; daily net, NOT cumulative).
+            Filled to 0 when both foreignbuy and foreignsell are absent.
+            Used by the foreign_flow_spike_event detector in families_event.py.
         """
         ...
 
@@ -338,7 +342,18 @@ class LiveDataSource:
 
         Response shape:
             {"data": {"chartbit": [<rows>], ...}}
-        Row keys used: date, open, high, low, close, volume, value.
+        Row keys used: date, open, high, low, close, volume, value,
+        foreignbuy, foreignsell, foreignflow (cumulative — NOT used as daily),
+        frequency, shareoutstanding.
+
+        Foreign-flow columns extracted:
+        - ``foreignbuy``:  daily foreign buy volume (shares).
+        - ``foreignsell``: daily foreign sell volume (shares).
+        - ``net_foreign``: foreignbuy - foreignsell (daily net; NaN-safe).
+          ``foreignflow`` from the API is a CUMULATIVE running total and is
+          intentionally NOT used here; ``net_foreign`` is always the daily net.
+        Rows where ``foreignbuy`` and ``foreignsell`` are both absent are kept
+        (net_foreign filled to 0); rows missing close/volume are still dropped.
         """
         url = (
             f"{CHARTBIT_BASE_URL}/{symbol.upper()}/price/daily"
@@ -347,12 +362,31 @@ class LiveDataSource:
         body = self._get(url)
         rows = body.get("data", {}).get("chartbit", [])
         if not rows:
-            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume", "value"])
+            return pd.DataFrame(
+                columns=["date", "open", "high", "low", "close", "volume", "value",
+                         "foreignbuy", "foreignsell", "net_foreign"]
+            )
         df = pd.DataFrame(rows)
         df["date"] = df["date"].astype(str)
         df["close"] = pd.to_numeric(df.get("close", pd.Series(dtype=float)), errors="coerce")
         df["volume"] = pd.to_numeric(df.get("volume", pd.Series(dtype=float)), errors="coerce")
         df["value"] = pd.to_numeric(df.get("value", pd.Series(dtype=float)), errors="coerce")
+        # Foreign-flow extraction.  NaN when the row doesn't carry the column.
+        df["foreignbuy"] = pd.to_numeric(
+            df["foreignbuy"] if "foreignbuy" in df.columns else pd.Series(dtype=float),
+            errors="coerce",
+        )
+        df["foreignsell"] = pd.to_numeric(
+            df["foreignsell"] if "foreignsell" in df.columns else pd.Series(dtype=float),
+            errors="coerce",
+        )
+        # net_foreign = foreignbuy - foreignsell (daily net).
+        # Fill 0 only when BOTH legs are absent (both NaN); preserve individual
+        # NaNs so callers can distinguish "missing" from "zero-flow".
+        both_absent = df["foreignbuy"].isna() & df["foreignsell"].isna()
+        df["net_foreign"] = df["foreignbuy"].sub(df["foreignsell"])
+        df.loc[both_absent, "net_foreign"] = 0.0
+        # Drop rows where the core price/volume data is unusable (original behaviour).
         df = df.dropna(subset=["close", "volume"])
         # Re-sort ascending so iloc[-1] == latest row
         df = df.sort_values("date").reset_index(drop=True)

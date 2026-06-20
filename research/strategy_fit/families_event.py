@@ -129,19 +129,27 @@ def _detect_foreign_flow_spike_events(
     """
     Detect foreign-flow-spike events for a single symbol.
 
-    Requires a ``foreign_flow`` column.  Returns empty DataFrame if absent.
-    Signal = sign of foreign flow on the spike day.
+    Uses the ``net_foreign`` column (= foreignbuy - foreignsell daily net).
+    The cumulative ``foreignflow`` API column is NOT used here — it is a running
+    total and must not be differenced inside this detector.
+
+    Returns empty DataFrame if ``net_foreign`` column is absent.
+    Signal = sign of net_foreign on the spike day.
+    Spike criterion: |net_foreign z-score| > z_threshold over a trailing window.
     """
-    if "foreign_flow" not in df.columns:
+    if "net_foreign" not in df.columns:
         return pd.DataFrame(columns=["date", "symbol", "signal", "forward_return"])
 
     d = df.copy()
-    roll_mean = d["foreign_flow"].rolling(lookback).mean()
-    roll_std = d["foreign_flow"].rolling(lookback).std(ddof=1).clip(lower=1.0)
-    flow_z = (d["foreign_flow"] - roll_mean) / roll_std
+    roll_mean = d["net_foreign"].rolling(lookback).mean()
+    # Clip std to a small positive floor so we don't divide by 0 on flat series;
+    # a flat series (std=0 → clipped to 1.0) will produce z-scores near 0 and
+    # thus no events — correct behaviour.
+    roll_std = d["net_foreign"].rolling(lookback).std(ddof=1).clip(lower=1.0)
+    flow_z = (d["net_foreign"] - roll_mean) / roll_std
 
     d["flow_z"] = flow_z
-    d["signal"] = np.sign(d["foreign_flow"])
+    d["signal"] = np.sign(d["net_foreign"])
     d["forward_return"] = d["close"].shift(-hold) / d["close"] - 1.0
 
     events = d[np.abs(d["flow_z"]) > z_threshold].copy()

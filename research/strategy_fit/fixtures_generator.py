@@ -85,6 +85,17 @@ DAILY_VOLUME: dict[str, float] = {
     "DEWA": 200_000_000,
 }
 
+# Approximate median daily net foreign flow (shares) per symbol.
+# Synthetic net_foreign = foreignbuy - foreignsell (daily; not cumulative).
+# ITMG receives occasional injected spikes to exercise the event detector.
+DAILY_FOREIGN_FLOW_SCALE: dict[str, float] = {
+    "ITMG": 1_000_000,
+    "BUMI": 5_000_000,
+    "MDKA": 500_000,
+    "ANTM": 2_000_000,
+    "DEWA": 3_000_000,
+}
+
 # Start date for the synthetic history (recent enough to be plausible).
 HISTORY_START: str = "2025-06-01"
 
@@ -178,6 +189,17 @@ def _generate_series(
     # Volume: log-normal around avg_volume with 40% sigma.
     volumes = (avg_volume * rng.lognormal(0.0, 0.4, size=n)).astype(int)
 
+    # Net foreign flow (foreignbuy - foreignsell, daily — NOT cumulative).
+    # Normal noise around zero.  ITMG receives periodic injected spikes so the
+    # foreign_flow_spike_event detector has signal to pick up in offline tests.
+    ff_scale = DAILY_FOREIGN_FLOW_SCALE[symbol]
+    net_foreign = (ff_scale * rng.normal(0.0, 1.0, size=n)).astype(int)
+    if symbol == "ITMG":
+        # Inject clear spikes every ~25 rows so the z-score threshold is crossed.
+        spike_indices = list(range(10, n, 25))
+        for idx in spike_indices:
+            net_foreign[idx] = int(ff_scale * 8.0)  # 8-sigma spike
+
     # Generate business-day dates starting from HISTORY_START.
     dates = pd.bdate_range(start=HISTORY_START, periods=n)
 
@@ -189,6 +211,7 @@ def _generate_series(
             "low": lows.astype(int),
             "close": closes.astype(int),
             "volume": volumes,
+            "net_foreign": net_foreign,
         }
     )
 
@@ -290,13 +313,22 @@ class StrategyFitFixtureDataSource:
                 f"Fixture CSV not found: {path}. "
                 f"Call generate_fixtures('{self._dir}') first."
             )
-        df = pd.read_csv(
-            path,
-            comment="#",
-            dtype={"date": str, "open": float, "high": float, "low": float,
-                   "close": float, "volume": float},
-        )
+        dtype_map: dict[str, type] = {
+            "date": str,
+            "open": float,
+            "high": float,
+            "low": float,
+            "close": float,
+            "volume": float,
+        }
+        df = pd.read_csv(path, comment="#", dtype=dtype_map)
         df["date"] = df["date"].astype(str)
+        # Ensure net_foreign column is present; coerce if the CSV was generated
+        # before this column was added.
+        if "net_foreign" in df.columns:
+            df["net_foreign"] = pd.to_numeric(df["net_foreign"], errors="coerce").fillna(0.0)
+        else:
+            df["net_foreign"] = 0.0
         if start:
             df = df[df["date"] >= start]
         if end:

@@ -72,6 +72,16 @@ def _fmt_bool(v: bool | None) -> str:
     return "✓" if v else "✗"
 
 
+_DOW_NAMES: dict[int, str] = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri"}
+
+
+def _fmt_dow(v: int | None) -> str:
+    """Format a day-of-week integer (0=Mon … 4=Fri) as a short name."""
+    if v is None:
+        return "—"
+    return _DOW_NAMES.get(v, str(v))
+
+
 def emit_strategy_portfolio(
     cells: Sequence[CellResult],
     outdir: str,
@@ -158,7 +168,7 @@ def emit_strategy_portfolio(
     if verdict == VERDICT_PASS:
         lines.append(
             f"**{len(survivors)} cell(s)** survive the full cost gate "
-            "(min_edge + modelled_impact + financing) "
+            "(min_edge + modelled_impact + financing at best-feasible entry day) "
             "AND the Benjamini-Hochberg FDR correction at α=0.10 "
             "AND walk-forward persistence check."
         )
@@ -179,14 +189,15 @@ def emit_strategy_portfolio(
     lines.append("## Surviving Strategies")
     lines.append("")
     if survivors:
-        lines.append("| Symbol | Strategy | Hold (days) | Shape | Hit Rate | Net Edge (bps) | Eff-N | Friction Hurdle (bps) | Decay Metric (Sharpe) |")
-        lines.append("|--------|----------|-------------|-------|----------|---------------|-------|----------------------|----------------------|")
+        lines.append("| Symbol | Strategy | Hold (days) | Shape | Hit Rate | Net Edge (bps) | Eff-N | Best Entry Day | Friction Hurdle (bps) | Decay Metric (Sharpe) |")
+        lines.append("|--------|----------|-------------|-------|----------|---------------|-------|----------------|----------------------|----------------------|")
         for c in sorted(survivors, key=lambda x: (x.symbol, x.family_name)):
             lines.append(
                 f"| {c.symbol} | {c.family_name} | {c.horizon_trading_days} "
                 f"| {c.shape} | {_fmt_float(c.hit_rate, 3)} "
                 f"| {_fmt_float(c.net_edge_bps, 1)} "
                 f"| {c.eff_n or '—'} "
+                f"| {_fmt_dow(c.best_entry_dow)} "
                 f"| {_fmt_float(c.min_edge_hurdle_bps, 1)} "
                 f"| {_fmt_float(c.decay_metric, 2)} |"
             )
@@ -234,11 +245,9 @@ def emit_strategy_portfolio(
             f"| {c.shape} | {c.status} | {reason} |"
         )
 
-    # Add data_blocked entries for deferred families.
+    # Add data_blocked entries for capital-blocked or deferred families.
     lines.append("| (all) | multi_week_trend | 5+ | single_name_time_series | data_blocked | data_blocked AND capital_blocked. Unblocks at 2+ years history AND owned cash (no T+4 clock). |")
     lines.append("| (all) | multi_month_momentum | 20+ | single_name_time_series | data_blocked | 20-day hold → ~12 OOS windows/year < MIN_EFF_N=30. Unblocks at 3+ years. |")
-    lines.append("| (all) | cross_sectional | — | cross_sectional | deferred | Plan-10 §7.5 deferred. |")
-    lines.append("| (all) | pairs_stat_arb | — | pairs | deferred | Plan-10 §7.6 deferred. |")
     lines.append("| (all) | order_book_obi | <1min | order_book | deferred | Plan-10 §7.9 deferred. Requires re-test on low-friction names post-capture. |")
     lines.append("")
 
@@ -246,12 +255,14 @@ def emit_strategy_portfolio(
     lines.append("## Methodology Notes")
     lines.append("")
     lines.append("- **Financing model:** ADR-0011, T+1 settlement lag (empirical). Holidays out of scope (v1).")
-    lines.append("- **Cost gate entry_dow:** Thursday (dow=3), worst-case. Early-week entries are cheaper.")
+    lines.append("- **Cost gate entry_dow:** Best-feasible (cheapest) weekday chosen by `best_feasible_hurdle_bps`. The allocator controls entry timing — deployability is tested at the cheapest day, not worst-case Thursday.")
     lines.append("- **FDR correction:** Benjamini-Hochberg at α=0.10 across the full (name, strategy, horizon) grid.")
     lines.append("- **Effective-N:** single_name per-symbol de-overlap; event_driven pooled across universe.")
     lines.append("- **Walk-forward:** fit=120 rows, test=40 rows, roll by test_window. Decay = majority of windows below Sharpe=0 AND hit_rate=0.5.")
     lines.append("- **Impact model:** Not modelled (set to 0 bps for v1). Unblocks with position-sizing from plan-13.")
-    lines.append("- **Deferred families:** cross_sectional, pairs, order_book — see plan-10 §7.5–7.6, 7.9.")
+    lines.append("- **Cross-sectional family:** daily Spearman IC between trailing-return rank and forward return; eff_n = independent cross-sectional periods. Cost floor: median min_edge_to_clear_bps (market-neutral L/S; see families_cross_sectional.py).")
+    lines.append("- **Pairs family:** Engle-Granger cointegration on the top-15 most-liquid names; spread half-life estimated via AR(1); OOS block-bootstrap on non-overlapping spread observations. Cost floor: sum of both legs' min_edge (each leg is a separate order).")
+    lines.append("- **Deferred families:** order_book — see plan-10 §7.9. (cross_sectional and pairs are now testable.)")
     lines.append("")
 
     path = os.path.join(outdir, "strategy_portfolio.md")
