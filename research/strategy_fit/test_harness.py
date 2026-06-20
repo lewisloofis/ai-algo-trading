@@ -1,0 +1,227 @@
+"""Tests for strategy_fit.harness — TDD RED phase.
+
+Covers:
+- Horizon ceiling enforcement (hold > 2 → skipped_horizon)
+- Effective-N counting by shape:
+    event_driven    → pooled non-overlapping events across all symbols
+    single_name     → per-symbol de-overlapped rows
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from strategy_fit.harness import (
+    MAX_HOLD_TRADING_DAYS,
+    SHAPE_EVENT_DRIVEN,
+    SHAPE_SINGLE_NAME,
+    StrategyFamily,
+    deoverlap_daily,
+    effective_n_event_pooled,
+    effective_n_single_name_per_symbol,
+    reject_horizon_exceeded,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helper fixtures
+# ---------------------------------------------------------------------------
+
+def _make_event_df(n: int, symbol: str, hold: int = 1) -> pd.DataFrame:
+    """Synthetic event DataFrame for pooled tests."""
+    dates = pd.date_range("2025-01-01", periods=n * hold * 2, freq="B")[:n]
+    rng = np.random.default_rng(0)
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "symbol": symbol,
+            "signal": rng.standard_normal(n),
+            "forward_return": rng.standard_normal(n),
+        }
+    )
+
+
+def _make_daily_df(n: int, hold: int = 1) -> pd.DataFrame:
+    """Synthetic single-name daily DataFrame."""
+    dates = pd.date_range("2025-01-01", periods=n * hold * 3, freq="B")[:n]
+    rng = np.random.default_rng(1)
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "signal": rng.standard_normal(n),
+            "forward_return": rng.standard_normal(n),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Horizon ceiling tests
+# ---------------------------------------------------------------------------
+
+class TestHorizonCeiling:
+    def test_max_hold_constant_is_2(self):
+        assert MAX_HOLD_TRADING_DAYS == 2
+
+    def test_hold_3_is_rejected(self):
+        family = StrategyFamily(
+            name="test_family",
+            shape=SHAPE_SINGLE_NAME,
+            horizon_trading_days=3,
+        )
+        result = reject_horizon_exceeded(family)
+        assert result is not None
+        assert result["status"] == "skipped_horizon"
+        assert "capital_blocked" in result["skip_reason"]
+        assert "3" in result["skip_reason"]
+
+    def test_hold_4_is_rejected(self):
+        family = StrategyFamily(
+            name="test_family",
+            shape=SHAPE_SINGLE_NAME,
+            horizon_trading_days=4,
+        )
+        result = reject_horizon_exceeded(family)
+        assert result is not None
+        assert result["status"] == "skipped_horizon"
+
+    def test_hold_2_is_not_rejected(self):
+        family = StrategyFamily(
+            name="test_family",
+            shape=SHAPE_SINGLE_NAME,
+            horizon_trading_days=2,
+        )
+        result = reject_horizon_exceeded(family)
+        assert result is None  # None means "not rejected"
+
+    def test_hold_1_is_not_rejected(self):
+        family = StrategyFamily(
+            name="test_family",
+            shape=SHAPE_SINGLE_NAME,
+            horizon_trading_days=1,
+        )
+        result = reject_horizon_exceeded(family)
+        assert result is None
+
+    def test_hold_0_is_not_rejected(self):
+        """Intraday / same-day hold = 0 must pass the ceiling."""
+        family = StrategyFamily(
+            name="test_family",
+            shape=SHAPE_SINGLE_NAME,
+            horizon_trading_days=0,
+        )
+        result = reject_horizon_exceeded(family)
+        assert result is None
+
+    def test_skip_reason_mentions_max(self):
+        """Skip reason must mention MAX_HOLD_TRADING_DAYS for clarity."""
+        family = StrategyFamily(
+            name="test_family",
+            shape=SHAPE_SINGLE_NAME,
+            horizon_trading_days=5,
+        )
+        result = reject_horizon_exceeded(family)
+        assert str(MAX_HOLD_TRADING_DAYS) in result["skip_reason"]
+
+
+# ---------------------------------------------------------------------------
+# De-overlap helper
+# ---------------------------------------------------------------------------
+
+class TestDeoverlap:
+    def test_deoverlap_removes_overlapping_rows(self):
+        """With hold=2, every other row is de-overlapped from daily bars."""
+        df = _make_daily_df(20, hold=2)
+        result = deoverlap_daily(df, hold=2)
+        # First kept = index 0, next kept = index 2, etc.
+        assert len(result) <= (len(df) // 2 + 1)
+        assert len(result) >= 1
+
+    def test_deoverlap_hold1_keeps_alternating(self):
+        """hold=1 means every row is independent (no overlap), all kept."""
+        df = _make_daily_df(10, hold=1)
+        result = deoverlap_daily(df, hold=1)
+        assert len(result) == 10  # non-overlapping with hold=1
+
+    def test_deoverlap_returns_new_dataframe(self):
+        """Must not mutate input."""
+        df = _make_daily_df(10)
+        df_copy = df.copy()
+        _ = deoverlap_daily(df, hold=1)
+        pd.testing.assert_frame_equal(df, df_copy)
+
+
+# ---------------------------------------------------------------------------
+# Effective-N: event_driven (pooled)
+# ---------------------------------------------------------------------------
+
+class TestEffNEventPooled:
+    def test_pooled_across_two_symbols(self):
+        """Pooled effective-N is sum of per-symbol de-overlapped events."""
+        df_a = _make_event_df(20, "A", hold=1)
+        df_b = _make_event_df(20, "B", hold=1)
+        combined = pd.concat([df_a, df_b], ignore_index=True)
+        eff_n = effective_n_event_pooled(combined, hold=1)
+        # With hold=1, no overlap → 20+20=40
+        assert eff_n == 40
+
+    def test_pooled_minimum_n_respected(self):
+        """Small pool below MIN_EFF_N=30 should return the actual count."""
+        df = _make_event_df(10, "A", hold=1)
+        eff_n = effective_n_event_pooled(df, hold=1)
+        assert eff_n == 10
+
+    def test_pooled_is_not_per_name_count(self):
+        """Pooled count is NOT multiplied naively; it's sum of per-symbol de-overlap."""
+        df_a = _make_event_df(15, "A", hold=2)
+        df_b = _make_event_df(15, "B", hold=2)
+        combined = pd.concat([df_a, df_b], ignore_index=True)
+        eff_n = effective_n_event_pooled(combined, hold=2)
+        # Each symbol with hold=2 de-overlaps to ~8 rows; pooled ~16
+        # Must be less than 30 (not 30 from wrong per-name 30 rule)
+        assert eff_n < 30  # raw pool is small
+        assert eff_n >= 8  # but not zero
+
+    def test_symbol_column_required(self):
+        """Raises ValueError if 'symbol' column is missing."""
+        df = _make_event_df(20, "A").drop(columns=["symbol"])
+        with pytest.raises(ValueError, match="symbol"):
+            effective_n_event_pooled(df, hold=1)
+
+
+# ---------------------------------------------------------------------------
+# Effective-N: single_name (per-symbol)
+# ---------------------------------------------------------------------------
+
+class TestEffNSingleName:
+    def test_per_symbol_deoverlap(self):
+        """Single-name eff_n = number of de-overlapped rows for that symbol."""
+        df = _make_daily_df(30, hold=1)
+        eff_n = effective_n_single_name_per_symbol(df, hold=1)
+        assert eff_n == 30  # hold=1 → every row is independent
+
+    def test_per_symbol_deoverlap_hold2(self):
+        """hold=2 → every other row kept → eff_n ≈ 15."""
+        df = _make_daily_df(30, hold=2)
+        eff_n = effective_n_single_name_per_symbol(df, hold=2)
+        assert 12 <= eff_n <= 18  # ~half of 30
+
+    def test_per_symbol_does_not_pool(self):
+        """single_name eff_n is NOT influenced by extra rows from other symbols."""
+        df = _make_daily_df(30, hold=1)
+        eff_n_30 = effective_n_single_name_per_symbol(df, hold=1)
+        df_extra = _make_daily_df(100, hold=1)
+        eff_n_100 = effective_n_single_name_per_symbol(df_extra, hold=1)
+        # Per-symbol count scales with the input, not fixed at some global count
+        assert eff_n_100 > eff_n_30
+
+
+# ---------------------------------------------------------------------------
+# Shape constants
+# ---------------------------------------------------------------------------
+
+class TestShapeConstants:
+    def test_shape_names(self):
+        assert SHAPE_SINGLE_NAME == "single_name_time_series"
+        assert SHAPE_EVENT_DRIVEN == "event_driven"

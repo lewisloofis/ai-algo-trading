@@ -1,0 +1,304 @@
+"""
+strategy_fit/fixtures_generator.py — Deterministic synthetic daily OHLCV generator.
+
+Generates ≥250 trading-day price series for the 5 universe names used in plan-10
+strategy-fit testing.  All data is SYNTHETIC — it does NOT represent real market
+data.  The generator uses a fixed random seed for reproducibility.
+
+Injected edge
+-------------
+ITMG receives a deterministic mean-reversion edge: after two consecutive days of
+price decline exceeding 1 daily-sigma, the next day's return is biased upward by
+ITMG_EDGE_BPS / 10_000.  This acts as the test oracle: at least one synthetic
+series should produce a survivor in strategy_portfolio.md.
+
+The remaining four names (BUMI, MDKA, ANTM, DEWA) are pure random walks at their
+respective price levels and tick sizes — they serve as noise controls.
+
+Output
+------
+One CSV per symbol in the specified output directory:
+    {output_dir}/{SYMBOL}.csv
+Header: date,open,high,low,close,volume
+Row 1 is a comment line: "# SYNTHETIC — NOT real market data …"
+
+The DataSource Protocol
+-----------------------
+StrategyFitFixtureDataSource implements the screener DataSource protocol for
+offline pipeline testing.
+"""
+
+from __future__ import annotations
+
+import csv
+import os
+from typing import NamedTuple
+
+import numpy as np
+import pandas as pd
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+UNIVERSE_SYMBOLS: tuple[str, ...] = ("ITMG", "BUMI", "MDKA", "ANTM", "DEWA")
+
+# Number of synthetic trading-day rows to generate per symbol.
+N_TRADING_DAYS: int = 260  # ~1 year of trading days
+
+# Generator seed — must never change so results are deterministic.
+FIXTURE_SEED: int = 20260620
+
+# Injected edge: ITMG has a synthetic alternating mean-reversion pattern.
+# Pattern: odd days = up by UP_BPS, even days = down by DOWN_BPS.
+# mean_reversion_signal: on down-days, price below 5-day rolling mean → buy → next day up.
+# On up-days, price above 5-day rolling mean → sell → next day down.
+# Signed-return edge per trade: mean(sign(signal) * fwd_return) >> round-trip fees.
+# Mean signed return ≈ (UP_BPS + DOWN_BPS) / 2 = 300 bps >> 89 bps ITMG hurdle.
+ITMG_UP_BPS: float = 400.0            # return on odd (up) days
+ITMG_DOWN_BPS: float = 200.0          # magnitude of return on even (down) days
+
+# Reference prices (IDR) chosen to match the screener fixture price levels.
+REFERENCE_PRICES: dict[str, float] = {
+    "ITMG": 27_500.0,   # low tick → low friction
+    "BUMI": 168.0,      # cheap → high friction
+    "MDKA": 2_250.0,
+    "ANTM": 1_800.0,
+    "DEWA": 53.0,       # very cheap → very high friction
+}
+
+# Daily volatility (annualised ~25% → daily ~1.6%) per symbol.
+DAILY_VOL: dict[str, float] = {
+    "ITMG": 0.016,
+    "BUMI": 0.022,
+    "MDKA": 0.018,
+    "ANTM": 0.017,
+    "DEWA": 0.025,
+}
+
+# Approximate median daily volume (shares) for turnover computation.
+DAILY_VOLUME: dict[str, float] = {
+    "ITMG": 5_000_000,
+    "BUMI": 900_000_000,
+    "MDKA": 10_000_000,
+    "ANTM": 50_000_000,
+    "DEWA": 200_000_000,
+}
+
+# Start date for the synthetic history (recent enough to be plausible).
+HISTORY_START: str = "2025-06-01"
+
+
+# ---------------------------------------------------------------------------
+# Internal tick-size helper (mirrors screener.metrics)
+# ---------------------------------------------------------------------------
+
+def _tick_size(price: float) -> int:
+    """IDX fraksi harga step function (mirrors screener.metrics.tick_size)."""
+    if price < 200:
+        return 1
+    if price < 500:
+        return 2
+    if price < 2_000:
+        return 5
+    if price < 5_000:
+        return 10
+    return 25
+
+
+def _snap_to_tick(price: float) -> float:
+    """Round *price* to the nearest valid IDX tick."""
+    tick = _tick_size(price)
+    return round(price / tick) * tick
+
+
+# ---------------------------------------------------------------------------
+# Synthetic series generation
+# ---------------------------------------------------------------------------
+
+def _generate_series(
+    symbol: str,
+    n: int,
+    rng: np.random.Generator,
+) -> pd.DataFrame:
+    """
+    Generate a synthetic OHLCV daily series for *symbol*.
+
+    ITMG receives the injected mean-reversion edge; all others are noise.
+    Returns a DataFrame with columns: date, open, high, low, close, volume.
+    """
+    vol = DAILY_VOL[symbol]
+    ref_price = REFERENCE_PRICES[symbol]
+    avg_volume = DAILY_VOLUME[symbol]
+
+    # Pure log-return random walk.
+    log_returns = rng.normal(0.0, vol, size=n)
+
+    # Inject a synthetic mean-reversion pattern for ITMG.
+    # The price alternates between HIGH and LOW levels around a fixed baseline.
+    # HIGH level: ref_price * (1 + UP_FRAC). LOW level: ref_price * (1 - DOWN_FRAC).
+    # The 5-day rolling mean stays near ref_price.
+    # On HIGH days: price above rolling mean → signal negative → SELL → next day low → edge
+    # On LOW days: price below rolling mean → signal positive → BUY → next day high → edge
+    # Mean signed return ≈ mean(fwd_return_on_low_day, fwd_return_on_high_day) >> hurdle.
+    # NOTE: purely synthetic for offline pipeline validation only.
+    if symbol == "ITMG":
+        up_frac = ITMG_UP_BPS / 1e4         # e.g. 0.04 = 4% above ref on high days
+        down_frac = ITMG_DOWN_BPS / 1e4     # e.g. 0.02 = 2% below ref on low days
+        # Rebuild log_returns so price alternates HIGH/LOW around ref_price.
+        # p[i] = ref_price * (1 + up_frac) on odd i; ref_price * (1 - down_frac) on even i.
+        # log_return[0] = log(p[0]/ref_price)
+        # log_return[i] = log(p[i]/p[i-1])
+        log_returns[0] = np.log(1.0 - down_frac)  # start on a low day
+        for i in range(1, n):
+            prev_level = 1.0 + up_frac if (i - 1) % 2 == 1 else 1.0 - down_frac
+            curr_level = 1.0 + up_frac if i % 2 == 1 else 1.0 - down_frac
+            log_returns[i] = np.log(curr_level / prev_level) + rng.normal(0.0, 0.001)
+
+    # Reconstruct price series from log-returns.
+    log_prices = np.cumsum(log_returns)
+    closes_raw = ref_price * np.exp(log_prices)
+
+    # Snap to tick grid.
+    closes = np.array([_snap_to_tick(p) for p in closes_raw])
+
+    # Generate OHLC from close using intraday vol (simplified: uniform range).
+    intraday_vol = vol * 0.6
+    daily_range = closes * intraday_vol * rng.uniform(0.5, 1.5, size=n)
+    opens = np.array([_snap_to_tick(c + daily_range[i] * rng.uniform(-0.5, 0.5)) for i, c in enumerate(closes)])
+    highs = np.array([_snap_to_tick(max(c, o) + daily_range[i] * 0.5) for i, (c, o) in enumerate(zip(closes, opens))])
+    lows = np.array([_snap_to_tick(min(c, o) - daily_range[i] * 0.5) for i, (c, o) in enumerate(zip(closes, opens))])
+
+    # Clip negatives (shouldn't happen with ref_price >> 0 and vol=2%).
+    closes = np.clip(closes, 1, None)
+    opens = np.clip(opens, 1, None)
+    highs = np.maximum(highs, closes)
+    lows = np.maximum(1, np.minimum(lows, closes))
+
+    # Volume: log-normal around avg_volume with 40% sigma.
+    volumes = (avg_volume * rng.lognormal(0.0, 0.4, size=n)).astype(int)
+
+    # Generate business-day dates starting from HISTORY_START.
+    dates = pd.bdate_range(start=HISTORY_START, periods=n)
+
+    return pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "open": opens.astype(int),
+            "high": highs.astype(int),
+            "low": lows.astype(int),
+            "close": closes.astype(int),
+            "volume": volumes,
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def generate_fixtures(output_dir: str, n: int = N_TRADING_DAYS) -> None:
+    """
+    Write synthetic OHLCV CSV fixtures for all universe symbols.
+
+    Each file is prefixed with a SYNTHETIC comment so consumers know this
+    is not real market data.
+
+    Parameters
+    ----------
+    output_dir : str
+        Directory in which to write ``{SYMBOL}.csv`` files.  Created if missing.
+    n : int
+        Number of trading-day rows to generate per symbol.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    rng = np.random.default_rng(FIXTURE_SEED)
+
+    for symbol in UNIVERSE_SYMBOLS:
+        df = _generate_series(symbol, n, rng)
+        path = os.path.join(output_dir, f"{symbol}.csv")
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            ref = REFERENCE_PRICES[symbol]
+            f.write(
+                f"# SYNTHETIC — NOT real market data. "
+                f"Generated offline for plan-10 strategy-fit testing only. "
+                f"Symbol={symbol}, ref_price={ref:.0f} IDR, seed={FIXTURE_SEED}.\n"
+            )
+            df.to_csv(f, index=False)
+
+
+def get_or_generate_fixtures(output_dir: str, n: int = N_TRADING_DAYS) -> None:
+    """
+    Generate fixtures if they do not already exist.
+
+    If all expected CSV files are present in *output_dir*, this is a no-op.
+    Otherwise calls ``generate_fixtures`` to create them.
+    """
+    all_present = all(
+        os.path.isfile(os.path.join(output_dir, f"{s}.csv"))
+        for s in UNIVERSE_SYMBOLS
+    )
+    if not all_present:
+        generate_fixtures(output_dir, n=n)
+
+
+# ---------------------------------------------------------------------------
+# StrategyFitFixtureDataSource — DataSource Protocol implementation
+# ---------------------------------------------------------------------------
+
+class StrategyFitFixtureDataSource:
+    """
+    Offline DataSource that reads from the strategy_fit synthetic fixture CSVs.
+
+    Implements the same protocol as screener.screen_universe.DataSource:
+        funding_universe() -> set[str]
+        daily_history(symbol, start, end) -> pd.DataFrame
+
+    Calls get_or_generate_fixtures on construction so tests never need to
+    pre-generate data.
+    """
+
+    def __init__(self, fixtures_dir: str | None = None) -> None:
+        if fixtures_dir is None:
+            fixtures_dir = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "fixtures"
+            )
+        self._dir = fixtures_dir
+        get_or_generate_fixtures(self._dir)
+
+    def funding_universe(self) -> set[str]:
+        """Return all 5 universe symbols (all funding options unlocked in fixtures)."""
+        return set(UNIVERSE_SYMBOLS)
+
+    def daily_history(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+    ) -> pd.DataFrame:
+        """
+        Return daily OHLCV for *symbol* within [start, end] (inclusive).
+
+        Columns: date (str), open (float), high (float), low (float),
+                 close (float), volume (float).
+
+        Raises FileNotFoundError if the fixture CSV is missing.
+        """
+        path = os.path.join(self._dir, f"{symbol}.csv")
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"Fixture CSV not found: {path}. "
+                f"Call generate_fixtures('{self._dir}') first."
+            )
+        df = pd.read_csv(
+            path,
+            comment="#",
+            dtype={"date": str, "open": float, "high": float, "low": float,
+                   "close": float, "volume": float},
+        )
+        df["date"] = df["date"].astype(str)
+        if start:
+            df = df[df["date"] >= start]
+        if end:
+            df = df[df["date"] <= end]
+        return df.reset_index(drop=True)
