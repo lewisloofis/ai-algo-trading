@@ -33,6 +33,7 @@ from strategy_fit.harness import (
     MAX_HOLD_TRADING_DAYS,
     SHAPE_CROSS_SECTIONAL,
     SHAPE_EVENT_DRIVEN,
+    SHAPE_INTRADAY_SAME_DAY,
     SHAPE_PAIRS,
     SHAPE_SINGLE_NAME,
     CellResult,
@@ -50,6 +51,11 @@ from strategy_fit.families_single_name import (
 from strategy_fit.families_event import run_event_family, EVENT_DETECTORS
 from strategy_fit.families_cross_sectional import run_cross_sectional_family
 from strategy_fit.families_pairs import run_pairs_family
+from strategy_fit.families_intraday import (
+    run_orb_family,
+    run_intraday_momentum_family,
+    run_intraday_mean_reversion_family,
+)
 from strategy_fit.walk_forward import (
     walk_forward_cell,
     WalkForwardResult,
@@ -105,6 +111,13 @@ SINGLE_NAME_HOLDS: list[int] = [1, 2]   # ≤2 trading-day horizon ceiling
 
 EVENT_FAMILY_NAMES: list[str] = list(EVENT_DETECTORS.keys())
 EVENT_HOLDS: list[int] = [1, 2]
+
+# Intraday same-day families (hold=0).
+INTRADAY_FAMILIES: dict[str, "callable"] = {
+    "orb": run_orb_family,
+    "intraday_momentum": run_intraday_momentum_family,
+    "intraday_mean_reversion": run_intraday_mean_reversion_family,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +478,60 @@ def _run_pairs_cell(
     )
 
 
+def _run_intraday_cell(
+    symbol: str,
+    intraday_df: pd.DataFrame,
+    family: StrategyFamily,
+    family_fn: "callable",
+    min_edge_to_clear_bps: float,
+) -> CellResult:
+    """Run one (symbol, intraday_family) cell end-to-end.
+
+    No horizon check needed: hold=0 is always within MAX_HOLD_TRADING_DAYS=2.
+    No walk-forward decay check: hold=0 means one obs per day (non-overlapping
+    by construction).
+    """
+    result = family_fn(intraday_df)
+
+    if result["status"] != "tested":
+        return CellResult(
+            symbol=symbol,
+            family_name=family.name,
+            shape=family.shape,
+            horizon_trading_days=family.horizon_trading_days,
+            status=result["status"],
+            skip_reason=result.get("skip_reason"),
+            hit_rate=result.get("hit_rate"),
+            eff_n=result.get("eff_n"),
+        )
+
+    # Cost gate: for hold=0, financing=0, hurdle = min_edge + impact.
+    hurdle, entry_dow = best_feasible_hurdle_bps(
+        min_edge_to_clear_bps=min_edge_to_clear_bps,
+        modelled_impact_bps=MODELLED_IMPACT_BPS,
+        hold_trading_days=0,
+    )
+    gross_edge = result["gross_edge_bps"] or 0.0
+    cost_pass = gross_edge > hurdle
+    net_after_cost = gross_edge - hurdle
+
+    return CellResult(
+        symbol=symbol,
+        family_name=family.name,
+        shape=family.shape,
+        horizon_trading_days=0,
+        status="tested",
+        hit_rate=result["hit_rate"],
+        eff_n=result["eff_n"],
+        gross_edge_bps=result["gross_edge_bps"],
+        net_edge_bps=net_after_cost,
+        p_value=result["p_value"],
+        passes_cost_gate=cost_pass,
+        min_edge_hurdle_bps=hurdle,
+        best_entry_dow=entry_dow,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Grid runner
 # ---------------------------------------------------------------------------
@@ -572,6 +639,37 @@ def run_grid(
             universe_min_edge_map=min_edge_map,
         )
         all_cells.append(cell)
+
+    # --- Intraday same-day families ---
+    for symbol in sorted(hist_dict.keys()):
+        try:
+            intraday_df = ds.intraday_history(symbol)
+        except (NotImplementedError, AttributeError):
+            logger.info(
+                "intraday_history not available for %s (source: %s)",
+                symbol, type(ds).__name__,
+            )
+            continue
+        except Exception as exc:
+            logger.warning("intraday_history failed for %s: %s", symbol, exc)
+            continue
+        if intraday_df is None or len(intraday_df) == 0:
+            logger.warning("No intraday data for %s", symbol)
+            continue
+        for family_name, family_fn in INTRADAY_FAMILIES.items():
+            family = StrategyFamily(
+                name=family_name,
+                shape=SHAPE_INTRADAY_SAME_DAY,
+                horizon_trading_days=0,
+            )
+            cell = _run_intraday_cell(
+                symbol=symbol,
+                intraday_df=intraday_df,
+                family=family,
+                family_fn=family_fn,
+                min_edge_to_clear_bps=min_edge_map.get(symbol, ROUND_TRIP_BPS),
+            )
+            all_cells.append(cell)
 
     # --- Add a deferred >2-day hold entry per family for coverage ---
     for family_name in SINGLE_NAME_SIGNAL_FNS:

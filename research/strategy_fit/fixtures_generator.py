@@ -293,6 +293,108 @@ class StrategyFitFixtureDataSource:
         """Return all 5 universe symbols (all funding options unlocked in fixtures)."""
         return set(UNIVERSE_SYMBOLS)
 
+    def intraday_history(self, symbol: str, lookback_days: int = 90) -> pd.DataFrame:
+        """
+        Generate synthetic 1-min intraday bars for the given symbol.
+
+        Session: 09:00–11:59 (180 bars) + 13:30–16:15 (165 bars) = 345 bars/day.
+        ITMG receives injected ORB edge.
+        Other symbols: random walk, no systematic pattern.
+
+        Returns DataFrame with columns: datetime (pd.Timestamp), date,
+        open, high, low, close, volume, value, net_foreign.
+        """
+        import pytz
+        wib = pytz.timezone("Asia/Jakarta")
+
+        seed = FIXTURE_SEED + abs(hash(symbol)) % 1000
+        rng = np.random.default_rng(seed)
+        ref_price = REFERENCE_PRICES.get(symbol, 1000.0)
+
+        # Generate 60 business days (≈ 84 calendar days, within lookback_days=90)
+        n_trading_days = 60
+        anchor = pd.Timestamp("2025-09-01")
+        trading_dates = pd.bdate_range(start=anchor, periods=n_trading_days)
+
+        rows = []
+        for day_dt in trading_dates:
+            date_obj = day_dt.date()
+
+            # Build list of (hour, minute) for the two sessions
+            bar_times: list[tuple[int, int]] = []
+            for h in range(9, 12):  # 09:00–11:59
+                for m in range(60):
+                    bar_times.append((h, m))
+            for h_m in range(13 * 60 + 30, 16 * 60 + 16):  # 13:30–16:15
+                bar_times.append((h_m // 60, h_m % 60))
+
+            n_bars = len(bar_times)
+
+            if symbol == "ITMG":
+                # Injected ORB edge: deterministic on ALL days
+                # OR window 09:00–09:29: flat at ref_price
+                # Bar 09:30 (trigger): close = ref_price * 1.010
+                # Last bar: close = ref_price * 1.020 (return ≈ 99 bps from entry)
+                closes = []
+                for h, m in bar_times:
+                    if h == 9 and m < 30:
+                        closes.append(ref_price)
+                    elif h == 9 and m == 30:
+                        closes.append(ref_price * 1.010)
+                    elif h == 16 and m == 15:
+                        closes.append(ref_price * 1.020)
+                    else:
+                        closes.append(ref_price * 1.010)
+                closes = np.array(closes)
+                highs = np.maximum(closes, ref_price)
+                lows = np.full(n_bars, ref_price * 0.995)
+                opens = np.full(n_bars, ref_price)
+            else:
+                # Random walk
+                log_returns = rng.normal(0.0, 0.0002, size=n_bars)
+                log_prices = np.cumsum(log_returns)
+                closes = ref_price * np.exp(log_prices)
+                highs = closes * (1.0 + np.abs(rng.normal(0.0, 0.0001, size=n_bars)))
+                lows = closes * (1.0 - np.abs(rng.normal(0.0, 0.0001, size=n_bars)))
+                opens = np.roll(closes, 1)
+                opens[0] = ref_price
+
+            volumes = rng.integers(500, 2000, size=n_bars)
+            values = closes * volumes
+
+            for i, (h, m) in enumerate(bar_times):
+                # Build naive datetime then localize to WIB
+                naive_dt = pd.Timestamp(
+                    year=day_dt.year, month=day_dt.month, day=day_dt.day,
+                    hour=h, minute=m,
+                )
+                wib_dt = wib.localize(naive_dt.to_pydatetime())
+                rows.append({
+                    "datetime": wib_dt,
+                    "date": date_obj,
+                    "open": float(opens[i]),
+                    "high": float(highs[i]),
+                    "low": float(lows[i]),
+                    "close": float(closes[i]),
+                    "volume": int(volumes[i]),
+                    "value": float(values[i]),
+                    "net_foreign": 0,
+                })
+
+        df = pd.DataFrame(rows)
+
+        # Session filter: keep only AM [09:00, 12:00) and PM [13:30, 16:15]
+        def _in_session(dt: object) -> bool:
+            ts = pd.Timestamp(dt)
+            t_min = ts.hour * 60 + ts.minute
+            in_am = 9 * 60 <= t_min < 12 * 60
+            in_pm = 13 * 60 + 30 <= t_min <= 16 * 60 + 15
+            return in_am or in_pm
+
+        mask = df["datetime"].apply(_in_session)
+        df = df[mask].sort_values("datetime").reset_index(drop=True)
+        return df
+
     def daily_history(
         self,
         symbol: str,

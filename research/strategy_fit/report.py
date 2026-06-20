@@ -262,6 +262,7 @@ def emit_strategy_portfolio(
     lines.append("- **Impact model:** Not modelled (set to 0 bps for v1). Unblocks with position-sizing from plan-13.")
     lines.append("- **Cross-sectional family:** daily Spearman IC between trailing-return rank and forward return; eff_n = independent cross-sectional periods. Cost floor: median min_edge_to_clear_bps (market-neutral L/S; see families_cross_sectional.py).")
     lines.append("- **Pairs family:** Engle-Granger cointegration on the top-15 most-liquid names; spread half-life estimated via AR(1); OOS block-bootstrap on non-overlapping spread observations. Cost floor: sum of both legs' min_edge (each leg is a separate order).")
+    lines.append("- **Intraday same-day families:** ORB (30-min opening range), intraday momentum (morning-to-afternoon), VWAP mean-reversion. hold=0 → financing=0, hurdle = min_edge + impact. One obs per trading day (no de-overlap needed). Walk-forward not applied (each day is independent).")
     lines.append("- **Deferred families:** order_book — see plan-10 §7.9. (cross_sectional and pairs are now testable.)")
     lines.append("")
 

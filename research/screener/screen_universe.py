@@ -38,6 +38,7 @@ from screener.metrics import (
     realised_vol_bps,
     tick_size,
 )
+from lib.session import filter_continuous_session
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -106,6 +107,14 @@ CHARTBIT_BASE_URL = f"https://{DEFAULT_API_HOST}/chartbit"
 # call, so a wider window costs one extra response, not extra requests.
 DEFAULT_LOOKBACK_DAYS = 365
 
+# Intraday (1-min) chartbit endpoint window limits — VERIFIED live.
+#   from=NEWER bound, to=OLDER bound (rows arrive newest-first).
+#   A 120-day request returns HTTP 400, so intraday history must be PAGED in
+#   <= 90-day chunks walking backwards. ~90 cal days ≈ ~55 trading days.
+INTRADAY_MAX_WINDOW_DAYS = 90
+INTRADAY_DEFAULT_LOOKBACK_DAYS = 90
+_SECONDS_PER_DAY = 86_400
+
 logger = logging.getLogger(__name__)
 
 
@@ -168,6 +177,25 @@ class DataSource(Protocol):
           - net_foreign (foreignbuy - foreignsell; daily net, NOT cumulative).
             Filled to 0 when both foreignbuy and foreignsell are absent.
             Used by the foreign_flow_spike_event detector in families_event.py.
+        """
+        ...
+
+    def intraday_history(
+        self,
+        symbol: str,
+        lookback_days: int = INTRADAY_DEFAULT_LOOKBACK_DAYS,
+    ) -> pd.DataFrame:
+        """
+        Return session-filtered 1-min intraday OHLCV bars (ADR-0011 same-day band).
+
+        Columns: datetime (WIB pd.Timestamp), date (WIB calendar date),
+        open, high, low, close, volume, value, net_foreign.
+
+        Coverage longer than ~90 days is paged in <=90-day chunks (the chartbit
+        intraday window cap).  Implementations must session-filter (keep
+        09:00–16:15 WIB, drop pre-open and the 12:00–13:30 lunch gap), dedupe by
+        unix_timestamp, and sort ascending.  ``net_foreign`` falls back to 0
+        when both foreign_buy and foreign_sell are absent.
         """
         ...
 
@@ -391,6 +419,160 @@ class LiveDataSource:
         # Re-sort ascending so iloc[-1] == latest row
         df = df.sort_values("date").reset_index(drop=True)
         return df
+
+    def _fetch_intraday_chunk(self, symbol: str, newer_unix: int, older_unix: int) -> list[dict]:
+        """
+        GET one intraday chartbit chunk for the unix window [older, newer].
+
+        Route: GET /chartbit/{SYMBOL}/price/intraday?from={newer}&to={older}&limit=0
+        Date semantics (API quirk): ``from`` is the NEWER bound, ``to`` is the
+        OLDER bound; rows arrive newest-first.
+
+        Returns the raw row list (possibly empty).  Response shape is
+        ``{"data": {"chartbit": [<rows>]}}``.
+        """
+        url = (
+            f"{CHARTBIT_BASE_URL}/{symbol.upper()}/price/intraday"
+            f"?from={newer_unix}&to={older_unix}&limit=0"
+        )
+        body = self._get(url)
+        return body.get("data", {}).get("chartbit", []) or []
+
+    def intraday_history(
+        self,
+        symbol: str,
+        lookback_days: int = INTRADAY_DEFAULT_LOOKBACK_DAYS,
+    ) -> pd.DataFrame:
+        """
+        Fetch session-filtered 1-min intraday OHLCV bars from chartbit.
+
+        The chartbit intraday endpoint rejects windows wider than ~90 days
+        (a 120-day request returns HTTP 400), so coverage longer than
+        ``INTRADAY_MAX_WINDOW_DAYS`` is assembled by PAGING in <=90-day chunks
+        walking backwards from "now":
+
+            chunk 0:  from = now,                  to = now - 90d
+            chunk 1:  from = chunk0_oldest - 1s,   to = (that) - 90d
+            ...
+        Paging stops when the requested ``lookback_days`` bound is reached or a
+        chunk returns no rows.  Chunks are concatenated, de-duplicated by
+        ``unix_timestamp``, sorted ascending, and session-filtered (keep
+        09:00–16:15 WIB; drop pre-open and the 12:00–13:30 lunch gap) via
+        ``lib.session.filter_continuous_session``.
+
+        Intraday schema (NOTE: differs from the daily endpoint):
+            close, datetime ("YYYY-MM-DD HH:MM:SS", already WIB/UTC+7), open,
+            high, low, volume, value, foreign_buy, foreign_sell, frequency,
+            symbol, unix_timestamp.
+        Several numerics are STRING-typed ("volume":"800", "unix_timestamp":…,
+        "frequency":"1") and are coerced with ``pd.to_numeric``.  Foreign columns
+        use underscores (foreign_buy / foreign_sell), unlike the daily endpoint
+        (foreignbuy / foreignsell).
+
+        ``net_foreign = foreign_buy - foreign_sell`` (filled to 0 when BOTH
+        legs are absent).
+
+        Parameters
+        ----------
+        symbol : str
+            Ticker symbol (case-insensitive).
+        lookback_days : int
+            Calendar-day lookback ending now.  Paged in <=90-day chunks.
+
+        Returns
+        -------
+        pd.DataFrame
+            Ascending, session-filtered, with columns: datetime (WIB
+            pd.Timestamp), date (WIB calendar date), open, high, low, close,
+            volume, value, net_foreign.  Empty (typed) frame when no data.
+        """
+        now_unix = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+        lookback_floor = now_unix - int(lookback_days) * _SECONDS_PER_DAY
+        chunk_seconds = INTRADAY_MAX_WINDOW_DAYS * _SECONDS_PER_DAY
+
+        chunks: list[pd.DataFrame] = []
+        newer = now_unix
+        # Bound the loop defensively: at most ceil(lookback / 90) + 1 chunks.
+        max_chunks = lookback_days // INTRADAY_MAX_WINDOW_DAYS + 2
+        for _ in range(max_chunks):
+            older = max(newer - chunk_seconds, lookback_floor)
+            rows = self._fetch_intraday_chunk(symbol, newer, older)
+            if not rows:
+                break
+            chunks.append(pd.DataFrame(rows))
+            oldest_in_chunk = min(int(r["unix_timestamp"]) for r in rows)
+            if oldest_in_chunk <= lookback_floor:
+                break
+            # Walk the next chunk strictly below this chunk's oldest bar.
+            newer = oldest_in_chunk - 1
+            if newer <= lookback_floor:
+                break
+
+        if not chunks:
+            return self._empty_intraday_frame()
+
+        df = pd.concat(chunks, ignore_index=True)
+        return self._normalise_intraday(df)
+
+    @staticmethod
+    def _empty_intraday_frame() -> pd.DataFrame:
+        """Return a correctly-typed empty intraday DataFrame."""
+        return pd.DataFrame(
+            columns=[
+                "datetime", "date", "open", "high", "low",
+                "close", "volume", "value", "net_foreign",
+            ]
+        )
+
+    @staticmethod
+    def _normalise_intraday(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Coerce types, dedupe, sort, session-filter, and select output columns.
+
+        Pure transform: builds a new DataFrame; the input is not mutated.
+        """
+        out = df.copy()
+        out["unix_timestamp"] = pd.to_numeric(
+            out.get("unix_timestamp", pd.Series(dtype="int64")), errors="coerce"
+        )
+        for col in ("open", "high", "low", "close", "volume", "value"):
+            out[col] = pd.to_numeric(
+                out.get(col, pd.Series(dtype=float)), errors="coerce"
+            )
+        # Foreign flow (underscore schema). NaN when the row lacks the column.
+        # Build per-row Series aligned to ``out.index`` so an entirely-absent
+        # column yields an all-NaN column (not a misaligned empty Series).
+        if "foreign_buy" in out.columns:
+            fb = pd.to_numeric(out["foreign_buy"], errors="coerce")
+        else:
+            fb = pd.Series(float("nan"), index=out.index)
+        if "foreign_sell" in out.columns:
+            fs = pd.to_numeric(out["foreign_sell"], errors="coerce")
+        else:
+            fs = pd.Series(float("nan"), index=out.index)
+        both_absent = fb.isna() & fs.isna()
+        net_foreign = fb.sub(fs)
+        net_foreign[both_absent] = 0.0
+        out["net_foreign"] = net_foreign
+
+        # datetime string is already WIB; parse to a naive WIB Timestamp.
+        out["_wib_dt"] = pd.to_datetime(out["datetime"], errors="coerce")
+
+        # Drop rows with unusable core data, then dedupe by unix_timestamp.
+        out = out.dropna(subset=["close", "_wib_dt", "unix_timestamp"])
+        out = out.drop_duplicates(subset="unix_timestamp", keep="first")
+        out = out.sort_values("unix_timestamp").reset_index(drop=True)
+
+        # Session filter (keep 09:00–16:15 WIB; drop pre-open + lunch).
+        out = filter_continuous_session(out)
+
+        out["datetime"] = out["_wib_dt"]
+        out["date"] = out["_wib_dt"].dt.date
+        cols = [
+            "datetime", "date", "open", "high", "low",
+            "close", "volume", "value", "net_foreign",
+        ]
+        return out[cols].reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------

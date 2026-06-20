@@ -32,6 +32,7 @@ SHAPE_EVENT_DRIVEN: str = "event_driven"
 # Deferred shapes — defined as constants so coverage tables can reference them.
 SHAPE_CROSS_SECTIONAL: str = "cross_sectional"   # plan-10 §7.5, now testable
 SHAPE_PAIRS: str = "pairs"                        # plan-10 §7.6, now testable
+SHAPE_INTRADAY_SAME_DAY: str = "intraday_same_day"  # same-day / hold=0 families
 
 # ---------------------------------------------------------------------------
 # Capital-ceiling constant (ADR-0011)
