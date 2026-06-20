@@ -804,6 +804,7 @@ def run_strategy_fit(
     start: str = HISTORY_START,
     end: str = HISTORY_END,
     is_synthetic: bool = True,
+    impact_sweep: bool = False,
 ) -> str:
     """
     Run the full strategy-fit pipeline and emit strategy_portfolio.md.
@@ -819,6 +820,10 @@ def run_strategy_fit(
     is_synthetic : bool
         Passed through to emit_strategy_portfolio.  True (default) emits
         the SYNTHETIC DATA banner; False emits the LIVE DATA provenance line.
+    impact_sweep : bool
+        When True, also run the impact sensitivity sweep and write
+        impact_sweep.md to outdir.  Default False; normal output is unchanged
+        when False.
 
     Returns
     -------
@@ -828,6 +833,13 @@ def run_strategy_fit(
     cells = run_grid(ds=ds, start=start, end=end)
     cells = apply_fdr_to_grid(cells)
     path = emit_strategy_portfolio(cells=cells, outdir=outdir, is_synthetic=is_synthetic)
+
+    if impact_sweep:
+        from strategy_fit.impact_sweep import sweep_grid, emit_impact_sweep
+        grid = sweep_grid(cells)
+        sweep_path = emit_impact_sweep(grid=grid, cells=cells, outdir=outdir)
+        logger.info("impact_sweep.md written to: %s", sweep_path)
+
     return path
 
 
@@ -860,6 +872,16 @@ def main(argv: list[str] | None = None) -> None:
         default=HISTORY_END,
         help="History end date (YYYY-MM-DD).",
     )
+    parser.add_argument(
+        "--impact-sweep",
+        action="store_true",
+        default=False,
+        help=(
+            "Run impact sensitivity sweep after the normal grid run and write "
+            "impact_sweep.md to outdir.  Sweeps SQRT_IMPACT_COEFF ∈ {0.5, 1.0} × "
+            "POSITION_NOTIONAL_IDR ∈ {15M, 30M, 60M} IDR.  Default: off."
+        ),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -886,8 +908,12 @@ def main(argv: list[str] | None = None) -> None:
         start=args.start,
         end=args.end,
         is_synthetic=is_synthetic,
+        impact_sweep=args.impact_sweep,
     )
     print(f"strategy_portfolio.md written to: {path}")
+    if args.impact_sweep:
+        sweep_path = os.path.join(args.outdir, "impact_sweep.md")
+        print(f"impact_sweep.md written to: {sweep_path}")
 
 
 if __name__ == "__main__":
