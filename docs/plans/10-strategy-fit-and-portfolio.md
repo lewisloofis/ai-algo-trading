@@ -1,18 +1,20 @@
 # Strategy Fit & Portfolio Backtester — Data-Chosen Strategies per Name
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-19
-> **Related:** [09-universe-screener.md](./09-universe-screener.md) · [08-alpha-factory-workflows.md](./08-alpha-factory-workflows.md) (Workflow B) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [05-ofi-trade-flow-study.md](./05-ofi-trade-flow-study.md) · [04-microstructure-study.md](./04-microstructure-study.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) (§1.2) · [ADR-0009: universe = funding intersection](../adr/0009-universe-is-funding-intersection-strategy-fit-downstream.md) · [Plans index](./README.md)
+> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-20
+> **Related:** [09-universe-screener.md](./09-universe-screener.md) · [08-alpha-factory-workflows.md](./08-alpha-factory-workflows.md) (Workflow B) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [05-ofi-trade-flow-study.md](./05-ofi-trade-flow-study.md) · [04-microstructure-study.md](./04-microstructure-study.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) (§1.2) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [ADR-0009: universe = funding intersection](../adr/0009-universe-is-funding-intersection-strategy-fit-downstream.md) · [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [Plans index](./README.md)
 
 > **What this is.** The layer that decides *which strategy fits which name*, from
 > data — not from a strategy assumption baked into the universe. Plan 09 hands us
 > a clean, signal-agnostic universe (funding-eligible ∩ all-funding-options-
-> unlocked, annotated with structural friction). This plan runs a **panel of
-> strategy families across horizons** against every name in that universe, nets
-> each against *that name's* friction floor, and keeps the `(name, strategy)`
-> pairs that survive a multiple-testing-honest backtest. The portfolio is the
-> union of survivors. The objective is the **combination of profitable
-> strategies**, intraday-within-minutes through daily-hold — whatever the data
-> says clears the cost gate.
+> unlocked, annotated with structural friction). This plan runs a **full catalog
+> of strategy families across horizons and shapes** against every name in that
+> universe, nets each against *that name's* friction floor, and keeps the
+> `(name, strategy)` pairs that survive a multiple-testing-honest backtest. The
+> portfolio is the union of survivors. The objective is the **combination of
+> profitable strategies** across every testable (horizon × shape) cell — whatever
+> the data says clears the cost gate. Families that cannot be validated on current
+> data are tagged `data_blocked` and tracked explicitly; nothing is silently
+> excluded.
 
 ## 1. The reframe — why this is a separate plan from the universe
 
@@ -43,15 +45,60 @@ stack, where the structural floor is `min_edge_to_clear_bps` (one-tick spread +
 40 bps round-trip fee) plus modelled impact/slippage. The 40 bps gate
 (`research/backtest/backtest.py` FEE) stays the single source of truth.
 
-**Horizon-spanning, data-chosen.** We do not pre-pick a horizon. The strategy
-panel spans intraday (seconds–minutes, order-book) through daily-hold (days,
-daily bars). The data assigns the horizon by which cell survives.
+**Financing is part of the cost stack (per ADR-0011).** The cost stack carries
+a financing term: `financing_bps = 10 × calendar_days_outstanding(entry_dow,
+hold)` — 10 bps per calendar day (including weekends and holidays) that the
+borrow is outstanding under T+2 settlement. The full pass test is therefore
+`net_edge_per_trade > 0` after `min_edge_to_clear_bps + modelled_impact +
+financing_bps`. The 40 bps round-trip FEE in `research/backtest/backtest.py`
+remains the single source of truth for round-trip fees; financing is added on
+top of it, not a second copy of it. Because financing is a function of hold
+length and entry day-of-week, the gate is now **day-of-week-dependent**: early-
+week entries are structurally cheaper; weekend-spanning holds are punishing.
 
-**Multiple-testing discipline is mandatory.** Running a panel × a universe is a
-large grid — exactly the false-discovery trap plan 08 Workflow B exists to
-prevent. Survivors must clear de-overlapped effective-N (≥ MIN_EFF_N=30, per
-plans 04/05), block-bootstrap nulls, and a deflated-Sharpe / FDR correction
-across the whole grid before they count.
+**Horizon-spanning and shape-spanning, data-chosen.** We do not pre-pick a
+horizon or a strategy shape. The panel spans from intraday (seconds–minutes,
+order-book) through multi-week / multi-month / position horizons. The data
+assigns the horizon by which cell survives. **Horizons beyond what ~1 year of
+daily bars can validate are `data_blocked`, not excluded** — they become tracked
+items that unblock as multi-year history accrues (see §4 taxonomy).
+
+**Multiple-testing discipline is mandatory.** Running a panel × universe × shape
+is a large grid — exactly the false-discovery trap plan 08 Workflow B exists to
+prevent. Survivors must clear de-overlapped effective-N (≥ MIN_EFF_N=30),
+block-bootstrap nulls, and a deflated-Sharpe / FDR correction across the whole
+grid before they count.
+
+**The MIN_EFF_N floor is applied on each shape's natural observation unit —
+not naively 30-per-name.** For event-driven families: pool observations across
+all universe names and require ≥ 30 non-overlapping pooled events. For
+cross-sectional families: the unit is a cross-sectional period (one day across
+all names), so require ≥ 30 independent cross-sectional periods. For pairs: ≥ 30
+non-overlapping residual-spread observations at the pair level. For single-name
+time-series: the existing per-symbol de-overlap and 30-per-symbol floor from
+plans 04/05. This preserves the rigour that caught the ANTM false-positive in
+plan 05 while not structurally killing low-frequency or cross-name families via
+an inappropriate unit.
+
+**Walk-forward re-validation is mandatory — not just a single chronological OOS split.**
+The grid backtest must use **rolling walk-forward windows**: fit on a trailing
+window, test on the next forward window, roll forward, repeat. This is the
+research-time persistence test — it asks whether the edge repeats across multiple
+past windows, not merely whether it existed once. A single 60/40 chronological
+split can only test that the edge existed at some point; a walk-forward sweep
+tests whether it *persisted*. Feasible now for the daily-bar families because
+chartbit supplies roughly one year of OHLCV per name (§5), giving enough history
+for several roll iterations.
+
+Each cell's walk-forward output defines a **decay metric**: a rolling Sharpe (or
+rolling hit-rate) computed on each forward test window. If this metric falls
+below a threshold across a majority of forward windows, the `(name, strategy)`
+cell is marked **decayed / non-persistent** and does not enter the portfolio,
+even if the full-period average looks acceptable. This decay-metric definition is
+shared verbatim with the live decay monitor ([plan 11](./11-decay-monitoring-and-live-revalidation.md)):
+the same rolling-Sharpe / hit-rate threshold used here to gate entry is the same
+criterion plan 11 uses to pull a live position. Backtest and live kill-switch
+speak the same language by construction.
 
 ## 3. The per-name friction floor
 
@@ -74,24 +121,88 @@ This is the *minimum* a strategy's net per-trade edge must beat on that name
 The floor is computable from price alone (no look-ahead). Impact/slippage on top
 is modelled per strategy from ADV and realised vol (plan 09 §3 square-root law).
 
-## 4. The strategy panel
+### Financing as a per-(hold, entry-dow) cost-stack addition
 
-A small, honest set of families spanning the horizon axis. Each is a hypothesis
-to be *refuted*, not assumed:
+Financing is distinct from the per-name floor above: `min_edge_to_clear_bps`
+is fixed for a given name and price level; financing varies by hold length and
+entry day-of-week. The two are additive — both must be beaten for the full pass
+test to clear. Calendar days outstanding is the settlement-driven count: a
+Thursday borrow, sold Friday, settles Monday = 4 calendar days = 40 bps of
+financing, regardless of the 1-trading-day hold. Same-day round-trips complete
+within the trading session and carry 0 calendar days outstanding, so financing
+is zero. Weekend-spanning holds roughly double the worst-case hurdle versus a
+fee-only gate (per ADR-0011).
 
-| Family | Horizon | Data | Edge source | Prior from our studies |
+| Entry → exit | Calendar days outstanding | financing\_bps | Effective hurdle (≈ fee + financing) |
+|---|---|---|---|
+| Same-day round-trip | 0 | 0 | ~40 bps |
+| Mon→Tue (overnight) | ~1–3 | ~10–30 | ~50–70 bps |
+| Thu→Fri (settles Mon, carries weekend) | 4 | 40 | ~80 bps |
+
+This day-of-week structure creates a real scheduling optimisation lever: early-
+week entries are structurally cheaper and should be preferred by the allocator
+(plan 13). Same-day round-trips avoid financing entirely and reopen the
+larger-move intraday band (see §4 below).
+
+## 4. The strategy panel — full catalog, status-tagged
+
+A full catalog spanning both axes. Each family is a hypothesis to be *refuted*,
+not assumed. Families that cannot be validated on current data are tagged
+`data_blocked` with an explicit unblock condition; nothing is silently excluded.
+
+**Shape axis — four test shapes (consistent with plan 08 §4a):**
+
+| Shape | Natural observation unit | Test primitives |
+|---|---|---|
+| `single_name_time_series` | per-symbol (t, return) rows | decile curve, HAC t-stat, conditional hit-rate |
+| `cross_sectional` | one cross-sectional period = one day across all names | Spearman IC, IC t-stat, ICIR |
+| `event_driven` | pooled events across all universe names | pooled event-return, block-bootstrap on pooled obs |
+| `pairs` | a two-instrument relationship | ADF / Johansen cointegration, spread half-life, spread-reversion OOS |
+
+**Strategy families — horizon × shape, with status:**
+
+| Family | Shape | Horizon | Status | Reason / unblock |
 |---|---|---|---|---|
-| Order-flow imbalance (OBI/OFI) | seconds–minutes | order book (`sbcap features`) | microstructure | NO-GO on tick-scale names (plan 06); directional but thin (04/05) |
-| Intraday momentum / breakout | minutes–hours | intraday bars | continuation | untested |
-| Daily momentum / swing | days | daily bars (chartbit) | trend persistence | untested — **primary new bet** |
-| Mean-reversion (overextension) | days | daily bars | reversal | untested |
-| Event-driven (gap / news / volume spike) | days | daily bars + foreign flow | repricing | untested; only path for very-wide-tick names |
+| Order-flow imbalance (OBI/OFI) | `single_name_time_series` | seconds–minutes | `testable_now` | captured order-book data exists; NO-GO on cheap names (plan 06) — re-test low-friction only |
+| Intraday momentum / breakout | `single_name_time_series` | minutes–hours | `testable_now` | intraday bars derivable from tick data |
+| Daily momentum / swing | `single_name_time_series` | days | `testable_now` | ~1yr OHLCV via chartbit; **primary new bet** |
+| Mean-reversion (overextension) | `single_name_time_series` | days | `testable_now` | same daily-bar source |
+| Event-driven (gap / volume spike / news) | `event_driven` | days | `testable_now` | MIN_EFF_N=30 on pooled cross-universe events (not per-name); only viable path for very-wide-tick names |
+| Cross-sectional momentum / factor | `cross_sectional` | days | `testable_now` | daily cross-sectional rank; MIN_EFF_N=30 on cross-sectional periods |
+| Pairs / stat-arb / cointegration | `pairs` | days–weeks | `testable_now` | same daily-bar window; spread-reversion half-life via cointegration test |
+| Multi-week trend / position hold | `single_name_time_series` | weeks | `data_blocked` | de-overlap on 5-day hold gives ~50 independent windows per year — barely feasible; unblocks clearly at 2+ years of history |
+| Multi-month / macro momentum | `single_name_time_series` | months | `data_blocked` | a 20-day hold gives ~12 independent windows per year per name, below `MIN_EFF_N=30`; unblocks at 3+ years of daily bars |
+| Multi-year carry / structural | any | years | `data_blocked` | requires 5+ years of history; unblocks at that horizon |
 
-Daily-bar families are the cheap first pass: chartbit gives a full year of
-OHLCV + `value` + foreign-flow in one call per name (plan 09 live endpoints). The
-order-book family stays gated on captured data (plan 01) and is already
-characterised as NO-GO for the cheap names — it earns a re-test only on the
-low-friction names the intersection surfaces (e.g. ITMG-class).
+> **Data-length constraint (not a preference).** The horizon ceiling today is a
+> genuine data limit: chartbit supplies ~1 year of daily bars per name, not a
+> design choice. At a 20-day hold there are ~12 non-overlapping windows per name
+> per year — below the MIN_EFF_N=30 floor. This is not a permanent exclusion;
+> it is a tracked `data_blocked` item. As multi-year history accrues, multi-week
+> and multi-month families graduate to `testable_now` without any change to the
+> methodology.
+
+> **Capital horizon ceiling (ADR-0011).** The leverage facility's T+2-sell /
+> T+4-liquidation tenor caps practical holds at **~2 trading days** — a *capital*
+> ceiling that **coincides with** the data-length ceiling above. The weeks-plus
+> families (`Multi-week trend`, `Multi-month / macro momentum`, `Multi-year carry`
+> rows) are therefore both `data_blocked` **and** capital-blocked: they do not
+> graduate to deployable on data length alone once multi-year history accrues —
+> they also require owned cash (no T+4 clock) per ADR-0011. The deployable band
+> under the current leverage facility is **same-day through ~2-day** swing,
+> breakout, and event strategies; "days"-horizon families (daily momentum/swing,
+> mean-reversion) should be read as **≤2 trading-day holds** under leverage.
+> Same-day larger-move intraday is **structurally re-opened** by this framing:
+> the plan-06 NO-GO killed tick-scale thin-edge (5–10 bps) intraday on cheap
+> high-friction names, NOT larger-move same-day intraday on liquid names — and
+> same-day round-trips avoid financing entirely (see §3 above).
+
+**Daily-bar families and cross-sectional / pairs families** are the cheap first
+pass: chartbit gives a full year of OHLCV + `value` + foreign-flow in one call
+per name (plan 09 live endpoints). Event-driven and cross-sectional families pool
+across the universe, so the effective-N check is on the pooled count. The
+order-book family stays gated on captured data (plan 01) and earns a re-test only
+on the low-friction names the intersection surfaces (e.g. ITMG-class).
 
 ## 5. Data sources & reuse
 
@@ -109,35 +220,69 @@ low-friction names the intersection surfaces (e.g. ITMG-class).
 
 ## 6. Method — per `(name, strategy)` cell
 
-1. For each name in the plan-09 universe, for each strategy family, run the
-   family's backtest over the available history (daily first; order-book where
-   captured).
-2. Net every cell against that name's real cost stack (`min_edge_to_clear_bps`
+1. For each name in the plan-09 universe, for each strategy family in the §4
+   taxonomy with status `testable_now`, run the family's backtest using **rolling
+   walk-forward windows** over the available history (daily first; order-book where
+   captured). Fit on a trailing window, test on the next forward window, roll
+   forward, repeat. Families tagged `data_blocked`, `cost_gated`, or `deferred` are
+   recorded in the coverage table (§7.5) with their status; they are not silently
+   skipped.
+2. Compute the **decay metric** per forward window: rolling Sharpe and rolling
+   hit-rate on the out-of-sample test window. A cell whose decay metric falls
+   below the threshold across a majority of forward windows is marked
+   **decayed / non-persistent** and removed from candidacy at this step.
+3. Net surviving cells against that name's real cost stack (`min_edge_to_clear_bps`
    floor + modelled impact). A cell is a *candidate* only if mean net edge/trade
-   > 0 with the same effective-N / bootstrap hygiene as plans 04/05/06.
-3. Barrier: apply deflated-Sharpe / FDR across the entire grid (plan 08 §B). Only
+   > 0, with effective-N and bootstrap hygiene applied on **each shape's natural
+   observation unit** (see §2 and plan 08 §4a): pooled events for `event_driven`,
+   cross-sectional periods for `cross_sectional`, residual-spread obs for `pairs`,
+   per-symbol rows for `single_name_time_series`. The de-overlap discipline from
+   plans 04/05 is preserved in all cases; only the *what counts as one observation*
+   changes by shape.
+4. Barrier: apply deflated-Sharpe / FDR across the entire grid (plan 08 §B). Only
    grid-corrected survivors are kept.
-4. Output: the surviving `(name, strategy, horizon)` pairs = the **strategy
-   portfolio**. Expectation, given priors: low-friction names (ITMG-class) admit
-   several families; cheap high-friction names (BUMI/DEWA) survive only under
-   wide-edge daily/event strategies, if at all.
+5. Output: the surviving `(name, strategy, horizon)` pairs = the **strategy
+   portfolio**, each annotated with its decay metric and the friction floor it beat.
+   Expectation, given priors: low-friction names (ITMG-class) admit several
+   families; cheap high-friction names (BUMI/DEWA) survive only under wide-edge
+   daily/event strategies, if at all.
 
 ## 7. Implementation
 
 - [ ] **7.1** Consume plan 09's ranked universe (read `universe_screen.md` or call
   the screener as a library) — the input contract.
-- [ ] **7.2** `research/strategy_fit/` — daily-bar strategy harness: pluggable
-  strategy family interface (`signals(df) -> trades`), a backtest that nets each
-  family against the per-name cost stack, three-state verdict mirroring plans
-  04/05/06.
-- [ ] **7.3** The four daily-bar families (momentum, mean-reversion, breakout,
-  event/gap) as pure signal functions over chartbit OHLCV + foreign flow.
-- [ ] **7.4** Grid runner + multiple-testing correction (deflated Sharpe / FDR)
-  across `(name, strategy, horizon)`; emit `research/out/strategy_portfolio.md`.
-- [ ] **7.5** (Deferred) re-test the order-book OBI/OFI family on the low-friction
+- [ ] **7.2** `research/strategy_fit/` — strategy harness with a **pluggable shape
+  interface**: each family declares its shape (`single_name_time_series`,
+  `cross_sectional`, `event_driven`, or `pairs`) and the harness dispatches to the
+  correct test primitive and effective-N unit (§2, §6). The three-state verdict
+  mirrors plans 04/05/06 in all shapes.
+- [ ] **7.3** The single-name daily-bar families (momentum, mean-reversion, breakout)
+  as pure signal functions over chartbit OHLCV + foreign flow —
+  `shape=single_name_time_series`.
+- [ ] **7.4** Event-driven family (gap / volume spike / foreign-flow spike) with
+  pooled cross-universe event returns and MIN_EFF_N=30 on pooled non-overlapping
+  events — `shape=event_driven`. This is the primary (and often only) viable shape
+  for very-wide-tick names.
+- [ ] **7.5** Cross-sectional momentum / factor: daily cross-sectional rank, IC
+  series, ICIR — `shape=cross_sectional`. MIN_EFF_N=30 on cross-sectional periods.
+- [ ] **7.6** Pairs / cointegration: pairwise ADF / Johansen on the universe names,
+  spread-reversion half-life, OOS block-bootstrap on residual-spread obs —
+  `shape=pairs`.
+- [ ] **7.7** Walk-forward harness + decay metric — rolling fit→test→roll loop
+  over available history (by shape: daily rows, cross-sectional periods, pooled
+  events, spread obs); compute rolling Sharpe and hit-rate per forward window; mark
+  cells decayed/non-persistent when the metric falls below threshold. Shared
+  verbatim with plan 11.
+- [ ] **7.8** Grid runner + coverage table + multiple-testing correction (deflated
+  Sharpe / FDR) across `(name, strategy, horizon, shape)`; emit
+  `research/out/strategy_portfolio.md` annotated with each survivor's decay metric,
+  friction floor, and shape. Coverage table lists every `data_blocked` /
+  `cost_gated` / `deferred` cell with its status and unblock condition — no silent
+  omissions.
+- [ ] **7.9** (Deferred) re-test the order-book OBI/OFI family on the low-friction
   intersection names once captured (plan 01) — the only honest re-open of the
   plan-06 NO-GO.
-- [ ] **7.6** (Deferred) wire as plan 08 Workflow B when grid size makes the
+- [ ] **7.10** (Deferred) wire as plan 08 Workflow B when grid size makes the
   fan-out + adversarial refutation worth it.
 
 ## 8. Verification
@@ -157,13 +302,18 @@ low-friction names the intersection surfaces (e.g. ITMG-class).
 
 - Re-filtering universe membership — that is plan 09's job; this plan only
   assigns strategies within it.
-- Live execution / order routing / portfolio risk sizing — downstream pillars
-  (roadmap §2–3).
-- Adding strategy families speculatively — start with the daily-bar four; add
-  only when a data reason appears (YAGNI).
+- Live execution / order routing — downstream pillars (roadmap §2–3).
+- Per-cycle position sizing, exit-within-tenor capacity (C*), and duty-cycle
+  scheduling — these are **[plan 13](./13-capital-allocation-and-capacity.md)**
+  (capital allocation & capacity), per ADR-0011; out of scope here.
+- Adding strategy families beyond the §4 full catalog speculatively — the catalog
+  already spans all current data-supported shapes; new additions require a data
+  reason and an ADR.
 - Re-opening the order-book NO-GO on the cheap high-friction names — the data
   already answered that; re-test only on low-friction names, and only once
   captured.
+- Validating `data_blocked` families before their unblock condition is met — they
+  are tracked, not attempted early.
 
 ---
 

@@ -1,8 +1,8 @@
 # Alpha Factory as Orchestrated Workflows — Fan-Out the Research Loop
 
 > **Status:** 🔨 In Progress · **Owner:** @lewis · **Updated:** 2026-06-19
-> _(Workflow A / 7.2 — the universe screener — done & live-verified via [plan 09](./09-universe-screener.md); Workflow B 7.3–7.5 not started.)_
-> **Related:** [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) · [04-microstructure-study.md](./04-microstructure-study.md) · [05-ofi-trade-flow-study.md](./05-ofi-trade-flow-study.md) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [09-universe-screener.md](./09-universe-screener.md) · [Plans index](./README.md)
+> _(Workflow A / 7.2 — the universe screener — done & live-verified via [plan 09](./09-universe-screener.md); Workflow B 7.3–7.6 not started.)_
+> **Related:** [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) · [04-microstructure-study.md](./04-microstructure-study.md) · [05-ofi-trade-flow-study.md](./05-ofi-trade-flow-study.md) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [09-universe-screener.md](./09-universe-screener.md) · [12-data-gap-backlog-and-demand-driven-capture.md](./12-data-gap-backlog-and-demand-driven-capture.md) · [Plans index](./README.md)
 
 > **What this is.** An idea, not yet a buildable ticket. The roadmap's
 > [§1.2](./00-roadmap-research-to-live.md) names the bottleneck between "one
@@ -146,6 +146,50 @@ Two non-negotiable properties this encodes:
    "did this survive given I tested 50?" can only be answered with all results in
    hand. This is the §1.2 "factory doesn't manufacture false alpha" requirement.
 
+### 4a. Strategy-shape-agnostic validation
+
+The battery's default test shape — "does feature X predict *one symbol's* forward
+return at horizon h?" (decile curve, HAC regression, conditional hit-rate) — is
+inherited from the single-name time-series work of plans 04/05. It is correct for
+that shape but **structurally disadvantages** strategy families whose natural
+observation unit is different:
+
+| Shape | Natural observation unit | Why the default test fails it |
+|---|---|---|
+| **Single-name time-series** (momentum, OBI, mean-reversion) | per-symbol (t, return) rows | ✅ Default test; de-overlap + `MIN_EFF_N=30` applied per symbol |
+| **Cross-sectional / relative-value / long-short** | daily cross-sectional rank across the universe | Default test has no rank dimension; a per-symbol forward-return test cannot express "short weakest, long strongest" |
+| **Event-driven / discrete-trigger** (gaps, volume spikes, news) | pooled events across all names in the universe | Per-symbol `MIN_EFF_N=30` kills sparse events (a gap-up occurs a few times per name per year); pooling across names is the correct unit |
+| **Pairs / stat-arb / cointegration** | a *relationship* between two instruments, not a per-symbol forward return | No single-name decile curve applies; cointegration test and spread-reversion stats are the right primitives |
+
+**The fix is to compute the effective-N floor and de-overlap on each shape's
+natural unit, not naively 30-per-name.** For event-driven families: pool
+observations across the universe and require `MIN_EFF_N=30` pooled non-overlapping
+events. For cross-sectional families: the unit is a cross-sectional period (one
+day across all names), so require 30 independent cross-sectional periods. For
+pairs: residual-spread observations, de-overlapped at the pair level.
+
+The existing `research/lib/stats.py` bootstrap / decile / effective-N utilities
+remain the single source of truth; the change is *which rows are fed in* and
+*which test primitive is applied*, not reimplementing the math.
+
+**Concretely**, the battery must support four test modes, selectable per
+hypothesis via `h.spec.shape`:
+
+- **`time_series`** (default): per-symbol decile curve, HAC t-stat,
+  conditional hit-rate, de-overlap per symbol, `MIN_EFF_N=30` per symbol.
+- **`cross_sectional`**: daily cross-sectional Spearman IC, information
+  coefficient (IC) t-stat, mean IC / ICIR; `MIN_EFF_N=30` cross-sectional
+  periods.
+- **`event_study`**: pooled event returns (t, t+1, …, t+h) across all names,
+  block-bootstrap on pooled observations, `MIN_EFF_N=30` pooled non-overlapping
+  events.
+- **`pairs`**: spread stationarity (ADF / Johansen), spread-reversion half-life,
+  block-bootstrap on residual-spread obs.
+
+The per-symbol description above remains the first/default shape and the one
+exercised by plans 04–06. No existing result is invalidated — this is an
+extension, not a replacement.
+
 ## 5. Workflow C — Multi-day / regime pooling (deferred)
 
 Once unattended multi-day capture is running (pillar 4.1, blocked today), the same
@@ -180,6 +224,25 @@ session to pool — it is worthless on a single day.
    the prize) is the **first true Workflow** in this project — the screener
    validates nothing about Workflow mechanics, but its output is the prerequisite
    for a meaningful battery run.
+7. **Completeness check — every run accounts for every taxonomy cell.** The
+   `signal_battery_report.md` output must include a **coverage table**: for each
+   (horizon × shape) taxonomy cell defined in §7.3, the report states whether it
+   was tested and, if not, why (data-blocked / cost-gated / deferred). A run that
+   tests only time-series families must not silently imply it has covered the full
+   taxonomy. This ties directly to the completeness-critic pattern the plan
+   references: a final agent pass that checks the coverage table and flags any
+   cell without an explicit status as a gap. No silent omissions.
+8. **Data-blocked verdicts emit a requirement record — not a bare tag.** A cell
+   in the coverage table (§6.7 / §7.3) may only be marked `data_blocked` if it
+   simultaneously emits a structured requirement record naming the precise unblock
+   condition — kind, target, quantified `need`, `have`, `gated_alpha`, and
+   `provenance`. A bare status tag without a record is invalid: it cannot be
+   actioned by the collector, deduped, or auto-resolved. The requirement-record
+   schema and the servicing loop (backlog store, collector planning, satisfaction
+   check, auto-promotion) live in [plan 12](./12-data-gap-backlog-and-demand-driven-capture.md).
+   The shared surface between this plan and plan 12 is the requirement-record
+   schema — exactly as the decay metric is the shared surface between plans 10
+   and 11. See also §7.6 (completeness-critic) and §7.3 (taxonomy status tags).
 
 ## 7. Implementation steps
 
@@ -191,17 +254,57 @@ session to pool — it is worthless on a single day.
       Tier A orchestrator → `research/out/universe_screen.md`. **Done & live-verified
       (2026-06-19).** Strategy fit over the ranked universe is now its own
       [plan 10](./10-strategy-fit-and-portfolio.md) — the data-centric body that
-      Workflow B (7.3–7.5) will orchestrate.
-- [ ] **7.3** Define the candidate-hypothesis spec format (name + signal
-      construction + horizon) the battery pipeline consumes, seeded with the
-      lower-frequency families the 40 bps gate permits (§1.2 last bullet).
+      Workflow B (7.3–7.7) will orchestrate.
+- [ ] **7.3** Define the candidate-hypothesis spec format the battery pipeline
+      consumes. The spec must include a **strategy taxonomy** on two axes:
+
+      **HORIZON axis** (coarse buckets; sub-buckets where the data supports them):
+      `seconds` · `minutes` · `hours` · `days` · `weeks` · `months` · `years`
+
+      **SHAPE axis:**
+      `single_name_time_series` · `cross_sectional` · `event_driven` · `pairs`
+
+      Every (family × horizon) cell in the taxonomy must be explicitly tagged:
+
+      | Status | Meaning |
+      |---|---|
+      | `testable_now` | sufficient data and a supported test shape |
+      | `data_blocked` | not enough history or coverage to validate; unblocks as capture accrues — **must emit a requirement record (plan 12)** |
+      | `cost_gated` | edge structurally below the 40 bps floor on all known names |
+      | `deferred` | deliberate YAGNI deferral; unblock condition stated |
+
+      The initial taxonomy (seeded from plan 10 §4):
+
+      | Family | Shape | Horizon | Status | Reason / unblock |
+      |---|---|---|---|---|
+      | Order-flow imbalance (OBI/OFI) | `single_name_time_series` | seconds–minutes | `testable_now` | order-book capture exists for LQ45 names |
+      | Intraday momentum / breakout | `single_name_time_series` | minutes–hours | `testable_now` | intraday bars derivable from tick data |
+      | Daily momentum / swing | `single_name_time_series` | days | `testable_now` | ~1yr daily bars via chartbit |
+      | Mean-reversion (overextension) | `single_name_time_series` | days | `testable_now` | same daily-bar source |
+      | Event-driven (gap / volume spike / news) | `event_driven` | days | `testable_now` | pooled across universe; MIN_EFF_N on pooled events, not per-name |
+      | Cross-sectional momentum / factor | `cross_sectional` | days | `testable_now` | daily cross-sectional rank; MIN_EFF_N on cross-sectional periods |
+      | Pairs / stat-arb / cointegration | `pairs` | days–weeks | `testable_now` | cointegration test on same daily-bar window; spread-reversion half-life |
+      | Multi-week trend / position | `single_name_time_series` | weeks | `data_blocked` | need 3+ years of daily history; unblocks when multi-year bars accrued |
+      | Multi-month / macro momentum | `single_name_time_series` | months–years | `data_blocked` | need 5+ years; unblocks at that horizon |
+
+      The taxonomy is the contract: no family is silently skipped. Each run of
+      Workflow B reports coverage against this grid (§6.7).
+
 - [ ] **7.4** Author Workflow B (validation battery): `pipeline`
       validate → cost gate → adversarial refute, then the barrier FDR/deflated-Sharpe
-      correction → `research/study/out/signal_battery_report.md`.
+      correction → `research/study/out/signal_battery_report.md`. The validate
+      stage dispatches to the correct test shape (§4a) based on `h.spec.shape`.
 - [ ] **7.5** Wire the three-state verdict (PASS / NO-GO / INCONCLUSIVE) to mirror
       plans 04–06 exactly, so a workflow verdict is directly comparable to a
       hand-run one.
-- [ ] **7.6** (Deferred, blocked on pillar 4.1) Workflow C: day-aware multi-day
+- [ ] **7.6** Add the completeness-critic agent pass (§6.7 / §6.8): after all
+      hypotheses are graded, a final agent reads the taxonomy from §7.3 and the
+      graded results, emits the coverage table (tested / data-blocked / cost-gated
+      / deferred) for every cell, and flags any cell with no status as a gap.
+      Append to `signal_battery_report.md`. Each `data_blocked` cell in the
+      coverage table must carry its requirement record (populated per §6.8), which
+      feeds plan 12's backlog store.
+- [ ] **7.7** (Deferred, blocked on pillar 4.1) Workflow C: day-aware multi-day
       pooling once multi-day capture is accruing.
 
 ## 8. Out of scope (deliberately)
