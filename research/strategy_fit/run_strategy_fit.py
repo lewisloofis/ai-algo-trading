@@ -63,6 +63,11 @@ from strategy_fit.walk_forward import (
     DEFAULT_TEST_WINDOW,
     DEFAULT_MIN_WINDOWS,
 )
+from strategy_fit.impact import compute_impact_bps_from_df
+from strategy_fit.intraday_walk_forward import (
+    walk_forward_intraday,
+    IntradayWalkForwardResult,
+)
 from strategy_fit.report import emit_strategy_portfolio
 
 try:
@@ -90,7 +95,10 @@ logger = logging.getLogger(__name__)
 
 WORST_CASE_ENTRY_DOW: int = 3       # Thursday — maximises financing cost
 FDR_ALPHA: float = 0.10             # Benjamini-Hochberg FDR level
-MODELLED_IMPACT_BPS: float = 0.0   # v1: impact not modelled; unblocks in plan-13
+MODELLED_IMPACT_BPS: float = 0.0
+# Impact for daily / event / cross-sectional / pairs cells: still 0 (plan-13
+# will extend).  Intraday cells now compute per-symbol impact from the actual
+# intraday DataFrame via strategy_fit.impact.compute_impact_bps_from_df.
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUTDIR = os.path.join(SCRIPT_DIR, "..", "out")
@@ -488,9 +496,30 @@ def _run_intraday_cell(
     """Run one (symbol, intraday_family) cell end-to-end.
 
     No horizon check needed: hold=0 is always within MAX_HOLD_TRADING_DAYS=2.
-    No walk-forward decay check: hold=0 means one obs per day (non-overlapping
-    by construction).
+
+    Two additional validations vs. the prior version:
+
+    1. Market-impact model (plan-10 §9):
+       Per-symbol round-trip slippage is computed from the actual intraday
+       DataFrame via impact.compute_impact_bps_from_df (square-root Almgren
+       law).  This replaces the global MODELLED_IMPACT_BPS=0 for intraday
+       cells, so the cost gate now charges realistic slippage.  Daily / event /
+       cross-sectional / pairs cells still use MODELLED_IMPACT_BPS=0 — plan-13
+       will extend the impact model to those shapes.
+
+    2. OOS persistence check (plan-10 §9):
+       A single chronological IS/OOS split (60/40) is run to check whether the
+       intraday edge persists out-of-sample.  Survivors with oos_persistent=False
+       are NOT removed from the report (data is thin — only ~55 trading days);
+       they are annotated for human review.  See intraday_walk_forward.py.
     """
+    # 1. Per-symbol market impact (replaces MODELLED_IMPACT_BPS=0 for intraday).
+    intraday_impact_bps = compute_impact_bps_from_df(intraday_df)
+    logger.debug("intraday impact for %s/%s: %.1f bps", symbol, family.name, intraday_impact_bps)
+
+    # 2. OOS persistence split.
+    wf_intraday: IntradayWalkForwardResult = walk_forward_intraday(intraday_df, family_fn)
+
     result = family_fn(intraday_df)
 
     if result["status"] != "tested":
@@ -503,12 +532,13 @@ def _run_intraday_cell(
             skip_reason=result.get("skip_reason"),
             hit_rate=result.get("hit_rate"),
             eff_n=result.get("eff_n"),
+            modelled_impact_bps=intraday_impact_bps,
         )
 
     # Cost gate: for hold=0, financing=0, hurdle = min_edge + impact.
     hurdle, entry_dow = best_feasible_hurdle_bps(
         min_edge_to_clear_bps=min_edge_to_clear_bps,
-        modelled_impact_bps=MODELLED_IMPACT_BPS,
+        modelled_impact_bps=intraday_impact_bps,
         hold_trading_days=0,
     )
     gross_edge = result["gross_edge_bps"] or 0.0
@@ -529,6 +559,12 @@ def _run_intraday_cell(
         passes_cost_gate=cost_pass,
         min_edge_hurdle_bps=hurdle,
         best_entry_dow=entry_dow,
+        modelled_impact_bps=intraday_impact_bps,
+        oos_edge_bps=wf_intraday.oos_edge_bps,
+        oos_hit_rate=wf_intraday.oos_hit_rate,
+        oos_eff_n=wf_intraday.oos_eff_n,
+        oos_decay_ratio=wf_intraday.decay_ratio,
+        oos_persistent=wf_intraday.is_persistent,
     )
 
 
@@ -745,6 +781,12 @@ def apply_fdr_to_grid(cells: list[CellResult], alpha: float = FDR_ALPHA) -> list
                     min_edge_hurdle_bps=c.min_edge_hurdle_bps,
                     best_entry_dow=c.best_entry_dow,
                     fdr_accepted=fdr_map[i],
+                    modelled_impact_bps=c.modelled_impact_bps,
+                    oos_edge_bps=c.oos_edge_bps,
+                    oos_hit_rate=c.oos_hit_rate,
+                    oos_eff_n=c.oos_eff_n,
+                    oos_decay_ratio=c.oos_decay_ratio,
+                    oos_persistent=c.oos_persistent,
                 )
             )
         else:

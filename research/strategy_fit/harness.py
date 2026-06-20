@@ -289,3 +289,29 @@ class CellResult:
     min_edge_hurdle_bps: float | None = None
     best_entry_dow: int | None = None
     fdr_accepted: bool | None = None
+    # --- Intraday-only additions (plan-10 §9) ---
+    modelled_impact_bps: float | None = None
+    """
+    Per-symbol round-trip market impact in bps (intraday cells only).
+    Computed by strategy_fit.impact.compute_impact_bps_from_df.
+    Replaces the global MODELLED_IMPACT_BPS=0 constant for intraday shapes.
+    Daily / event / cross-sectional / pairs cells leave this as None (impact=0
+    for those shapes until plan-13 extends the model).
+    """
+    oos_edge_bps: float | None = None
+    """OOS gross edge from the intraday IS/OOS split (intraday cells only)."""
+    oos_hit_rate: float | None = None
+    """OOS hit rate from the intraday IS/OOS split (intraday cells only)."""
+    oos_eff_n: int | None = None
+    """OOS effective-N from the intraday IS/OOS split (intraday cells only)."""
+    oos_decay_ratio: float | None = None
+    """Ratio oos_edge / is_edge from the intraday IS/OOS split (intraday cells only)."""
+    oos_persistent: bool | None = None
+    """
+    Whether the intraday cell shows OOS persistence.
+    True → OOS edge > 0 AND OOS eff_n >= MIN_OOS_EFF_N.
+    False → non-persistent or too thin to judge.
+    None → not applicable (non-intraday shape).
+    Survivors with oos_persistent=False are NOT removed — data is thin —
+    but they are annotated clearly in the report for human review.
+    """

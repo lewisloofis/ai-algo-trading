@@ -15,7 +15,7 @@ import datetime
 import os
 from typing import Sequence
 
-from strategy_fit.harness import CellResult
+from strategy_fit.harness import CellResult, SHAPE_INTRADAY_SAME_DAY
 
 # ---------------------------------------------------------------------------
 # Verdict logic
@@ -169,8 +169,10 @@ def emit_strategy_portfolio(
         lines.append(
             f"**{len(survivors)} cell(s)** survive the full cost gate "
             "(min_edge + modelled_impact + financing at best-feasible entry day) "
-            "AND the Benjamini-Hochberg FDR correction at α=0.10 "
-            "AND walk-forward persistence check."
+            "AND the Benjamini-Hochberg FDR correction at α=0.10. "
+            "Intraday OOS persistence is reported per cell (\"OOS Persistent\" "
+            "column) for human review but is NOT a survivorship filter — the "
+            "intraday data window (~90 days) is too short to confirm persistence."
         )
     elif verdict == VERDICT_INCONCLUSIVE:
         lines.append(
@@ -189,9 +191,31 @@ def emit_strategy_portfolio(
     lines.append("## Surviving Strategies")
     lines.append("")
     if survivors:
-        lines.append("| Symbol | Strategy | Hold (days) | Shape | Hit Rate | Net Edge (bps) | Eff-N | Best Entry Day | Friction Hurdle (bps) | Decay Metric (Sharpe) |")
-        lines.append("|--------|----------|-------------|-------|----------|---------------|-------|----------------|----------------------|----------------------|")
+        lines.append(
+            "| Symbol | Strategy | Hold (days) | Shape | Hit Rate | Net Edge (bps) | Eff-N "
+            "| Best Entry Day | Friction Hurdle (bps) | Impact (bps) "
+            "| OOS Edge (bps) | OOS Eff-N | OOS Persistent | Decay Metric (Sharpe) |"
+        )
+        lines.append(
+            "|--------|----------|-------------|-------|----------|---------------|-------"
+            "|----------------|----------------------|-------------|"
+            "----------------|-----------|----------------|----------------------|"
+        )
         for c in sorted(survivors, key=lambda x: (x.symbol, x.family_name)):
+            is_intraday = c.shape == SHAPE_INTRADAY_SAME_DAY
+            # For non-intraday shapes impact is 0 (not modelled); show "0.0" for clarity.
+            impact_str = _fmt_float(c.modelled_impact_bps, 1) if is_intraday else "0.0"
+            oos_edge_str = _fmt_float(c.oos_edge_bps, 1) if is_intraday else "—"
+            oos_n_str = str(c.oos_eff_n) if is_intraday and c.oos_eff_n is not None else "—"
+            if is_intraday:
+                if c.oos_persistent is True:
+                    oos_persist_str = "YES"
+                elif c.oos_persistent is False:
+                    oos_persist_str = "NO ⚠ (thin-N)"
+                else:
+                    oos_persist_str = "—"
+            else:
+                oos_persist_str = "n/a"
             lines.append(
                 f"| {c.symbol} | {c.family_name} | {c.horizon_trading_days} "
                 f"| {c.shape} | {_fmt_float(c.hit_rate, 3)} "
@@ -199,6 +223,10 @@ def emit_strategy_portfolio(
                 f"| {c.eff_n or '—'} "
                 f"| {_fmt_dow(c.best_entry_dow)} "
                 f"| {_fmt_float(c.min_edge_hurdle_bps, 1)} "
+                f"| {impact_str} "
+                f"| {oos_edge_str} "
+                f"| {oos_n_str} "
+                f"| {oos_persist_str} "
                 f"| {_fmt_float(c.decay_metric, 2)} |"
             )
     else:
@@ -259,10 +287,23 @@ def emit_strategy_portfolio(
     lines.append("- **FDR correction:** Benjamini-Hochberg at α=0.10 across the full (name, strategy, horizon) grid.")
     lines.append("- **Effective-N:** single_name per-symbol de-overlap; event_driven pooled across universe.")
     lines.append("- **Walk-forward:** fit=120 rows, test=40 rows, roll by test_window. Decay = majority of windows below Sharpe=0 AND hit_rate=0.5.")
-    lines.append("- **Impact model:** Not modelled (set to 0 bps for v1). Unblocks with position-sizing from plan-13.")
+    lines.append(
+        "- **Impact model (intraday):** Square-root Almgren law (round-trip): "
+        "2 × SQRT_IMPACT_COEFF(1.0) × daily_vol_bps × sqrt(participation_rate), "
+        "where participation = POSITION_NOTIONAL_IDR(30M IDR) / ADV. "
+        "Charged at both entry and exit; one-tick spread already in min_edge_to_clear_bps (no double-count). "
+        "Daily / event / cross-sectional / pairs cells: impact=0 (plan-13 will extend). "
+        "See strategy_fit/impact.py."
+    )
+    lines.append(
+        "- **Intraday OOS persistence:** Single 60/40 chronological IS/OOS split on trading dates. "
+        "is_persistent=True iff OOS edge > 0 AND OOS eff_n ≥ MIN_OOS_EFF_N=10. "
+        "Survivors with OOS Persistent=NO are NOT filtered out (data is thin ~55 trading days); "
+        "they are annotated for human review. See strategy_fit/intraday_walk_forward.py."
+    )
     lines.append("- **Cross-sectional family:** daily Spearman IC between trailing-return rank and forward return; eff_n = independent cross-sectional periods. Cost floor: median min_edge_to_clear_bps (market-neutral L/S; see families_cross_sectional.py).")
     lines.append("- **Pairs family:** Engle-Granger cointegration on the top-15 most-liquid names; spread half-life estimated via AR(1); OOS block-bootstrap on non-overlapping spread observations. Cost floor: sum of both legs' min_edge (each leg is a separate order).")
-    lines.append("- **Intraday same-day families:** ORB (30-min opening range), intraday momentum (morning-to-afternoon), VWAP mean-reversion. hold=0 → financing=0, hurdle = min_edge + impact. One obs per trading day (no de-overlap needed). Walk-forward not applied (each day is independent).")
+    lines.append("- **Intraday same-day families:** ORB (30-min opening range), intraday momentum (morning-to-afternoon), VWAP mean-reversion. hold=0 → financing=0, hurdle = min_edge + impact. One obs per trading day (no de-overlap needed).")
     lines.append("- **Deferred families:** order_book — see plan-10 §7.9. (cross_sectional and pairs are now testable.)")
     lines.append("")
 
