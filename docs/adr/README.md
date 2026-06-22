@@ -16,6 +16,7 @@ algo-trading project, using a lightweight [ADR](https://adr.github.io/) format.
 | [0009](./0009-universe-is-funding-intersection-strategy-fit-downstream.md) | Universe is the funding intersection; strategy fit decided downstream | Accepted |
 | [0010](./0010-capture-watchlist-is-topn-diverse-slice-via-tfvars.md) | Capture watchlist is a top-N broad/diverse slice, delivered via tfvars | Accepted |
 | [0011](./0011-capital-model-300m-leverage-sleeve.md) | Capital model — 300M IDR T+2 leverage sleeve run as a periodic batch allocator | Accepted |
+| [0012](./0012-market-calendar-single-source-cross-language.md) | Market calendar is one curated source of truth, read by thin per-language clients | Proposed |
 
 ## When to write an ADR
 
