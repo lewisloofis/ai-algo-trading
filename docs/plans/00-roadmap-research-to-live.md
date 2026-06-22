@@ -1,6 +1,6 @@
 # Roadmap — From Research Loop to a Live, Profitable Trading System
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-18
+> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-22
 > **Related:** [01-market-data-capture.md](./01-market-data-capture.md) · [02-storage-format-and-replay.md](./02-storage-format-and-replay.md) · [03-token-rotation.md](./03-token-rotation.md) · [04-microstructure-study.md](./04-microstructure-study.md) · [05-ofi-trade-flow-study.md](./05-ofi-trade-flow-study.md) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [reference/07-fees-and-costs.md](../reference/07-fees-and-costs.md) · [Plans index](./README.md) · [ADR-0001](../adr/0001-treat-plans-as-tickets.md)
 
 > **What this is.** A map, not a buildable ticket. Plans 01–06 each fulfil one
@@ -78,6 +78,8 @@ few look good by chance.*
       alpha *blend*, not isolated signals).
 - [ ] **Lower-frequency signal families** — the class the cost gate actually
       permits (see §0). The next research targets, given tick-scale is dead.
+      *Which family to test next* is ranked by → [plan 16](./16-strategy-triage-and-prioritization.md)
+      (the factory's triage brain; plan 08's Workflow B is the muscle).
 
 ---
 
@@ -96,9 +98,12 @@ quality is often a bigger lever than the signal.*
       mid-order ([reference 04](../reference/04-order-lifecycle.md)).
 - [ ] **Realized vs. expected fill measurement** — close the loop between the
       simulated fills (plan 06) and live slippage; feed it back into cost modeling.
+      → [plan 15](./15-measured-fill-and-impact-calibration.md) (capture-based
+      calibration, now) / [plan 17](./17-execution-and-replay-parity-engine.md) §6.6 (live loop, deferred).
 - [ ] **Live/replay parity** — the event-driven **Go** engine that runs the *same*
       `strategy.go` interface live and in replay (the whole point of [plan 02](./02-storage-format-and-replay.md));
       deliberately deferred in plan 06 until a signal survives.
+      → [plan 17](./17-execution-and-replay-parity-engine.md) (engine + paper sink now; live order routing gated).
 
 ---
 
@@ -114,7 +119,8 @@ an edge exists.*
       kill-switch**.
 - [ ] **Regime detection / global off-switch** — the cheapest risk control there is.
 - [ ] **Capacity & market-impact analysis** — does the edge survive *your own*
-      footprint at real size?
+      footprint at real size? → [plan 13](./13-capital-allocation-and-capacity.md) (C* caps) /
+      [plan 15](./15-measured-fill-and-impact-calibration.md) (measured impact coefficient).
 
 ---
 
@@ -138,6 +144,7 @@ an edge exists.*
       within seconds (not discovered at EOD).
 - [ ] **Reconciliation** — our view of positions/cash vs. the broker's, daily.
 - [ ] **Logging & post-trade store** — every decision + fill, for attribution and decay.
+      → [plan 17](./17-execution-and-replay-parity-engine.md) §5.4 (append-only store; **unblocks [plan 11](./11-decay-monitoring-and-live-revalidation.md)**).
 - [ ] **Failover** — what happens when the box dies mid-position.
 
 ---
