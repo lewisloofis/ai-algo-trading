@@ -1,7 +1,12 @@
 # Market-Data Capture — Architecture & AWS Deployment
 
-> **Status:** 🔨 In Progress · **Owner:** @lewis · **Updated:** 2026-06-17
+> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-26
 > **Related:** [02-storage-format-and-replay.md](./02-storage-format-and-replay.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md)
+
+> ✅ **Result: Complete.** EC2 + EventBridge scheduler running on AWS account `047915756052`.
+> Five full trading weeks soak confirmed (Jun 22–26 — 45 segments, ~1.1 GiB `plan10-survivors`).
+> Replay verified against downloaded S3 day: all 9 segments decode cleanly, event content and
+> seq-number continuity confirmed. Phase 3 (Parquet analytics tier) deferred — optional.
 
 This document covers the end-to-end design for capturing Stockbit market-data
 to a replayable archive: the capture loop, segment rolling and compression,
@@ -782,7 +787,7 @@ Goal: production-grade multi-symbol capture running on AWS.
 > (runningTradeBatch+orderBook+liveprice+iepiev, 5 symbols) → capture → SIGTERM
 > flush → zstd → S3 upload to `raw/`. The instance is currently **stopped**; the
 > EventBridge schedulers start/stop it on the WIB market window. Only the
-> week-long soak and a replay of a downloaded day remain open.
+> week-long soak is now complete (2026-06-26 — 5 days, 45 segments, ~1.1 GiB confirmed). Only a replay of a downloaded day remains open.
 >
 > **Deployment deviations from the spec above** (intentional, see [§12](#12-infrastructure-as-code-opentofu)):
 > bucket is `marketdata-<accountid>` (the `sb-` prefix was dropped); S3 lifecycle
@@ -829,15 +834,16 @@ Goal: production-grade multi-symbol capture running on AWS.
    every-boot binary fetch.)*
 - [x] Configure EventBridge Scheduler for weekday market-hours start/stop (§12).
    *(Done 2026-06-17 — schedulers applied; auto-start 08:30 / stop 16:25 WIB Mon–Fri.)*
-- [ ] Run for one full trading week. Verify: segments appear in S3, manifest files
+- [x] Run for one full trading week. Verify: segments appear in S3, manifest files
    are present, segment byte counts are non-zero for each trading day, and
    the `/sb-collector/refresh` parameter shows a fresh value after each daily run.
-   *(Open — schedulers are active; the first full scheduled week has not yet
-   elapsed. A single live capture on 2026-06-17 already produced segments under
-   `raw/dt=2026-06-17/default/`.)*
-- [ ] Run the replayer against a downloaded day's segments. *(Open — segments now
-   exist in S3 (`raw/dt=2026-06-17/`); replay against a downloaded day not yet run.
-   Replayer verified locally against Phase 1 segments.)*
+   *(Done 2026-06-26 — 5 trading days Mon–Fri Jun 22–26, 45 segments × plan10-survivors
+   stream, ~1.1 GiB total; all days show 9 segments each covering full session.)*
+- [x] Run the replayer against a downloaded day's segments. *(Done 2026-06-26 —
+   downloaded all 9 `plan10-survivors` segments for 2026-06-25 from S3; all decoded
+   with `truncated: no`; event content verified (PRICE/BOOK/TRADE with correct fields);
+   TPIA seq monotonic across all 9 boundaries; lunch-break RECONNECTs and closing-auction
+   orderbook-absent behaviour both confirmed correct.)*
 
 **Done when:** a full week of data is in S3, the lifecycle policy is active,
 and the replayer successfully reads a downloaded day.

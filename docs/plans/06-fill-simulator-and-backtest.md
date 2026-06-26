@@ -1,6 +1,6 @@
 # Fill Simulator & Backtester — Does OBI Survive Frictions?
 
-> **Status:** ✔️ Done · **NO-GO** · **Owner:** @lewis · **Updated:** 2026-06-18
+> **Status:** ✅ Complete · **NO-GO** · **Owner:** @lewis · **Updated:** 2026-06-18
 > **Related:** [04-microstructure-study.md](./04-microstructure-study.md) · [05-ofi-trade-flow-study.md](./05-ofi-trade-flow-study.md) · [reference/07-fees-and-costs.md](../reference/07-fees-and-costs.md) · [Plans index](./README.md)
 
 > ✅ **Result: NO-GO.** Built (`collector/study/backtest.py` + `test_backtest.py`)

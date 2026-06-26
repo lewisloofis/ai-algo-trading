@@ -1,6 +1,6 @@
 # OFI & Trade Flow Study — Order Flow Imbalance, Signed Flow, Kyle's Lambda
 
-> **Status:** ✔️ Done · **Owner:** @lewis · **Updated:** 2026-06-18
+> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-18
 > **Related:** [Thesis: order flow & price impact](../thesis/02-order-flow-and-price-impact.md) · [Thesis: microstructure signals](../thesis/01-microstructure-signals.md) · [04-microstructure-study.md](./04-microstructure-study.md) · [Plans index](./README.md)
 
 > ⚠️ **Results (2026-06-18, audit-corrected).**
