@@ -1,6 +1,8 @@
 # Strategy Triage & Hypothesis Prioritization — Deciding Which Family Is Worth Researching
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-22
+> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-26
+
+> ✅ **Result: Complete.** `catalog_meta.py` (10 families, full plan-10 §4 taxonomy), `triage_scorer.py` (pure scoring — imports ROUND_TRIP_BPS/financing_bps/impact_bps, no redeclarations), `triage.py` CLI → `out/strategy_triage.md` + `out/strategy_triage_gaps.json`. 6 tests passing. Ranked output: daily_momentum on ITMG (score 2.66) and event_driven_gap at universe (2.58) are top priorities; obi_ofi_tick cost_gated; 3 data_blocked/capital_blocked families emit plan-12 requirement records.
 > **Related:** [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) (pillar 1 alpha factory) · [08-alpha-factory-workflows.md](./08-alpha-factory-workflows.md) (Workflow B, the validation battery this plan feeds) · [09-universe-screener.md](./09-universe-screener.md) (source of per-name ADV/vol/spread/tick annotations) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) (consumer — this plan sets its run order) · [12-data-gap-backlog-and-demand-driven-capture.md](./12-data-gap-backlog-and-demand-driven-capture.md) (routes `data_blocked` families) · [15-measured-fill-and-impact-calibration.md](./15-measured-fill-and-impact-calibration.md) · [17-execution-and-replay-parity-engine.md](./17-execution-and-replay-parity-engine.md) · [reference/07-fees-and-costs.md](../reference/07-fees-and-costs.md) · [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [Plans index](./README.md)
 
 > **What this is.** A cheap, deterministic, transparent prioritization layer —
