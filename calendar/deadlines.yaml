@@ -1,0 +1,23 @@
+# Operational deadlines tracked for the repo.
+# Run: python calendar/check_deadlines.py
+# Lead window default: 30 days before deadline.
+
+deadlines:
+  - id: chartbit-intraday-repull
+    due: "2026-09-10"
+    lead_days: 30
+    desc: >
+      Re-pull chartbit intraday store before the rolling ~90-day window
+      leaves a permanent gap. Last stored date is ~2026-06-19. Run:
+      python -m screener.intraday_store snapshot
+      Symbols: PTRO, BRPT, TPIA, ENRG.
+
+  - id: holiday-refresh-2027
+    due: "2026-12-05"
+    lead_days: 30
+    desc: >
+      Transcribe the 2027 IDX holiday schedule from the official image at
+      idx.co.id (Tentang BEI → Jadwal Libur Bursa) into calendar/idx_holidays.json
+      and collector/internal/calendar/idx_holidays.json. Verify trading-day count
+      matches IDX published JUMLAH HARI BURSA. Set provisional: false after
+      reconciliation.

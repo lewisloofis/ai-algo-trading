@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"collector/internal/calendar"
 	"collector/internal/feed"
 	"collector/internal/s3upload"
 	"collector/internal/segment"
@@ -56,6 +57,15 @@ var activeChannelNames = []string{"runningTradeBatch", "orderBook", "liveprice",
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
 	log.SetPrefix("")
+
+	cal, err := calendar.Load()
+	if err != nil {
+		log.Fatalf("calendar: %v", err)
+	}
+	if !cal.IsTradingDay(time.Now()) {
+		log.Printf("[main] today is not an IDX trading day — shutting down (ADR-0003)")
+		return
+	}
 
 	cfg, err := loadConfig()
 	if err != nil {

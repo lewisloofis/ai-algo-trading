@@ -5,16 +5,16 @@ The AI sleeve is funded by a 300M IDR T+2 trading-limit facility (ADR-0011).
 Financing runs at 10 bps/calendar-day on the borrowed amount.  The financing
 cost is additive to the round-trip fee gate — it is NOT a second copy of it.
 
-Settlement model (v1 assumptions)
+Settlement model
 ----------------------------------
 * Settlement lag: SETTLEMENT_TRADING_DAYS = 1 trading day after exit
-  (empirically derived to match plan-10 §3 table examples; holidays are out
-  of scope for v1 — see docstring on calendar_days_outstanding).
+  (empirically derived to match plan-10 §3 table examples).
 * Hold=0 (same-day round-trip): borrow completes within the trading session;
   no overnight carry → 0 calendar days outstanding.
-* For hold > 0: calendar_days_outstanding = total calendar days traversed
-  when advancing (hold_trading_days + SETTLEMENT_TRADING_DAYS) trading days
-  from entry_dow, counting weekends correctly.
+* For hold > 0: when entry_date is provided, calendar_days_outstanding
+  delegates to CALENDAR.settlement_calendar_days (holiday-aware). When only
+  entry_dow is provided, the DOW-based _advance_cal_days helper is used
+  (weekends only, no holidays).
 
 Verified against plan-10 §3 table:
     hold=0, any dow  → 0 cal days → 0 bps          ✓
@@ -24,6 +24,10 @@ Verified against plan-10 §3 table:
 """
 
 from __future__ import annotations
+
+from datetime import date as _date
+
+from lib.market_calendar import CALENDAR as _CALENDAR
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -99,19 +103,22 @@ def _advance_cal_days(start_dow: int, n_trading_days: int) -> int:
 # Public API
 # ---------------------------------------------------------------------------
 
-def calendar_days_outstanding(entry_dow: int, hold_trading_days: int) -> int:
+def calendar_days_outstanding(
+    entry_dow: int,
+    hold_trading_days: int,
+    *,
+    entry_date: _date | None = None,
+) -> int:
     """
     Calendar days the borrow is outstanding from entry through settlement.
 
     For hold=0 (same-day round-trip), the borrow completes within the trading
     session and no overnight carry is incurred → returns 0.
 
-    For hold > 0, the outstanding period spans from entry through the
-    settlement date of the exit trade.  Settlement is modelled as
-    SETTLEMENT_TRADING_DAYS = 1 trading day after exit (see module docstring
-    for rationale and verified examples).
-
-    Holidays are out of scope for v1 (weekends only are handled).
+    For hold > 0, when *entry_date* is supplied the calculation delegates to
+    ``CALENDAR.settlement_calendar_days`` (holiday-aware). When only
+    *entry_dow* is provided, the DOW-based ``_advance_cal_days`` helper is
+    used (weekends only).
 
     Parameters
     ----------
@@ -119,6 +126,9 @@ def calendar_days_outstanding(entry_dow: int, hold_trading_days: int) -> int:
         Day-of-week of trade entry: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri.
     hold_trading_days : int
         Number of trading days the position is held (0 = intraday/same-day).
+    entry_date : date | None
+        Actual calendar date of entry. When provided, enables holiday-aware
+        financing calculation via the market calendar.
 
     Returns
     -------
@@ -136,10 +146,19 @@ def calendar_days_outstanding(entry_dow: int, hold_trading_days: int) -> int:
     """
     if hold_trading_days == 0:
         return 0
+    if entry_date is not None:
+        return _CALENDAR.settlement_calendar_days(
+            entry_date, hold_trading_days + SETTLEMENT_TRADING_DAYS
+        )
     return _advance_cal_days(entry_dow, hold_trading_days + SETTLEMENT_TRADING_DAYS)
 
 
-def financing_bps(entry_dow: int, hold_trading_days: int) -> float:
+def financing_bps(
+    entry_dow: int,
+    hold_trading_days: int,
+    *,
+    entry_date: _date | None = None,
+) -> float:
     """
     Financing cost in basis points for a given entry day-of-week and hold.
 
@@ -151,13 +170,19 @@ def financing_bps(entry_dow: int, hold_trading_days: int) -> float:
         Day-of-week of trade entry (0=Mon … 4=Fri).
     hold_trading_days : int
         Number of trading days the position is held.
+    entry_date : date | None
+        Actual calendar date of entry. When provided, enables holiday-aware
+        financing calculation via the market calendar.
 
     Returns
     -------
     float
         Financing cost in bps.
     """
-    return float(FINANCING_BPS_PER_CAL_DAY * calendar_days_outstanding(entry_dow, hold_trading_days))
+    return float(
+        FINANCING_BPS_PER_CAL_DAY
+        * calendar_days_outstanding(entry_dow, hold_trading_days, entry_date=entry_date)
+    )
 
 
 def full_pass_hurdle_bps(

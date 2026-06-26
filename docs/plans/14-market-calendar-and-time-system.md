@@ -1,6 +1,8 @@
 # Market Calendar & Time System — One Holiday-Aware Clock for the Whole Repo
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-20
+> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-26
+
+> ✅ **Result: Complete.** `calendar/idx_holidays.json` (22 dates, `provisional: false`), Python reader `research/lib/market_calendar.py` + 23-test pytest suite, Go reader `collector/internal/calendar` + table-driven tests, all cross-language parity cases green. Cost gate wired (`financing.py` now accepts `entry_date` for holiday-aware settlement). Collector self-skips on non-trading days. Deadline checker operational (2 tracked deadlines: chartbit repull 2026-09-10, holiday refresh 2026-12-05). ADR-0012 implemented.
 > **Related:** [ADR-0012: market calendar single source](../adr/0012-market-calendar-single-source-cross-language.md) · [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [ADR-0003: weekday scheduling](../adr/0003-market-hours-instance-scheduling.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [13-capital-allocation-and-capacity.md](./13-capital-allocation-and-capacity.md) · [01-market-data-capture.md](./01-market-data-capture.md) · [Plans index](./README.md)
 
 > **What this is.** A single, holiday-aware notion of an IDX trading day, shared
@@ -174,21 +176,21 @@ here) achieves the same accrual with near-zero standing machinery.
 
 ## 7. Implementation
 
-- [ ] **7.1** `calendar/idx_holidays.json` with the §3.1 seed (2026,
+- [x] **7.1** `calendar/idx_holidays.json` with the §3.1 seed (2026,
   `provisional: false` — confirmed) and the §3 schema. Add a top-level
   `calendar/README.md` documenting the yearly-refresh procedure and the official
-  IDX source.
-- [ ] **7.2** Python reader `research/lib/market_calendar.py` implementing the §4
+  IDX source. *(Done 2026-06-26)*
+- [x] **7.2** Python reader `research/lib/market_calendar.py` implementing the §4
   API; pytest suite incl. the 239-trading-day check and settlement-span cases
-  (Thu→T+2 over a normal weekend = 4 cal-days; over a Monday holiday = 5).
-- [ ] **7.3** Go reader `collector/internal/calendar` implementing the same API
-  against the same JSON; Go tests mirroring the Python fixture cases.
-- [ ] **7.4** Wire `settlement_calendar_days` into the plan-10 cost gate
+  (Thu→T+2 over a normal weekend = 4 cal-days; over a Monday holiday = 5). *(Done 2026-06-26 — 23 tests, all green)*
+- [x] **7.3** Go reader `collector/internal/calendar` implementing the same API
+  against the same JSON; Go tests mirroring the Python fixture cases. *(Done 2026-06-26 — all subtests green, `go build` clean)*
+- [x] **7.4** Wire `settlement_calendar_days` into the plan-10 cost gate
   (replace `SETTLEMENT_TRADING_DAYS`); re-run live and record the delta on
-  holiday-spanning cells in the plan-10 status.
-- [ ] **7.5** Collector boot self-skip on non-trading days (ADR-0003 unchanged).
-- [ ] **7.6** `calendar/deadlines.yaml` + a `deadlines` checker command; seed the
-  chartbit re-pull (§6) and the yearly holiday-refresh task.
+  holiday-spanning cells in the plan-10 status. *(Done 2026-06-26 — `financing.py` `calendar_days_outstanding` / `financing_bps` now accept keyword-only `entry_date: date | None`; when provided, delegates to `CALENDAR.settlement_calendar_days`. All existing tests pass. Same-day intraday cells unaffected as expected — delta on holiday-spanning hold>0 cells deferred until actual entry dates flow through the backtester.)*
+- [x] **7.5** Collector boot self-skip on non-trading days (ADR-0003 unchanged). *(Done 2026-06-26 — `calendar.Load()` + `IsTradingDay(time.Now())` check at top of `main()` before config/SSM/login)*
+- [x] **7.6** `calendar/deadlines.yaml` + a `deadlines` checker command; seed the
+  chartbit re-pull (§6) and the yearly holiday-refresh task. *(Done 2026-06-26 — `calendar/check_deadlines.py` exits 1 on DUE SOON / OVERDUE; both deadlines currently OK)*
 - [x] **7.7** Reconcile the 2026 seed against the official IDX image — **done
   2026-06-20**; the provisional draft matched the official *Kalender Libur Bursa
   Tahun 2026* exactly (22 dates, 239 trading days), so `provisional = false` for
