@@ -40,9 +40,6 @@ collector/bin/
 coverage.txt
 coverage.html
 
-# Go workspace file (machine-local).
-go.work
-go.work.sum
 
 # Dependency vendor dir (uncomment if not vendoring).
 # vendor/
