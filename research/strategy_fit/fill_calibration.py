@@ -365,6 +365,37 @@ def _daily_vol_bps_from_features(features: pd.DataFrame) -> float:
     return _intraday_vol_bps(features)
 
 
+def _detect_impact_events_multiday(
+    trades: pd.DataFrame,
+    features: pd.DataFrame,
+    median_l1_lots: float,
+    adv_notional_idr: float,
+) -> list[ImpactObs]:
+    """
+    Run impact detection per calendar day and pool the observations.
+
+    Detecting per day prevents a run's 30s forward window from reaching across
+    an overnight gap into the next session's opening book, which would fabricate
+    a huge spurious impact.
+    """
+    if trades.empty or features.empty:
+        return []
+
+    trade_dates = trades["_wib_dt"].dt.date
+    feat_dates = features["_wib_dt"].dt.date
+
+    pooled: list[ImpactObs] = []
+    for day in sorted(set(trade_dates.unique())):
+        day_trades = trades[trade_dates == day]
+        day_feats = features[feat_dates == day]
+        if day_trades.empty or day_feats.empty:
+            continue
+        pooled.extend(
+            detect_impact_events(day_trades, day_feats, median_l1_lots, adv_notional_idr)
+        )
+    return pooled
+
+
 def calibrate_symbol(symbol: str, features_raw: pd.DataFrame, trades: pd.DataFrame) -> NameResult:
     features = filter_continuous_session(clean(compute_spread_depth(features_raw)))
     if not trades.empty:
@@ -380,7 +411,7 @@ def calibrate_symbol(symbol: str, features_raw: pd.DataFrame, trades: pd.DataFra
     vol_bps = _daily_vol_bps_from_features(features)
     n_days = int(features["_wib_dt"].dt.date.nunique())
 
-    events = detect_impact_events(trades, features, twm_l1, adv)
+    events = _detect_impact_events_multiday(trades, features, twm_l1, adv)
     coeff, r2, eff_n = fit_sqrt_impact(events, vol_bps)
 
     return NameResult(
@@ -403,17 +434,43 @@ def calibrate_symbol(symbol: str, features_raw: pd.DataFrame, trades: pd.DataFra
 # Data discovery & orchestration
 # ---------------------------------------------------------------------------
 
-def _discover_pairs(data_dir: str) -> dict[str, tuple[str, str | None]]:
-    """Map SYMBOL → (features_path, trades_path|None), case-insensitive match."""
+def _discover_pairs(data_dir: str) -> dict[str, tuple[list[str], list[str]]]:
+    """
+    Map SYMBOL → (sorted feature paths, sorted trade paths).
+
+    Two layouts are supported, case-insensitive on symbol:
+
+    - **Flat:** ``{data_dir}/{SYMBOL}_features.csv`` + ``{symbol}_trades*.csv``
+      (one capture day per name).
+    - **Per-symbol subdir:** ``{data_dir}/{SYMBOL}/{date}_features.csv`` +
+      ``{date}_trades.csv`` (multiple capture days pooled per name).
+
+    Subdir layout takes precedence when ``{data_dir}`` contains directories.
+    """
+    subdirs = [
+        d for d in glob.glob(os.path.join(data_dir, "*")) if os.path.isdir(d)
+    ]
+    if subdirs:
+        pairs: dict[str, tuple[list[str], list[str]]] = {}
+        for d in subdirs:
+            sym = os.path.basename(d.rstrip(os.sep)).upper()
+            feats = sorted(glob.glob(os.path.join(d, "*_features.csv")))
+            trades = sorted(glob.glob(os.path.join(d, "*_trades*.csv")))
+            if feats:
+                pairs[sym] = (feats, trades)
+        return dict(sorted(pairs.items()))
+
     feat_paths = glob.glob(os.path.join(data_dir, "*_features.csv"))
     trade_paths = glob.glob(os.path.join(data_dir, "*_trades*.csv"))
-    trades_by_sym = {os.path.basename(p).split("_")[0].upper(): p for p in trade_paths}
+    trades_by_sym: dict[str, list[str]] = {}
+    for p in trade_paths:
+        trades_by_sym.setdefault(os.path.basename(p).split("_")[0].upper(), []).append(p)
 
-    pairs: dict[str, tuple[str, str | None]] = {}
+    flat: dict[str, tuple[list[str], list[str]]] = {}
     for fp in feat_paths:
         sym = os.path.basename(fp).split("_")[0].upper()
-        pairs[sym] = (fp, trades_by_sym.get(sym))
-    return dict(sorted(pairs.items()))
+        flat[sym] = ([fp], sorted(trades_by_sym.get(sym, [])))
+    return dict(sorted(flat.items()))
 
 
 def _load_trades(path: str) -> pd.DataFrame:
@@ -463,6 +520,26 @@ def build_coeffs(results: list[NameResult]) -> dict:
     }
 
 
+def merge_coeffs(existing: dict, fresh: dict) -> dict:
+    """
+    Merge a *fresh* calibration into an *existing* impact_coeffs payload.
+
+    Per-name entries union (fresh wins on key collision).  Bucket entries prefer
+    the fresh fit when it has observations (higher ``eff_N``); otherwise the
+    existing bucket entry is retained.  Top-level scalars come from *fresh*.
+    """
+    merged = dict(fresh)
+    merged["per_name"] = {**existing.get("per_name", {}), **fresh.get("per_name", {})}
+
+    buckets: dict[str, dict] = dict(existing.get("buckets", {}))
+    for name, fresh_b in fresh.get("buckets", {}).items():
+        prev = buckets.get(name)
+        if prev is None or fresh_b.get("eff_N", 0) >= prev.get("eff_N", 0):
+            buckets[name] = fresh_b
+    merged["buckets"] = buckets
+    return merged
+
+
 def _render_report(results: list[NameResult], coeffs: dict, low_data: bool) -> str:
     lines: list[str] = []
     lines.append("# Fill & Impact Calibration Report (Plan 15)")
@@ -496,6 +573,22 @@ def _render_report(results: list[NameResult], coeffs: dict, low_data: bool) -> s
         )
     lines.append("")
 
+    fresh_syms = {r.symbol for r in results}
+    prior = {s: e for s, e in coeffs.get("per_name", {}).items() if s not in fresh_syms}
+    if prior:
+        lines.append("## Previously calibrated names (merged)")
+        lines.append("")
+        lines.append("| Symbol | Bucket | Impact obs | Coeff | Confidence |")
+        lines.append("|---|---|---|---|---|")
+        for sym in sorted(prior):
+            e = prior[sym]
+            coeff_s = "—" if e.get("coeff") is None else f"{e['coeff']:.4f}"
+            lines.append(
+                f"| {sym} | {e.get('bucket', '—')} | {e.get('eff_N', 0)} | "
+                f"{coeff_s} | {e.get('confidence', '—')} |"
+            )
+        lines.append("")
+
     lines.append("## Bucket-level fallback coefficients")
     lines.append("")
     lines.append("| Bucket | Coeff | eff_N | Confidence |")
@@ -519,32 +612,47 @@ def _render_report(results: list[NameResult], coeffs: dict, low_data: bool) -> s
         f"MIN_IMPACT_OBS={MIN_IMPACT_OBS} observations; callers fall back to the "
         "bucket coefficient, then `global_default`."
     )
+    lines.append(
+        "- Daily vol (bps) is a close-to-close sample stdev over the captured "
+        "window; on a short (≈5-day) window it is noisy and tends to overstate. "
+        "Because the fit divides observed impact by `2·daily_vol_bps`, an "
+        "overstated vol *deflates* the implied coeff — the measured coefficients "
+        "are therefore a conservative (low) estimate, not an inflated one."
+    )
     lines.append("")
     return "\n".join(lines)
 
 
-def run(data_dir: str, out_json: str, out_report: str) -> dict:
+def run(data_dir: str, out_json: str, out_report: str, merge: bool = False) -> dict:
     pairs = _discover_pairs(data_dir)
     if not pairs:
         raise FileNotFoundError(f"No *_features.csv found under {data_dir}")
 
     results: list[NameResult] = []
     low_data = False
-    for sym, (fp, tp) in pairs.items():
-        features_raw = load_csv(fp)
-        trades = _load_trades(tp) if tp else pd.DataFrame()
-        if tp is None:
+    for sym, (feat_paths, trade_paths) in pairs.items():
+        features_raw = pd.concat([load_csv(p) for p in feat_paths], ignore_index=True)
+        if trade_paths:
+            trades = pd.concat([_load_trades(p) for p in trade_paths], ignore_index=True)
+            trades = trades.sort_values("recv_ns").reset_index(drop=True)
+        else:
+            trades = pd.DataFrame()
             logger.warning("%s: no trade tape found; impact obs will be 0", sym)
         res = calibrate_symbol(sym, features_raw, trades)
         if res.n_days < MIN_CALIBRATION_DAYS:
             low_data = True
         logger.info(
-            "%s bucket=%s adv=%.3e vol_bps=%.2f obs=%d coeff=%s",
-            sym, res.bucket, res.adv_notional_idr, res.daily_vol_bps, res.eff_n, res.coeff,
+            "%s bucket=%s adv=%.3e vol_bps=%.2f obs=%d coeff=%s days=%d",
+            sym, res.bucket, res.adv_notional_idr, res.daily_vol_bps,
+            res.eff_n, res.coeff, res.n_days,
         )
         results.append(res)
 
     coeffs = build_coeffs(results)
+    if merge and os.path.exists(out_json):
+        with open(out_json) as f:
+            existing = json.load(f)
+        coeffs = merge_coeffs(existing, coeffs)
 
     with open(out_json, "w") as f:
         json.dump(coeffs, f, indent=2)
@@ -566,8 +674,13 @@ def main() -> None:
     parser.add_argument(
         "--out-report", default=os.path.join(here, "..", "out", "fill_calibration_report.md")
     )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="merge per-name/bucket results into an existing --out-json instead of overwriting",
+    )
     args = parser.parse_args()
-    coeffs = run(args.data_dir, args.out_json, args.out_report)
+    coeffs = run(args.data_dir, args.out_json, args.out_report, merge=args.merge)
     logger.info("Wrote %s and %s", args.out_json, args.out_report)
     logger.info("Buckets: %s", json.dumps(coeffs["buckets"]))
 

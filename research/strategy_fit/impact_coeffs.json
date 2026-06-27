@@ -4,8 +4,8 @@
   "global_default": 1.0,
   "buckets": {
     "high_liq": {
-      "coeff": 0.4690485569795305,
-      "eff_N": 561,
+      "coeff": 0.27755177419767585,
+      "eff_N": 6602,
       "confidence": "confirmed"
     },
     "mid_liq": {
@@ -53,6 +53,48 @@
     "MDKA": {
       "coeff": 0.4467604146951144,
       "eff_N": 136,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    },
+    "BREN": {
+      "coeff": 0.3616985668084047,
+      "eff_N": 905,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    },
+    "BRPT": {
+      "coeff": 0.3016555263966864,
+      "eff_N": 985,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    },
+    "ENRG": {
+      "coeff": 0.34397231172775794,
+      "eff_N": 815,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    },
+    "PTRO": {
+      "coeff": 0.3265579079874215,
+      "eff_N": 1038,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    },
+    "RAJA": {
+      "coeff": 0.2825037046623179,
+      "eff_N": 1085,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    },
+    "RATU": {
+      "coeff": 0.19899816291581135,
+      "eff_N": 712,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    },
+    "TPIA": {
+      "coeff": 0.3124761775383061,
+      "eff_N": 1062,
       "confidence": "confirmed",
       "bucket": "high_liq"
     }

@@ -11,6 +11,8 @@ Validates strategy_fit/fill_calibration.py:
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -20,10 +22,12 @@ from strategy_fit.fill_calibration import (
     MIN_IMPACT_OBS,
     RUN_DEPTH_FRACTION,
     ImpactObs,
+    _discover_pairs,
     compute_spread_depth,
     detect_impact_events,
     fit_sqrt_impact,
     liquidity_bucket,
+    merge_coeffs,
     time_weighted_median,
 )
 
@@ -253,3 +257,87 @@ def test_liquidity_bucket_boundaries() -> None:
 def test_min_impact_obs_constant() -> None:
     assert MIN_IMPACT_OBS == 20
     assert 0.0 < RUN_DEPTH_FRACTION < 1.0
+
+
+# ---------------------------------------------------------------------------
+# _discover_pairs (flat vs per-symbol subdir layouts)
+# ---------------------------------------------------------------------------
+
+def test_discover_pairs_flat_layout(tmp_path) -> None:
+    (tmp_path / "ITMG_features.csv").write_text("x")
+    (tmp_path / "itmg_trades_jun18.csv").write_text("x")
+    (tmp_path / "ANTM_features.csv").write_text("x")  # no trades
+    pairs = _discover_pairs(str(tmp_path))
+    assert set(pairs) == {"ITMG", "ANTM"}
+    assert len(pairs["ITMG"][0]) == 1 and len(pairs["ITMG"][1]) == 1
+    assert pairs["ANTM"][1] == []
+
+
+def test_discover_pairs_subdir_layout_pools_days(tmp_path) -> None:
+    ptro = tmp_path / "PTRO"
+    ptro.mkdir()
+    for d in ("2026-06-22", "2026-06-23", "2026-06-24"):
+        (ptro / f"{d}_features.csv").write_text("x")
+        (ptro / f"{d}_trades.csv").write_text("x")
+    pairs = _discover_pairs(str(tmp_path))
+    assert set(pairs) == {"PTRO"}
+    feats, trades = pairs["PTRO"]
+    assert len(feats) == 3 and len(trades) == 3
+    # paths returned sorted so day order is deterministic
+    assert feats == sorted(feats)
+
+
+def test_discover_pairs_subdir_takes_precedence(tmp_path) -> None:
+    # A stray flat file at top level is ignored once subdirs exist.
+    (tmp_path / "STRAY_features.csv").write_text("x")
+    sub = tmp_path / "PTRO"
+    sub.mkdir()
+    (sub / "2026-06-22_features.csv").write_text("x")
+    pairs = _discover_pairs(str(tmp_path))
+    assert set(pairs) == {"PTRO"}
+
+
+# ---------------------------------------------------------------------------
+# merge_coeffs
+# ---------------------------------------------------------------------------
+
+def test_merge_coeffs_unions_per_name() -> None:
+    existing = {
+        "generated": "2026-06-27",
+        "global_default": 1.0,
+        "buckets": {"high_liq": {"coeff": 0.47, "eff_N": 561, "confidence": "confirmed"}},
+        "per_name": {"BUMI": {"coeff": 0.53, "eff_N": 108, "confidence": "confirmed", "bucket": "high_liq"}},
+    }
+    fresh = {
+        "generated": "2026-06-28",
+        "global_default": 1.0,
+        "buckets": {"mid_liq": {"coeff": 0.6, "eff_N": 40, "confidence": "confirmed"}},
+        "per_name": {"PTRO": {"coeff": 0.6, "eff_N": 50, "confidence": "confirmed", "bucket": "mid_liq"}},
+    }
+    merged = merge_coeffs(existing, fresh)
+    assert set(merged["per_name"]) == {"BUMI", "PTRO"}
+    assert "high_liq" in merged["buckets"] and "mid_liq" in merged["buckets"]
+    assert merged["generated"] == "2026-06-28"  # top-level scalars from fresh
+
+
+def test_merge_coeffs_fresh_bucket_wins_on_more_obs() -> None:
+    existing = {"buckets": {"high_liq": {"coeff": 0.47, "eff_N": 100, "confidence": "confirmed"}}, "per_name": {}}
+    fresh = {
+        "generated": "x", "global_default": 1.0,
+        "buckets": {"high_liq": {"coeff": 0.5, "eff_N": 300, "confidence": "confirmed"}},
+        "per_name": {},
+    }
+    merged = merge_coeffs(existing, fresh)
+    assert merged["buckets"]["high_liq"]["eff_N"] == 300
+
+
+def test_merge_coeffs_keeps_existing_bucket_when_fresh_empty() -> None:
+    existing = {"buckets": {"high_liq": {"coeff": 0.47, "eff_N": 561, "confidence": "confirmed"}}, "per_name": {}}
+    fresh = {
+        "generated": "x", "global_default": 1.0,
+        "buckets": {"high_liq": {"coeff": None, "eff_N": 0, "confidence": "provisional"}},
+        "per_name": {},
+    }
+    merged = merge_coeffs(existing, fresh)
+    # existing higher-eff_N bucket retained
+    assert merged["buckets"]["high_liq"]["eff_N"] == 561
