@@ -619,6 +619,26 @@ def _render_report(results: list[NameResult], coeffs: dict, low_data: bool) -> s
         "overstated vol *deflates* the implied coeff — the measured coefficients "
         "are therefore a conservative (low) estimate, not an inflated one."
     )
+    # §8 direction check: coeff in [0.2, 2.0]
+    out_of_range = [
+        r for r in results
+        if r.coeff is not None and not (0.2 <= r.coeff <= 2.0)
+    ]
+    if out_of_range:
+        lines.append("## Direction-check warnings (§8: coeff outside [0.2, 2.0])")
+        lines.append("")
+        lines.append(
+            "> Plan-15 §8 direction check: a confirmed coeff outside [0.2, 2.0] "
+            "flags a data-quality or event-detection problem, not a discovery."
+        )
+        lines.append("")
+        for r in out_of_range:
+            lines.append(
+                f"- **{r.symbol}** coeff={r.coeff:.4f} (eff_N={r.eff_n}) — "
+                "review event detection or extend capture window before using."
+            )
+        lines.append("")
+
     lines.append("")
     return "\n".join(lines)
 

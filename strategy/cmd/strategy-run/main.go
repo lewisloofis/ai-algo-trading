@@ -21,6 +21,7 @@ func main() {
 	segmentsGlob := flag.String("segments", "", "glob of .binpb.zst segment files (required)")
 	strategyName := flag.String("strategy", "orb", "strategy id (orb)")
 	sinkName := flag.String("sink", "paper", "order sink (paper)")
+	fillMode := flag.String("fill-mode", "taker", "paper fill mode: taker|mid")
 	storePath := flag.String("store", "", "path to the SQLite post-trade store (required)")
 	pacing := flag.String("pacing", "fast", "pacing mode: fast|paced")
 	flag.Parse()
@@ -29,10 +30,6 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
-	if *sinkName != "paper" {
-		log.Fatalf("unsupported sink %q: only 'paper' is implemented", *sinkName)
-	}
-
 	segments, err := globSegments(*segmentsGlob)
 	if err != nil {
 		log.Fatalf("resolve segments: %v", err)
@@ -57,7 +54,10 @@ func main() {
 	}
 	defer store.Close()
 
-	sink := engine.NewPaperSink()
+	sink, err := newSink(*sinkName, *fillMode)
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx := context.Background()
 	src := engine.ReplaySource(ctx, segments, mode)
 
@@ -97,5 +97,19 @@ func newStrategy(name string) (engine.Strategy, error) {
 		return orb.New(), nil
 	default:
 		return nil, fmt.Errorf("unknown strategy %q", name)
+	}
+}
+
+func newSink(sinkName, fillMode string) (engine.OrderSink, error) {
+	if sinkName != "paper" {
+		return nil, fmt.Errorf("unsupported sink %q: only 'paper' is implemented", sinkName)
+	}
+	switch fillMode {
+	case "taker":
+		return engine.NewPaperSink(), nil
+	case "mid":
+		return engine.NewMidPriceSink(), nil
+	default:
+		return nil, fmt.Errorf("unknown fill-mode %q: want taker|mid", fillMode)
 	}
 }

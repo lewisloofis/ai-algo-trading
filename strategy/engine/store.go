@@ -129,6 +129,11 @@ func OpenStore(path string) (*PostTradeStore, error) {
 // Close closes the underlying database.
 func (s *PostTradeStore) Close() error { return s.db.Close() }
 
+// QueryRow executes a query that returns a single row.
+func (s *PostTradeStore) QueryRow(query string, args ...any) *sql.Row {
+	return s.db.QueryRow(query, args...)
+}
+
 // InsertDecision appends one decision row.
 func (s *PostTradeStore) InsertDecision(r DecisionRow) error {
 	_, err := s.db.Exec(

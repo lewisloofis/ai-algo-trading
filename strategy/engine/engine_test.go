@@ -235,6 +235,72 @@ func TestContextCancellation(t *testing.T) {
 	}
 }
 
+func TestPaperSinkMidFill(t *testing.T) {
+	sink := NewMidPriceSink()
+	// Seed bid=1000 via a liveprice (seeds both touches if neither is set).
+	sink.Observe(liveEvent("AAA", 1000, 1))
+	// Inject a second liveprice to update ask only — but liveEvent seeds both
+	// touches at the new price only when the side is not yet set. Since bid is
+	// already set from the first event, a second liveprice does not update bid.
+	// Instead use a helper that directly manipulates the book state.
+	//
+	// The simplest approach: seed via two liveprices at different prices on a
+	// fresh sink, which isn't possible with liveprices alone. Use an orderbook
+	// event body to set offer independently.
+	sink2 := NewMidPriceSink()
+	// First liveprice: sets bid=ask=900 (both unset, so both get seeded).
+	sink2.Observe(liveEvent("AAA", 900, 1))
+	// Orderbook OFFER event to override ask to 1100 (body format: #O|x|OFFER|price;0;vol|ts).
+	offerBody := "#O|x|OFFER|1100;0;100000|2"
+	offerEvt := MarketEvent{
+		RecvNs:  2,
+		Kind:    EventOrderbook,
+		Symbol:  "AAA",
+		Decoded: &feed.Decoded{Kind: "orderbook", Symbol: "AAA", Body: offerBody},
+	}
+	sink2.Observe(offerEvt)
+	// Now bid=900, ask=1100; mid = (900+1100)/2 = 1000.
+	id, err := sink2.Submit(context.Background(), OrderIntent{
+		Symbol: "AAA", Side: "buy", PriceIDR: 900, Lots: 1, OrderID: "mid1",
+	})
+	if err != nil {
+		t.Fatalf("Submit mid: %v", err)
+	}
+	if id != "mid1" {
+		t.Fatalf("id = %q, want mid1", id)
+	}
+	f := sink2.LastFill()
+	if f.FillPriceIDR != 1000 {
+		t.Fatalf("FillPriceIDR = %d, want 1000 (mid of bid=900 ask=1100)", f.FillPriceIDR)
+	}
+
+	// Sell side should also use mid.
+	sink3 := NewMidPriceSink()
+	sink3.Observe(liveEvent("AAA", 900, 1))
+	sink3.Observe(offerEvt)
+	if _, err := sink3.Submit(context.Background(), OrderIntent{
+		Symbol: "AAA", Side: "sell", PriceIDR: 900, Lots: 1, OrderID: "mid2",
+	}); err != nil {
+		t.Fatalf("Submit sell mid: %v", err)
+	}
+	if got := sink3.LastFill().FillPriceIDR; got != 1000 {
+		t.Fatalf("sell FillPriceIDR = %d, want 1000 (mid)", got)
+	}
+
+	// Taker sink must NOT use mid — it fills at far touch.
+	sink4 := NewPaperSink()
+	sink4.Observe(liveEvent("AAA", 900, 1))
+	sink4.Observe(offerEvt)
+	if _, err := sink4.Submit(context.Background(), OrderIntent{
+		Symbol: "AAA", Side: "buy", PriceIDR: 900, Lots: 1, OrderID: "t1",
+	}); err != nil {
+		t.Fatalf("Submit taker: %v", err)
+	}
+	if got := sink4.LastFill().FillPriceIDR; got != 1100 {
+		t.Fatalf("taker FillPriceIDR = %d, want 1100 (ask, not mid)", got)
+	}
+}
+
 func TestReplayReproducibility(t *testing.T) {
 	mk := func() []MarketEvent {
 		return []MarketEvent{

@@ -1,7 +1,9 @@
 // Package orb implements an Opening Range Breakout strategy on the plan-17
 // engine. For each symbol it captures the first observed liveprice as the
 // opening price, then enters one position when price breaks the opening range
-// by ORBBreakoutPct, and exits after a fixed hold or on a RECONNECT.
+// by ORBBreakoutPct, and exits at end of session (15:49 WIB = 08:49 UTC) or
+// when a new trading day's events arrive. This matches plan-10's run_orb_family
+// exit rule: hold until the last bar of the trading day.
 package orb
 
 import (
@@ -16,8 +18,24 @@ import (
 // triggers a breakout entry.
 const ORBBreakoutPct float64 = 0.005
 
-// holdDuration is the fixed time a position is held before a timed exit.
-const holdDuration = 30 * time.Minute
+// IDX session 2 closes at 15:49 WIB = 08:49 UTC. Any liveprice tick at or
+// after this UTC hour:minute triggers an end-of-day exit.
+const sessionCloseHourUTC = 8
+const sessionCloseMinUTC  = 49
+
+// isSessionEnd reports whether t is at or after the IDX session-2 close.
+func isSessionEnd(t time.Time) bool {
+	u := t.UTC()
+	h, m := u.Hour(), u.Minute()
+	return h > sessionCloseHourUTC || (h == sessionCloseHourUTC && m >= sessionCloseMinUTC)
+}
+
+// sameDate reports whether a and b fall on the same calendar date (UTC).
+func sameDate(a, b time.Time) bool {
+	ay, am, ad := a.UTC().Date()
+	by, bm, bd := b.UTC().Date()
+	return ay == by && am == bm && ad == bd
+}
 
 type posState int
 
@@ -32,7 +50,8 @@ type symbolState struct {
 	openPx     float64
 	hasOpen    bool
 	pos        posState
-	entryTime  time.Time
+	entryDate  time.Time // UTC date the position was entered
+	lastDate   time.Time // UTC date of last liveprice seen (zero until first event)
 	entryPx    int64
 	entryOrder string
 }
@@ -66,20 +85,30 @@ func (s *Strategy) newOrderID(symbol string) string {
 }
 
 // OnEvent captures the opening price, fires breakout entries, and triggers
-// timed or control-driven exits.
+// session-end or new-day exits.
 func (s *Strategy) OnEvent(ctx context.Context, e engine.MarketEvent, eng engine.Engine) {
-	if e.Kind == engine.EventControl {
-		if e.Control != nil && e.Control.Event == "RECONNECT" {
-			s.closeAll(ctx, eng)
-		}
-		return
-	}
+	// Control events (RECONNECT, SUBSCRIBE, etc.) are ignored. Session-end and
+	// new-day exits are handled via timestamp checks on liveprice events below,
+	// matching plan-10's hold-until-last-bar-of-day semantics.
 	if e.Kind != engine.EventLivePrice || e.Decoded == nil || e.Decoded.LastPrice <= 0 {
 		return
 	}
 
 	st := s.stateFor(e.Symbol)
 	price := e.Decoded.LastPrice
+	now := eng.Now()
+
+	// New trading day: force-close any lingering position and reset OR state so
+	// the strategy is ready to capture a fresh opening range.
+	if !st.lastDate.IsZero() && !sameDate(now, st.lastDate) {
+		if st.pos != flat {
+			s.exit(ctx, e.Symbol, st, eng)
+		}
+		st.openPx = 0
+		st.hasOpen = false
+	}
+	st.lastDate = now
+
 	if !st.hasOpen {
 		st.openPx = price
 		st.hasOpen = true
@@ -87,9 +116,15 @@ func (s *Strategy) OnEvent(ctx context.Context, e engine.MarketEvent, eng engine
 	}
 
 	if st.pos != flat {
-		if eng.Now().Sub(st.entryTime) >= holdDuration {
+		if isSessionEnd(now) {
 			s.exit(ctx, e.Symbol, st, eng)
 		}
+		return
+	}
+
+	// No new entries at or after session close — the strategy holds all day
+	// and exits at close, not re-enters in the closing auction.
+	if isSessionEnd(now) {
 		return
 	}
 
@@ -99,14 +134,17 @@ func (s *Strategy) OnEvent(ctx context.Context, e engine.MarketEvent, eng engine
 
 	switch {
 	case price >= upper:
-		s.enter(ctx, e.Symbol, "buy", price, st, eng)
+		s.enter(ctx, e.Symbol, "buy", price, st, eng, now)
 	case price <= lower:
-		s.enter(ctx, e.Symbol, "sell", price, st, eng)
+		s.enter(ctx, e.Symbol, "sell", price, st, eng, now)
 	}
 }
 
-func (s *Strategy) enter(ctx context.Context, symbol, side string, refPx float64, st *symbolState, eng engine.Engine) {
+func (s *Strategy) enter(ctx context.Context, symbol, side string, refPx float64, st *symbolState, eng engine.Engine, now time.Time) {
 	id := s.newOrderID(symbol)
+	// Set entryOrder before SubmitOrder: OnFill fires synchronously inside
+	// SubmitOrder and must see the ID to record the fill price in st.entryPx.
+	st.entryOrder = id
 	intent := engine.OrderIntent{
 		Symbol:   symbol,
 		Side:     side,
@@ -115,6 +153,7 @@ func (s *Strategy) enter(ctx context.Context, symbol, side string, refPx float64
 		OrderID:  id,
 	}
 	if _, err := eng.SubmitOrder(ctx, intent); err != nil {
+		st.entryOrder = ""
 		return
 	}
 	if side == "buy" {
@@ -122,8 +161,7 @@ func (s *Strategy) enter(ctx context.Context, symbol, side string, refPx float64
 	} else {
 		st.pos = short
 	}
-	st.entryTime = eng.Now()
-	st.entryOrder = id
+	st.entryDate = now
 }
 
 func (s *Strategy) exit(ctx context.Context, symbol string, st *symbolState, eng engine.Engine) {
@@ -144,14 +182,6 @@ func (s *Strategy) exit(ctx context.Context, symbol string, st *symbolState, eng
 	}
 	st.pos = flat
 	st.entryOrder = ""
-}
-
-func (s *Strategy) closeAll(ctx context.Context, eng engine.Engine) {
-	for symbol, st := range s.states {
-		if st.pos != flat {
-			s.exit(ctx, symbol, st, eng)
-		}
-	}
 }
 
 // OnFill records the actual fill price of the most recent entry so the exit

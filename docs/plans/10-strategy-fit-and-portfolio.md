@@ -320,36 +320,64 @@ on the low-friction names the intersection surfaces (e.g. ITMG-class).
 ## Event-driven re-validation status (plan 17)
 
 **Harness:** live as of commit `4d3e51a` — `strategy/engine/` event-driven
-backtester wired to the plan-02 replayer, PaperSink taker fill model, SQLite
-post-trade store. See [plan 17](./17-execution-and-replay-parity-engine.md).
+backtester wired to the plan-02 replayer, PaperSink fill model (taker or mid),
+SQLite post-trade store. See [plan 17](./17-execution-and-replay-parity-engine.md).
 
-**5-day ORB stub run (Jun 22–26 plan10-survivors, `strategy-run --strategy orb`):**
+**Original stub run — INVALID (wrong exit + phantom trades).** The first pass
+(commit `4d3e51a`) used a 30-minute timer exit and had a post-session phantom
+re-entry bug: after the 15:49 WIB EOD exit, further post-close events found
+`pos=flat` and price still above the opening-range upper, firing instant
+entry+exit pairs at zero gross. That run's 397 round-trips (of which the vast
+majority were phantom), gross −19.1 bps, net −59.1 bps are discarded.
 
-| Metric | Result |
-|---|---|
-| Segments | 45 (5 days × 9/day) |
-| Decisions | 2,470,000 |
-| Round-trips | 397 |
-| Mean gross PnL | −19.1 bps |
-| Mean net PnL | −59.1 bps |
-| Hit rate | 26.4% |
+**Corrected re-validation (EOD exit, no-re-entry guard; Jun 22–26, 7 symbols):**
 
-By symbol (gross / net / hit rate): ENRG +10.6/−29.4/31.6% · PTRO −12.7/−52.7/35.1% · TPIA −10.0/−50.0/31.6% · BRPT −11.4/−51.4/25.9% · BREN −19.5/−59.5/26.3% · RATU −35.2/−75.2/16.7% · RAJA −56.4/−96.4/17.5%
+Exit now fires on `isSessionEnd` (08:49 UTC = 15:49 WIB). Post-session events
+are gated. Two fill modes compared, 21 legitimate round-trips total (3/symbol,
+days where OR breakout triggered within session):
 
-**Divergence from plan-10 CSV result: confirmed — §8 red flag tripped (>±5 bps gross).**
+| Fill mode | Round-trips | Mean gross (bps) | Mean net (bps) | Hit rate |
+|---|---|---|---|---|
+| Taker (far touch) | 21 | −73.0 | −112.3 | 42.9% (3/7 symbols +ve) |
+| Mid ((bid+ask)/2) | 21 | −36.9 | −76.2 | 42.9% (3/7 symbols +ve) |
 
-**Root cause — not a kill.** The stub run uses the placeholder PaperSink (taker
-at far touch) and a fixed 30-minute timer exit. The taker model pays the full
-spread on both entry and exit, making gross negative by construction before fees
-— this is the fill-model gap plan 15 exists to close. The stub exit rule is also
-not plan-10's actual ORB signal exit logic. The engine and post-trade store
-operated correctly end-to-end (2.47M decisions, attribution table populated,
-append-only verified).
+Per-symbol gross / net (taker \| mid):
+BREN −249/−289 \| −214/−253 · BRPT −690/−729 \| −654/−693 · ENRG −489/−528 \| −439/−477 ·
+PTRO +39/−0 \| +63/+23 · RAJA +591/+551 \| +623/+583 · RATU −368/−407 \| −335/−374 · TPIA +655/+615 \| +697/+658
 
-**Next step:** re-run with (a) plan-15 calibrated fills wired into `PaperSink`
-(true impact coeff ~0.30 for survivors vs assumed 1.0) and (b) plan-10's actual
-ORB exit rule ported to the Go strategy. That comparison is the honest
-event-driven confirmation plan-10 still needs.
+**Interpretation.** The ~36 bps mean gross spread between taker and mid fill
+modes is consistent with 1–2 tick bid-ask on these symbols, confirming fill
+model choice matters. Three symbols (PTRO, RAJA, TPIA) are gross-positive under
+both modes; four (BREN, BRPT, ENRG, RATU) are negative even at mid — suggesting
+genuine adverse selection or unfavourable fixture windows for those names. N=3
+round-trips per symbol makes per-symbol estimates very noisy.
+
+**§8 status.** Mid fills bring PTRO/RAJA/TPIA to positive gross, aligning with
+plan-10's close-price methodology (close ≈ mid). BRPT/BREN/ENRG/RATU remain
+negative under both modes. The red flag is not fully closed — but this is the
+Jun 22–26 stub universe (7 survivors), not plan-10's fixture universe
+(ANTM/BUMI/DEWA/ITMG/MDKA). A live-data confirmation on the plan-10 names
+(blocked on `SB_BEARER_TOKEN`) is the honest §8 close.
+
+**Plan-10 fixture grid — calibrated vs uncalibrated impact (commit `b5a60ec`):**
+
+Both `--use-calibrated` and uncalibrated runs produce identical survivors:
+
+| Symbol | Strategy | Hold | Net edge (bps) | Impact (bps) |
+|---|---|---|---|---|
+| ITMG | intraday_momentum | 0 | +50.1 | 0.0 |
+| ITMG | mean_reversion | 1 | +525.0 | 0.0 |
+| ITMG | orb | 0 | +50.1 | 0.0 |
+
+Calibration (coeff 0.30 vs 1.0) does lower intraday hurdles for high-friction
+names: BUMI ORB 150.0 → 128.5 bps, DEWA ORB 262.7 → 188.9 bps. But all three
+ITMG survivors have impact=0 (low friction × low participation rate), so the
+final survivor list is unchanged. The fixture grid pipeline is confirmed
+correct end-to-end with calibrated coefficients wired.
+
+**Remaining block:** live confirmation on ANTM/BUMI/DEWA/ITMG/MDKA requires
+`SB_BEARER_TOKEN` for fresh capture. The fixture pipeline and Go engine are
+both ready.
 
 ---
 

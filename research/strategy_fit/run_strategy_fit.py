@@ -492,6 +492,7 @@ def _run_intraday_cell(
     family: StrategyFamily,
     family_fn: "callable",
     min_edge_to_clear_bps: float,
+    use_calibrated: bool = False,
 ) -> CellResult:
     """Run one (symbol, intraday_family) cell end-to-end.
 
@@ -514,8 +515,10 @@ def _run_intraday_cell(
        they are annotated for human review.  See intraday_walk_forward.py.
     """
     # 1. Per-symbol market impact (replaces MODELLED_IMPACT_BPS=0 for intraday).
-    intraday_impact_bps = compute_impact_bps_from_df(intraday_df)
-    logger.debug("intraday impact for %s/%s: %.1f bps", symbol, family.name, intraday_impact_bps)
+    intraday_impact_bps = compute_impact_bps_from_df(
+        intraday_df, use_calibrated=use_calibrated, symbol=symbol
+    )
+    logger.debug("intraday impact for %s/%s: %.1f bps (calibrated=%s)", symbol, family.name, intraday_impact_bps, use_calibrated)
 
     # 2. OOS persistence split.
     wf_intraday: IntradayWalkForwardResult = walk_forward_intraday(intraday_df, family_fn)
@@ -576,6 +579,7 @@ def run_grid(
     ds: "object",
     start: str = HISTORY_START,
     end: str = HISTORY_END,
+    use_calibrated: bool = False,
 ) -> list[CellResult]:
     """
     Run the full (symbol × family × horizon) strategy-fit grid.
@@ -586,6 +590,10 @@ def run_grid(
         A DataSource implementing funding_universe() and daily_history().
     start, end : str
         Date range for daily history.
+    use_calibrated : bool
+        When True, resolve per-name impact coefficients from impact_coeffs.json
+        (plan-15 calibrated values) instead of the assumed SQRT_IMPACT_COEFF=1.0.
+        Affects intraday cells only. Default False preserves pre-plan-15 behaviour.
 
     Returns
     -------
@@ -704,6 +712,7 @@ def run_grid(
                 family=family,
                 family_fn=family_fn,
                 min_edge_to_clear_bps=min_edge_map.get(symbol, ROUND_TRIP_BPS),
+                use_calibrated=use_calibrated,
             )
             all_cells.append(cell)
 
@@ -806,6 +815,7 @@ def run_strategy_fit(
     is_synthetic: bool = True,
     impact_sweep: bool = False,
     intraday_store_dir: str | None = None,
+    use_calibrated: bool = False,
 ) -> str:
     """
     Run the full strategy-fit pipeline and emit strategy_portfolio.md.
@@ -845,7 +855,7 @@ def run_strategy_fit(
         )
         logger.info("Intraday store-aware wrapper active: %s", intraday_store_dir)
 
-    cells = run_grid(ds=effective_ds, start=start, end=end)
+    cells = run_grid(ds=effective_ds, start=start, end=end, use_calibrated=use_calibrated)
     cells = apply_fdr_to_grid(cells)
     path = emit_strategy_portfolio(cells=cells, outdir=outdir, is_synthetic=is_synthetic)
 
@@ -907,6 +917,18 @@ def main(argv: list[str] | None = None) -> None:
             "distinct trading days than the live pull.  Default: not used."
         ),
     )
+    parser.add_argument(
+        "--use-calibrated",
+        action="store_true",
+        default=False,
+        help=(
+            "Use plan-15 calibrated per-name impact coefficients from "
+            "impact_coeffs.json instead of the assumed SQRT_IMPACT_COEFF=1.0.  "
+            "Requires confirmed coefficients to exist in impact_coeffs.json; "
+            "names without confirmed coefficients fall back to bucket then "
+            "global default.  Affects intraday cells only.  Default: off."
+        ),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -935,6 +957,7 @@ def main(argv: list[str] | None = None) -> None:
         is_synthetic=is_synthetic,
         impact_sweep=args.impact_sweep,
         intraday_store_dir=args.intraday_store_dir,
+        use_calibrated=args.use_calibrated,
     )
     print(f"strategy_portfolio.md written to: {path}")
     if args.impact_sweep:

@@ -33,17 +33,39 @@ type touch struct {
 	hasAsk bool
 }
 
-// PaperSink simulates immediate taker fills against the last observed far touch
-// (ask for buys, bid for sells). It fills full size with no partials. Book
-// state is maintained per symbol from Observe and cleared on Reset.
+// FillMode controls how PaperSink derives the fill price from the order book.
+type FillMode int
+
+const (
+	// FillModeTaker fills at the far touch (ask for buys, bid for sells).
+	// This is the default and models a market taker crossing the full spread.
+	FillModeTaker FillMode = iota
+
+	// FillModeMid fills at the mid-price when both sides of the book are known,
+	// falling back to the far touch when only one side has been observed.
+	// This matches plan-10's close-price methodology (bar closes ≈ mid-price)
+	// and removes the structural spread cost from gross PnL, making the
+	// event-driven results directly comparable to plan-10's CSV backtest.
+	FillModeMid
+)
+
+// PaperSink simulates immediate fills against the last observed order book.
+// Book state is maintained per symbol from Observe and cleared on Reset.
 type PaperSink struct {
-	books map[string]*touch
-	last  FillRecord
+	books    map[string]*touch
+	last     FillRecord
+	fillMode FillMode
 }
 
-// NewPaperSink returns an empty PaperSink.
+// NewPaperSink returns an empty PaperSink using taker fills (far touch).
 func NewPaperSink() *PaperSink {
 	return &PaperSink{books: make(map[string]*touch)}
+}
+
+// NewMidPriceSink returns a PaperSink that fills at the mid-price when both
+// sides of the book are known, falling back to far touch otherwise.
+func NewMidPriceSink() *PaperSink {
+	return &PaperSink{books: make(map[string]*touch), fillMode: FillModeMid}
 }
 
 // Observe updates the last-seen book from a market event. Orderbook frames
@@ -104,8 +126,9 @@ func (p *PaperSink) touchFor(symbol string) *touch {
 	return t
 }
 
-// Submit fills the intent in full at the current far touch and returns the
-// resulting FillRecord embedded in the OrderID lookup via LastFill.
+// Submit fills the intent in full at the current book price and returns the
+// resulting FillRecord embedded in the OrderID lookup via LastFill. The fill
+// price is determined by the sink's FillMode: taker (far touch) or mid-price.
 func (p *PaperSink) Submit(ctx context.Context, intent OrderIntent) (OrderID, error) {
 	t, ok := p.books[intent.Symbol]
 	if !ok {
@@ -113,19 +136,31 @@ func (p *PaperSink) Submit(ctx context.Context, intent OrderIntent) (OrderID, er
 	}
 
 	var fillPx int64
-	switch intent.Side {
-	case "buy":
-		if !t.hasAsk {
-			return "", ErrNoBook
+	if p.fillMode == FillModeMid && t.hasBid && t.hasAsk {
+		fillPx = (t.bid + t.ask) / 2
+	} else {
+		switch intent.Side {
+		case "buy":
+			if !t.hasAsk {
+				return "", ErrNoBook
+			}
+			fillPx = t.ask
+		case "sell":
+			if !t.hasBid {
+				return "", ErrNoBook
+			}
+			fillPx = t.bid
+		default:
+			return "", errors.New("paper sink: side must be buy or sell")
 		}
-		fillPx = t.ask
-	case "sell":
-		if !t.hasBid {
-			return "", ErrNoBook
+	}
+	// Validate side when using mid fill (the switch above is skipped).
+	if p.fillMode == FillModeMid {
+		switch intent.Side {
+		case "buy", "sell":
+		default:
+			return "", errors.New("paper sink: side must be buy or sell")
 		}
-		fillPx = t.bid
-	default:
-		return "", errors.New("paper sink: side must be buy or sell")
 	}
 
 	notional := fillPx * int64(intent.Lots) * sharesPerLot
