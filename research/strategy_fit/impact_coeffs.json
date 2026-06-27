@@ -1,0 +1,60 @@
+{
+  "generated": "2026-06-27",
+  "min_impact_obs": 20,
+  "global_default": 1.0,
+  "buckets": {
+    "high_liq": {
+      "coeff": 0.4690485569795305,
+      "eff_N": 561,
+      "confidence": "confirmed"
+    },
+    "mid_liq": {
+      "coeff": null,
+      "eff_N": 0,
+      "confidence": "provisional"
+    },
+    "low_liq": {
+      "coeff": null,
+      "eff_N": 0,
+      "confidence": "provisional"
+    }
+  },
+  "per_name": {
+    "ANTM": {
+      "coeff": null,
+      "eff_N": 0,
+      "confidence": "provisional",
+      "bucket": "low_liq"
+    },
+    "BUMI": {
+      "coeff": 0.531173959880682,
+      "eff_N": 108,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    },
+    "DEWA": {
+      "coeff": 0.5280996246630683,
+      "eff_N": 137,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    },
+    "INDY": {
+      "coeff": 0.43637725914421754,
+      "eff_N": 83,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    },
+    "ITMG": {
+      "coeff": 0.4932216306464025,
+      "eff_N": 97,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    },
+    "MDKA": {
+      "coeff": 0.4467604146951144,
+      "eff_N": 136,
+      "confidence": "confirmed",
+      "bucket": "high_liq"
+    }
+  }
+}
