@@ -58,6 +58,7 @@ class DataBlockedRecord:
 @dataclass(frozen=True)
 class TriageResult:
     family_id: str
+    shape: str
     name: str
     status: str
     gross_edge_prior_bps: float
@@ -107,7 +108,6 @@ def score_family(
     name: Optional[NameAnnotations],
     inv: DataInventory,
     fee_bps: float,
-    financing_rate_bps_per_day: float,
     max_hold_days: int,
 ) -> TriageResult:
     name_label = name.symbol if name is not None else "universe"
@@ -128,6 +128,7 @@ def score_family(
         )
         return TriageResult(
             family_id=family.family_id,
+            shape=family.shape,
             name=name_label,
             status="data_blocked",
             gross_edge_prior_bps=family.gross_edge_prior_bps,
@@ -155,6 +156,7 @@ def score_family(
         )
         return TriageResult(
             family_id=family.family_id,
+            shape=family.shape,
             name=name_label,
             status="data_blocked",
             gross_edge_prior_bps=family.gross_edge_prior_bps,
@@ -169,6 +171,7 @@ def score_family(
     if family.catalog_status == "deferred":
         return TriageResult(
             family_id=family.family_id,
+            shape=family.shape,
             name=name_label,
             status="deferred",
             gross_edge_prior_bps=family.gross_edge_prior_bps,
@@ -190,7 +193,6 @@ def score_family(
             sigma_bps=name.vol_bps_day,
             half_spread_bps=name.min_spread_bps / 2,
         )
-        spread_floor = name.min_spread_bps
     else:
         imp = impact_bps(
             q=DEFAULT_POSITION_IDR,
@@ -198,15 +200,16 @@ def score_family(
             sigma_bps=_UNIVERSE_MEDIAN_VOL_BPS,
             half_spread_bps=_UNIVERSE_MEDIAN_SPREAD_BPS / 2,
         )
-        spread_floor = _UNIVERSE_MEDIAN_SPREAD_BPS
 
-    friction_floor = fee_bps + spread_floor + fin_bps + imp
+    # impact_bps already includes half_spread — no separate spread term (plan §3.4)
+    friction_floor = fee_bps + fin_bps + imp
 
     # --- Step 4: cost-gate check (before N-check: unviable strategies are cost_gated, not data_blocked) ---
     if family.gross_edge_prior_bps <= friction_floor:
         eff_n = _feasible_n(family, name, inv)
         return TriageResult(
             family_id=family.family_id,
+            shape=family.shape,
             name=name_label,
             status="cost_gated",
             gross_edge_prior_bps=family.gross_edge_prior_bps,
@@ -235,6 +238,7 @@ def score_family(
         )
         return TriageResult(
             family_id=family.family_id,
+            shape=family.shape,
             name=name_label,
             status="data_blocked",
             gross_edge_prior_bps=family.gross_edge_prior_bps,
@@ -250,6 +254,7 @@ def score_family(
 
     return TriageResult(
         family_id=family.family_id,
+        shape=family.shape,
         name=name_label,
         status="testable_now",
         gross_edge_prior_bps=family.gross_edge_prior_bps,

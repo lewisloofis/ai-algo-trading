@@ -117,7 +117,6 @@ def _score_family_across_names(
             name=name,
             inv=inv,
             fee_bps=fee_bps,
-            financing_rate_bps_per_day=10.0,
             max_hold_days=_MAX_HOLD_DAYS,
         )
         if best is None or result.score > best.score:
@@ -129,7 +128,6 @@ def _score_family_across_names(
             name=None,
             inv=inv,
             fee_bps=fee_bps,
-            financing_rate_bps_per_day=10.0,
             max_hold_days=_MAX_HOLD_DAYS,
         )
     return best
@@ -155,7 +153,7 @@ def _render_markdown(
     ]
     for r in sorted(testable, key=lambda x: x.score, reverse=True):
         lines.append(
-            f"| {r.family_id} | {r.family_id} | {r.name} "
+            f"| {r.family_id} | {r.shape} | {r.name} "
             f"| {r.score:.2f} | {r.gross_edge_prior_bps:.1f} "
             f"| {r.friction_floor_bps:.1f} | {r.feasible_effective_n} | {r.status} |"
         )
@@ -221,7 +219,6 @@ def main() -> int:
                 name=None,
                 inv=inv,
                 fee_bps=fee_bps,
-                financing_rate_bps_per_day=10.0,
                 max_hold_days=_MAX_HOLD_DAYS,
             )
         else:
@@ -231,7 +228,6 @@ def main() -> int:
                 name=None,
                 inv=inv,
                 fee_bps=fee_bps,
-                financing_rate_bps_per_day=10.0,
                 max_hold_days=_MAX_HOLD_DAYS,
             )
 

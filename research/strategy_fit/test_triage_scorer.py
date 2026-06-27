@@ -66,7 +66,6 @@ def test_low_friction_testable_now() -> None:
         name=_itmg_like(),
         inv=_STD_INV,
         fee_bps=ROUND_TRIP_BPS,
-        financing_rate_bps_per_day=10.0,
         max_hold_days=_MAX_HOLD,
     )
     assert result.status == "testable_now", f"expected testable_now, got {result.status}"
@@ -79,7 +78,6 @@ def test_high_friction_cost_gated() -> None:
         name=_bumi_like(),
         inv=_STD_INV,
         fee_bps=ROUND_TRIP_BPS,
-        financing_rate_bps_per_day=10.0,
         max_hold_days=_MAX_HOLD,
     )
     assert result.status == "cost_gated", f"expected cost_gated, got {result.status}"
@@ -97,7 +95,6 @@ def test_data_blocked_low_n() -> None:
         name=_noncore_name(),
         inv=thin_inv,
         fee_bps=ROUND_TRIP_BPS,
-        financing_rate_bps_per_day=10.0,
         max_hold_days=_MAX_HOLD,
     )
     assert result.status == "data_blocked", f"expected data_blocked, got {result.status}"
@@ -119,7 +116,6 @@ def test_capital_blocked() -> None:
         name=_itmg_like(),
         inv=_STD_INV,
         fee_bps=ROUND_TRIP_BPS,
-        financing_rate_bps_per_day=10.0,
         max_hold_days=_MAX_HOLD,
     )
     assert result.score == 0.0, f"expected score=0.0, got {result.score}"
@@ -150,7 +146,6 @@ def test_score_monotone() -> None:
         name=low_spread,
         inv=_STD_INV,
         fee_bps=ROUND_TRIP_BPS,
-        financing_rate_bps_per_day=10.0,
         max_hold_days=_MAX_HOLD,
     )
     r_high = score_family(
@@ -158,7 +153,6 @@ def test_score_monotone() -> None:
         name=high_spread,
         inv=_STD_INV,
         fee_bps=ROUND_TRIP_BPS,
-        financing_rate_bps_per_day=10.0,
         max_hold_days=_MAX_HOLD,
     )
     assert r_low.score > r_high.score, (
