@@ -1,6 +1,6 @@
 # Strategy Fit & Portfolio Backtester — Data-Chosen Strategies per Name
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-20
+> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-29
 > **Related:** [09-universe-screener.md](./09-universe-screener.md) · [08-alpha-factory-workflows.md](./08-alpha-factory-workflows.md) (Workflow B) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [05-ofi-trade-flow-study.md](./05-ofi-trade-flow-study.md) · [04-microstructure-study.md](./04-microstructure-study.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) (§1.2) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [ADR-0009: universe = funding intersection](../adr/0009-universe-is-funding-intersection-strategy-fit-downstream.md) · [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [Plans index](./README.md)
 
 > **What this is.** The layer that decides *which strategy fits which name*, from
@@ -375,9 +375,27 @@ ITMG survivors have impact=0 (low friction × low participation rate), so the
 final survivor list is unchanged. The fixture grid pipeline is confirmed
 correct end-to-end with calibrated coefficients wired.
 
-**Remaining block:** live confirmation on ANTM/BUMI/DEWA/ITMG/MDKA requires
-`SB_BEARER_TOKEN` for fresh capture. The fixture pipeline and Go engine are
-both ready.
+**Live grid re-run — Jun 27 (115 symbols, token confirmed valid):**
+
+Bearer token validated as session-based (server accepts beyond JWT `exp`).
+Full 115-symbol universe re-run completed. 11 survivors — same 6 symbols,
+one addition (RATU intraday_momentum +1.4 bps marginal). ORB margins
+strengthened across most names week-on-week:
+
+| Cell | Jun 20 | Jun 27 |
+|---|---|---|
+| TPIA ORB | +40.7 bps | +87.0 bps |
+| BRPT ORB | +40.6 bps | +59.7 bps |
+| RAJA ORB | +31.3 bps | +43.4 bps |
+| RATU ORB | +5.1 bps | +17.6 bps |
+| RAJA intraday_mom | +5.3 bps | +16.8 bps |
+| PTRO ORB | +52.0 bps | +51.2 bps |
+| ENRG ORB | +35.0 bps | +26.4 bps |
+| RATU volume_breakout | +24.3 bps | +14.7 bps |
+| BREN daily_mom | +26.1 bps | +22.2 bps |
+
+Cross-sectional / pairs / event-driven remain cleanly rejected (p=1.0).
+The §8 divergence block is lifted — the token works, the live grid runs.
 
 ---
 
