@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
-	"collector/internal/replay"
-	"collector/internal/sbproto"
-	"collector/internal/segment"
+	"collector/replay"
+	"collector/sbproto"
+	"collector/segment"
 )
 
 // appendVarReplay appends a varint-encoded uint64 to buf.

@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"collector/internal/feed"
+	"collector/feed"
 )
 
 func TestConfigHasAuth(t *testing.T) {

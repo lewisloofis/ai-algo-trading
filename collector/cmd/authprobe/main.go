@@ -90,7 +90,7 @@ import (
 	"strings"
 	"time"
 
-	"collector/internal/feed"
+	"collector/feed"
 )
 
 const defaultHost = "https://exodus.stockbit.com"

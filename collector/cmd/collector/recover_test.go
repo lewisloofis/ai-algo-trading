@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"collector/internal/segment"
+	"collector/segment"
 )
 
 // writeOrphanSegment writes a valid uncompressed segment file with the given

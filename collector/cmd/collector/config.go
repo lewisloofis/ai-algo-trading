@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"collector/internal/feed"
+	"collector/feed"
 )
 
 // collectorVersion is embedded in every manifest sidecar.

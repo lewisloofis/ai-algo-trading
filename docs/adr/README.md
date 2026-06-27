@@ -17,6 +17,7 @@ algo-trading project, using a lightweight [ADR](https://adr.github.io/) format.
 | [0010](./0010-capture-watchlist-is-topn-diverse-slice-via-tfvars.md) | Capture watchlist is a top-N broad/diverse slice, delivered via tfvars | Accepted |
 | [0011](./0011-capital-model-300m-leverage-sleeve.md) | Capital model — 300M IDR T+2 leverage sleeve run as a periodic batch allocator | Accepted |
 | [0012](./0012-market-calendar-single-source-cross-language.md) | Market calendar is one curated source of truth, read by thin per-language clients | Proposed |
+| [0013](./0013-one-strategy-interface-and-collector-public-packages.md) | One Strategy interface for live and replay; collector packages promoted to public API | Accepted |
 
 ## When to write an ADR
 

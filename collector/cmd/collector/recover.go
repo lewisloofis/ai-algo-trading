@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"collector/internal/s3upload"
-	"collector/internal/segment"
-	"collector/internal/zstdio"
+	"collector/segment"
+	"collector/zstdio"
 )
 
 // recoverOrphans scans captureDir for leftover uncompressed segment files

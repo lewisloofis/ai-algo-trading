@@ -3,8 +3,8 @@ package feed_test
 import (
 	"testing"
 
-	"collector/internal/feed"
-	"collector/internal/sbproto"
+	"collector/feed"
+	"collector/sbproto"
 )
 
 // buildOrderbookWrap builds a WebsocketWrapMessageChannel frame (field 10 =

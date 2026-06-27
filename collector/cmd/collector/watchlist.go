@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"collector/internal/feed"
+	"collector/feed"
 )
 
 // loadWatchlist resolves the symbol list, uppercases all entries, strips blank

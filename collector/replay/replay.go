@@ -12,9 +12,9 @@ import (
 	"log"
 	"time"
 
-	"collector/internal/feed"
-	"collector/internal/segment"
-	"collector/internal/zstdio"
+	"collector/feed"
+	"collector/segment"
+	"collector/zstdio"
 )
 
 // EventKind identifies the category of a MarketEvent.

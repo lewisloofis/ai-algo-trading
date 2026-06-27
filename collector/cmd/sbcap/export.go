@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"collector/internal/feed"
-	"collector/internal/replay"
+	"collector/feed"
+	"collector/replay"
 )
 
 // exportRecord is the flat schema emitted for every decoded event.

@@ -23,9 +23,9 @@ import (
 	"time"
 
 	"collector/internal/calendar"
-	"collector/internal/feed"
+	"collector/feed"
 	"collector/internal/s3upload"
-	"collector/internal/segment"
+	"collector/segment"
 )
 
 const (

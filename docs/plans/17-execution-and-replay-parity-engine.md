@@ -93,10 +93,12 @@ calls `engine.SubmitOrder`, which dispatches to whichever sink is wired at
 startup. This is the live/replay parity thesis from plan 02 §1: "the whole
 point of plan 02."
 
-A proposed ADR (no existing number yet) should record this one-interface
-decision and the post-trade-store-as-source-of-truth decision (§3.3) as formal
-architectural constraints. Both are strong ADR candidates because they govern
-the shape of every future strategy implementation and every attribution query.
+[ADR-0013](../adr/0013-one-strategy-interface-and-collector-public-packages.md)
+records this one-interface decision and the collector package-promotion decision
+as formal architectural constraints. Both govern the shape of every future
+strategy implementation and every attribution query. (The
+post-trade-store-as-source-of-truth decision in §3.3 is documented in this plan;
+it can be folded into a follow-up ADR if it proves load-bearing for plan 11.)
 
 ### 3.2 Pluggable order sink
 

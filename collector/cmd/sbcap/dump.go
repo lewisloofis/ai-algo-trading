@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"collector/internal/feed"
-	"collector/internal/replay"
+	"collector/feed"
+	"collector/replay"
 )
 
 // runDump decodes and prints events one per line with optional filters.

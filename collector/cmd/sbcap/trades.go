@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"collector/internal/replay"
+	"collector/replay"
 )
 
 // runTrades replays one or more captured segments and emits a per-trade CSV

@@ -68,7 +68,7 @@ import (
 	"strconv"
 	"strings"
 
-	"collector/internal/sbproto"
+	"collector/sbproto"
 )
 
 // Channels selects which WebsocketChannel fields to subscribe.

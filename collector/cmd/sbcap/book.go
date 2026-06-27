@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"collector/internal/feed"
-	"collector/internal/replay"
+	"collector/feed"
+	"collector/replay"
 )
 
 // runBook reconstructs the order book for a symbol at a given point in time.

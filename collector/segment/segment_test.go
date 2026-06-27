@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"collector/internal/segment"
+	"collector/segment"
 )
 
 // TestRoundTrip writes a mix of data and control records and reads them back,

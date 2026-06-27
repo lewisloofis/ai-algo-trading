@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"collector/internal/s3upload"
-	"collector/internal/segment"
-	"collector/internal/zstdio"
+	"collector/segment"
+	"collector/zstdio"
 )
 
 // segmentFile manages the currently open segment: the backing *os.File, the

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"collector/internal/zstdio"
+	"collector/zstdio"
 )
 
 // TestCompressRoundTrip writes known data to a temp file, compresses it with

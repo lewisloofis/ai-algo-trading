@@ -1,0 +1,87 @@
+// Package engine is the event-driven backtesting core for plan 17. It wires
+// the plan-02 replayer into a Strategy interface, simulates taker fills through
+// an OrderSink, and records every decision, intent, and fill into an
+// append-only SQLite post-trade store.
+//
+// Live order routing (CarinaSink) is deliberately absent here; only the replay
+// + paper-sink path exists.
+package engine
+
+import (
+	"context"
+	"time"
+
+	"collector/feed"
+	"collector/replay"
+	"collector/segment"
+)
+
+// EventKind re-exports the replayer's event categories so strategy code can
+// depend on engine alone.
+type EventKind = replay.EventKind
+
+const (
+	EventLivePrice    = replay.EventLivePrice
+	EventOrderbook    = replay.EventOrderbook
+	EventRunningTrade = replay.EventRunningTrade
+	EventIEPIEV       = replay.EventIEPIEV
+	EventControl      = replay.EventControl
+)
+
+// MarketEvent is one decoded event delivered to a Strategy. It mirrors
+// replay.MarketEvent; the two have identical fields and are converted with
+// fromReplay so the engine package owns its public surface.
+type MarketEvent struct {
+	RecvNs  int64
+	Kind    EventKind
+	Symbol  string
+	Decoded *feed.Decoded
+	Control *segment.ControlEvent
+}
+
+func fromReplay(e replay.MarketEvent) MarketEvent {
+	return MarketEvent{
+		RecvNs:  e.RecvNs,
+		Kind:    e.Kind,
+		Symbol:  e.Symbol,
+		Decoded: e.Decoded,
+		Control: e.Control,
+	}
+}
+
+// OrderID identifies an order within a single run.
+type OrderID string
+
+// OrderIntent is a strategy's request to trade. PriceIDR must already be
+// tick-snapped by the strategy; OrderID is the client-assigned idempotency key.
+type OrderIntent struct {
+	Symbol   string
+	Side     string // "buy" or "sell"
+	PriceIDR int64
+	Lots     int // 1 lot = 100 shares
+	OrderID  string
+}
+
+// FillRecord is the result of a simulated execution, handed back to the
+// strategy via OnFill and persisted to the store.
+type FillRecord struct {
+	OrderID      OrderID
+	FillPriceIDR int64
+	FillLots     int
+	FeeIDR       int64
+	SlippageBps  float64
+}
+
+// Strategy is implemented by trading logic. OnEvent runs synchronously on the
+// event-loop goroutine; it must not spawn goroutines or read time.Now directly
+// (use engine.Now). OnFill is invoked when the sink reports an execution.
+type Strategy interface {
+	OnEvent(ctx context.Context, e MarketEvent, engine Engine)
+	OnFill(ctx context.Context, f FillRecord)
+}
+
+// Engine is the handle a Strategy uses to act on the world during OnEvent.
+type Engine interface {
+	SubmitOrder(ctx context.Context, intent OrderIntent) (OrderID, error)
+	Now() time.Time
+}

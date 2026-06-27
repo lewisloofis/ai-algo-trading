@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"collector/internal/feed"
-	"collector/internal/replay"
+	"collector/feed"
+	"collector/replay"
 )
 
 // runFeatures replays one or more captured segments and emits a consolidated

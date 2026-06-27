@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"collector/internal/feed"
-	"collector/internal/sbproto"
+	"collector/feed"
+	"collector/sbproto"
 )
 
 // ---------- Raw protobuf helpers (fixed64-safe) ----------
