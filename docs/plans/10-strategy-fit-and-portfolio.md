@@ -317,5 +317,41 @@ on the low-friction names the intersection surfaces (e.g. ITMG-class).
 
 ---
 
+## Event-driven re-validation status (plan 17)
+
+**Harness:** live as of commit `4d3e51a` — `strategy/engine/` event-driven
+backtester wired to the plan-02 replayer, PaperSink taker fill model, SQLite
+post-trade store. See [plan 17](./17-execution-and-replay-parity-engine.md).
+
+**5-day ORB stub run (Jun 22–26 plan10-survivors, `strategy-run --strategy orb`):**
+
+| Metric | Result |
+|---|---|
+| Segments | 45 (5 days × 9/day) |
+| Decisions | 2,470,000 |
+| Round-trips | 397 |
+| Mean gross PnL | −19.1 bps |
+| Mean net PnL | −59.1 bps |
+| Hit rate | 26.4% |
+
+By symbol (gross / net / hit rate): ENRG +10.6/−29.4/31.6% · PTRO −12.7/−52.7/35.1% · TPIA −10.0/−50.0/31.6% · BRPT −11.4/−51.4/25.9% · BREN −19.5/−59.5/26.3% · RATU −35.2/−75.2/16.7% · RAJA −56.4/−96.4/17.5%
+
+**Divergence from plan-10 CSV result: confirmed — §8 red flag tripped (>±5 bps gross).**
+
+**Root cause — not a kill.** The stub run uses the placeholder PaperSink (taker
+at far touch) and a fixed 30-minute timer exit. The taker model pays the full
+spread on both entry and exit, making gross negative by construction before fees
+— this is the fill-model gap plan 15 exists to close. The stub exit rule is also
+not plan-10's actual ORB signal exit logic. The engine and post-trade store
+operated correctly end-to-end (2.47M decisions, attribution table populated,
+append-only verified).
+
+**Next step:** re-run with (a) plan-15 calibrated fills wired into `PaperSink`
+(true impact coeff ~0.30 for survivors vs assumed 1.0) and (b) plan-10's actual
+ORB exit rule ported to the Go strategy. That comparison is the honest
+event-driven confirmation plan-10 still needs.
+
+---
+
 Prev: [09-universe-screener.md ←](./09-universe-screener.md) ·
 Index: [README](./README.md)
