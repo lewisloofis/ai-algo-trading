@@ -288,3 +288,86 @@ class TestComputeImpactBpsFromDf:
         assert impact_low > impact_high, (
             f"Low-ADV stock must have more impact: {impact_low} vs {impact_high}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Calibrated coefficient resolver (plan 15 §7.1, §8 Tier-1)
+# ---------------------------------------------------------------------------
+
+class TestGetImpactCoeff:
+    """get_impact_coeff resolves per-name → bucket → global default."""
+
+    @staticmethod
+    def _inject(monkeypatch, coeffs: dict | None) -> None:
+        import strategy_fit.impact as impact_mod
+        monkeypatch.setattr(impact_mod, "_CALIBRATED_COEFFS", coeffs, raising=False)
+        monkeypatch.setattr(impact_mod, "_COEFFS_LOADED", True, raising=False)
+
+    def test_confirmed_per_name_coeff_used(self, monkeypatch) -> None:
+        from strategy_fit.impact import get_impact_coeff
+        self._inject(monkeypatch, {
+            "global_default": 1.0,
+            "buckets": {"high_liq": {"coeff": 0.5, "confidence": "confirmed"}},
+            "per_name": {"PTRO": {"coeff": 0.32, "confidence": "confirmed", "bucket": "high_liq"}},
+        })
+        assert get_impact_coeff("PTRO") == pytest.approx(0.32)
+
+    def test_provisional_name_falls_back_to_bucket(self, monkeypatch) -> None:
+        from strategy_fit.impact import get_impact_coeff
+        self._inject(monkeypatch, {
+            "global_default": 1.0,
+            "buckets": {"high_liq": {"coeff": 0.5, "confidence": "confirmed"}},
+            "per_name": {"PTRO": {"coeff": None, "confidence": "provisional", "bucket": "high_liq"}},
+        })
+        assert get_impact_coeff("PTRO") == pytest.approx(0.5)
+
+    def test_provisional_name_and_bucket_falls_back_to_global(self, monkeypatch) -> None:
+        from strategy_fit.impact import get_impact_coeff
+        self._inject(monkeypatch, {
+            "global_default": 1.0,
+            "buckets": {"high_liq": {"coeff": None, "confidence": "provisional"}},
+            "per_name": {"PTRO": {"coeff": None, "confidence": "provisional", "bucket": "high_liq"}},
+        })
+        assert get_impact_coeff("PTRO") == pytest.approx(1.0)
+
+    def test_unknown_symbol_uses_global_default(self, monkeypatch) -> None:
+        from strategy_fit.impact import get_impact_coeff
+        self._inject(monkeypatch, {"global_default": 0.8, "buckets": {}, "per_name": {}})
+        assert get_impact_coeff("ZZZZ") == pytest.approx(0.8)
+
+    def test_none_symbol_uses_global_default(self, monkeypatch) -> None:
+        from strategy_fit.impact import get_impact_coeff
+        self._inject(monkeypatch, {"global_default": 0.8, "buckets": {}, "per_name": {}})
+        assert get_impact_coeff(None) == pytest.approx(0.8)
+
+    def test_missing_file_uses_module_constant(self, monkeypatch) -> None:
+        from strategy_fit.impact import get_impact_coeff, SQRT_IMPACT_COEFF
+        self._inject(monkeypatch, None)  # file absent / unreadable
+        assert get_impact_coeff("PTRO") == pytest.approx(SQRT_IMPACT_COEFF)
+
+
+class TestUseCalibratedFlag:
+    """use_calibrated=False must reproduce pre-plan-15 behaviour exactly."""
+
+    def test_backward_compat_default_matches_assumed_model(self) -> None:
+        # default call (no kwargs) and explicit use_calibrated=False must agree,
+        # and both must use SQRT_IMPACT_COEFF regardless of any loaded config.
+        baseline = compute_impact_bps(100.0, 1e12)
+        explicit = compute_impact_bps(100.0, 1e12, use_calibrated=False, symbol="PTRO")
+        expected = 2.0 * SQRT_IMPACT_COEFF * 100.0 * np.sqrt(
+            min(POSITION_NOTIONAL_IDR / 1e12, 1.0)
+        )
+        assert baseline == pytest.approx(expected)
+        assert explicit == pytest.approx(expected)
+
+    def test_calibrated_path_uses_resolved_coeff(self, monkeypatch) -> None:
+        import strategy_fit.impact as impact_mod
+        monkeypatch.setattr(impact_mod, "_CALIBRATED_COEFFS", {
+            "global_default": 1.0,
+            "buckets": {},
+            "per_name": {"PTRO": {"coeff": 0.25, "confidence": "confirmed", "bucket": "high_liq"}},
+        }, raising=False)
+        monkeypatch.setattr(impact_mod, "_COEFFS_LOADED", True, raising=False)
+        calibrated = compute_impact_bps(100.0, 1e12, use_calibrated=True, symbol="PTRO")
+        expected = 2.0 * 0.25 * 100.0 * np.sqrt(min(POSITION_NOTIONAL_IDR / 1e12, 1.0))
+        assert calibrated == pytest.approx(expected)

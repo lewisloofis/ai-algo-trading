@@ -34,7 +34,9 @@ POSITION_NOTIONAL_IDR : float = 30_000_000
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 
 import numpy as np
 import pandas as pd
@@ -70,6 +72,71 @@ value.
 _DEGENERATE_IMPACT_BPS: float = 10_000.0
 
 _DEGENERATE_VOL_BPS: float = 10_000.0
+
+
+# ---------------------------------------------------------------------------
+# Calibrated coefficients (plan 15)
+# ---------------------------------------------------------------------------
+
+_COEFFS_PATH: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "impact_coeffs.json")
+
+_CALIBRATED_COEFFS: dict | None = None
+"""Lazily loaded contents of ``impact_coeffs.json``; ``None`` once load is attempted and the file is absent or malformed."""
+
+_COEFFS_LOADED: bool = False
+
+
+def _load_calibrated_coeffs() -> dict | None:
+    """Load ``impact_coeffs.json`` once; return ``None`` if absent or malformed."""
+    global _CALIBRATED_COEFFS, _COEFFS_LOADED
+    if _COEFFS_LOADED:
+        return _CALIBRATED_COEFFS
+    _COEFFS_LOADED = True
+    try:
+        with open(_COEFFS_PATH) as f:
+            _CALIBRATED_COEFFS = json.load(f)
+    except FileNotFoundError:
+        logger.debug("impact_coeffs.json absent at %s; using global default", _COEFFS_PATH)
+        _CALIBRATED_COEFFS = None
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("impact_coeffs.json unreadable (%s); using global default", exc)
+        _CALIBRATED_COEFFS = None
+    return _CALIBRATED_COEFFS
+
+
+def get_impact_coeff(symbol: str | None = None) -> float:
+    """
+    Resolve the square-root impact coefficient for *symbol*.
+
+    Resolution order, using only ``confirmed`` entries from
+    ``impact_coeffs.json``:
+
+    1. Per-name coeff (when the name is confirmed and has a non-null coeff).
+    2. The name's liquidity-bucket coeff (when the bucket is confirmed).
+    3. The file's ``global_default``.
+    4. The module constant ``SQRT_IMPACT_COEFF`` (when the file is absent).
+
+    Passing ``symbol=None`` (or an unknown symbol) skips straight to the
+    global default, preserving the assumed-model behaviour.
+    """
+    coeffs = _load_calibrated_coeffs()
+    if coeffs is None:
+        return SQRT_IMPACT_COEFF
+
+    global_default = float(coeffs.get("global_default", SQRT_IMPACT_COEFF))
+    if symbol is None:
+        return global_default
+
+    per_name = coeffs.get("per_name", {}).get(symbol)
+    if per_name is not None:
+        if per_name.get("confidence") == "confirmed" and per_name.get("coeff") is not None:
+            return float(per_name["coeff"])
+        bucket_name = per_name.get("bucket")
+        bucket = coeffs.get("buckets", {}).get(bucket_name) if bucket_name else None
+        if bucket and bucket.get("confidence") == "confirmed" and bucket.get("coeff") is not None:
+            return float(bucket["coeff"])
+
+    return global_default
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +241,9 @@ def compute_impact_bps(
     daily_vol_bps: float,
     adv_notional_idr: float,
     position_notional_idr: float = POSITION_NOTIONAL_IDR,
+    *,
+    use_calibrated: bool = False,
+    symbol: str | None = None,
 ) -> float:
     """
     Compute round-trip market impact in basis points using the square-root model.
@@ -198,6 +268,14 @@ def compute_impact_bps(
         Average daily turnover in IDR (from ``compute_adv_notional_idr``).
     position_notional_idr : float
         Order notional for this name (default: ``POSITION_NOTIONAL_IDR``).
+    use_calibrated : bool
+        When ``True``, resolve the impact coefficient via
+        ``get_impact_coeff(symbol)`` (per-name → bucket → global default from
+        ``impact_coeffs.json``).  When ``False`` (default), use the assumed
+        ``SQRT_IMPACT_COEFF`` constant, preserving pre-plan-15 behaviour.
+    symbol : str | None
+        Symbol to resolve a calibrated coeff for; ignored unless
+        ``use_calibrated`` is ``True``.
 
     Returns
     -------
@@ -214,13 +292,17 @@ def compute_impact_bps(
     participation_rate = min(position_notional_idr / adv_notional_idr, 1.0)
     participation_rate = max(participation_rate, 0.0)
 
-    impact = 2.0 * SQRT_IMPACT_COEFF * daily_vol_bps * np.sqrt(participation_rate)
+    coeff = get_impact_coeff(symbol) if use_calibrated else SQRT_IMPACT_COEFF
+    impact = 2.0 * coeff * daily_vol_bps * np.sqrt(participation_rate)
     return float(impact)
 
 
 def compute_impact_bps_from_df(
     intraday_df: pd.DataFrame,
     position_notional_idr: float = POSITION_NOTIONAL_IDR,
+    *,
+    use_calibrated: bool = False,
+    symbol: str | None = None,
 ) -> float:
     """
     Convenience wrapper: compute round-trip impact from an intraday DataFrame.
@@ -246,4 +328,6 @@ def compute_impact_bps_from_df(
         daily_vol_bps=vol_bps,
         adv_notional_idr=adv,
         position_notional_idr=position_notional_idr,
+        use_calibrated=use_calibrated,
+        symbol=symbol,
     )
