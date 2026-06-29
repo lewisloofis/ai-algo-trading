@@ -1,6 +1,6 @@
 # Strategy Fit & Portfolio Backtester — Data-Chosen Strategies per Name
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-29
+> **Status:** ✔️ Done · **Owner:** @lewis · **Updated:** 2026-06-29
 > **Related:** [09-universe-screener.md](./09-universe-screener.md) · [08-alpha-factory-workflows.md](./08-alpha-factory-workflows.md) (Workflow B) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [05-ofi-trade-flow-study.md](./05-ofi-trade-flow-study.md) · [04-microstructure-study.md](./04-microstructure-study.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) (§1.2) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [ADR-0009: universe = funding intersection](../adr/0009-universe-is-funding-intersection-strategy-fit-downstream.md) · [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [Plans index](./README.md)
 
 > **What this is.** The layer that decides *which strategy fits which name*, from
@@ -249,31 +249,31 @@ on the low-friction names the intersection surfaces (e.g. ITMG-class).
 
 ## 7. Implementation
 
-- [ ] **7.1** Consume plan 09's ranked universe (read `universe_screen.md` or call
+- [x] **7.1** Consume plan 09's ranked universe (read `universe_screen.md` or call
   the screener as a library) — the input contract.
-- [ ] **7.2** `research/strategy_fit/` — strategy harness with a **pluggable shape
+- [x] **7.2** `research/strategy_fit/` — strategy harness with a **pluggable shape
   interface**: each family declares its shape (`single_name_time_series`,
   `cross_sectional`, `event_driven`, or `pairs`) and the harness dispatches to the
   correct test primitive and effective-N unit (§2, §6). The three-state verdict
   mirrors plans 04/05/06 in all shapes.
-- [ ] **7.3** The single-name daily-bar families (momentum, mean-reversion, breakout)
+- [x] **7.3** The single-name daily-bar families (momentum, mean-reversion, breakout)
   as pure signal functions over chartbit OHLCV + foreign flow —
   `shape=single_name_time_series`.
-- [ ] **7.4** Event-driven family (gap / volume spike / foreign-flow spike) with
+- [x] **7.4** Event-driven family (gap / volume spike / foreign-flow spike) with
   pooled cross-universe event returns and MIN_EFF_N=30 on pooled non-overlapping
   events — `shape=event_driven`. This is the primary (and often only) viable shape
   for very-wide-tick names.
-- [ ] **7.5** Cross-sectional momentum / factor: daily cross-sectional rank, IC
+- [x] **7.5** Cross-sectional momentum / factor: daily cross-sectional rank, IC
   series, ICIR — `shape=cross_sectional`. MIN_EFF_N=30 on cross-sectional periods.
-- [ ] **7.6** Pairs / cointegration: pairwise ADF / Johansen on the universe names,
+- [x] **7.6** Pairs / cointegration: pairwise ADF / Johansen on the universe names,
   spread-reversion half-life, OOS block-bootstrap on residual-spread obs —
   `shape=pairs`.
-- [ ] **7.7** Walk-forward harness + decay metric — rolling fit→test→roll loop
+- [x] **7.7** Walk-forward harness + decay metric — rolling fit→test→roll loop
   over available history (by shape: daily rows, cross-sectional periods, pooled
   events, spread obs); compute rolling Sharpe and hit-rate per forward window; mark
   cells decayed/non-persistent when the metric falls below threshold. Shared
   verbatim with plan 11.
-- [ ] **7.8** Grid runner + coverage table + multiple-testing correction (deflated
+- [x] **7.8** Grid runner + coverage table + multiple-testing correction (deflated
   Sharpe / FDR) across `(name, strategy, horizon, shape)`; emit
   `research/out/strategy_portfolio.md` annotated with each survivor's decay metric,
   friction floor, and shape. Coverage table lists every `data_blocked` /

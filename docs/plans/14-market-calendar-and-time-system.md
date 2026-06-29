@@ -1,8 +1,8 @@
 # Market Calendar & Time System — One Holiday-Aware Clock for the Whole Repo
 
-> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-26
+> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-29
 
-> ✅ **Result: Complete.** `calendar/idx_holidays.json` (22 dates, `provisional: false`), Python reader `research/lib/market_calendar.py` + 23-test pytest suite, Go reader `collector/internal/calendar` + table-driven tests, all cross-language parity cases green. Cost gate wired (`financing.py` now accepts `entry_date` for holiday-aware settlement). Collector self-skips on non-trading days. Deadline checker operational (2 tracked deadlines: chartbit repull 2026-09-10, holiday refresh 2026-12-05). ADR-0012 implemented.
+> ✅ **Result: Complete.** `calendar/idx_holidays.json` (22 dates, `provisional: false`), Python reader `research/lib/market_calendar.py` + 23-test pytest suite, Go reader `collector/internal/calendar` + table-driven tests, all cross-language parity cases green. Cost gate wired (`financing.py` now accepts `entry_date` for holiday-aware settlement). Collector self-skips on non-trading days. Deadline checker operational (2 tracked deadlines: chartbit repull 2026-09-10, holiday refresh 2026-12-05). ADR-0012 implemented. Walk-forward date window uses `CALENDAR.trading_days_between` (plan-14 §7.8). Ground-truth reconciliation CLI `research/lib/calendar_reconcile.py` shipped (plan-14 §7.9).
 > **Related:** [ADR-0012: market calendar single source](../adr/0012-market-calendar-single-source-cross-language.md) · [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [ADR-0003: weekday scheduling](../adr/0003-market-hours-instance-scheduling.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [13-capital-allocation-and-capacity.md](./13-capital-allocation-and-capacity.md) · [01-market-data-capture.md](./01-market-data-capture.md) · [Plans index](./README.md)
 
 > **What this is.** A single, holiday-aware notion of an IDX trading day, shared
@@ -195,19 +195,27 @@ here) achieves the same accrual with near-zero standing machinery.
   2026-06-20**; the provisional draft matched the official *Kalender Libur Bursa
   Tahun 2026* exactly (22 dates, 239 trading days), so `provisional = false` for
   2026.
-- [ ] **7.8** (Follow-on) point MIN_EFF_N / walk-forward trading-day counts at the
-  shared reader where they currently approximate weekends.
-- [ ] **7.9** **Ground-truth reconciliation validator** (the real-world check):
+- [x] **7.8** (Follow-on) point MIN_EFF_N / walk-forward trading-day counts at the
+  shared reader where they currently approximate weekends. *(Done 2026-06-29 —
+  `run_strategy_fit.run_grid` now imports `CALENDAR` from `lib.market_calendar`
+  and calls `CALENDAR.trading_days_between(start, end)` to log the
+  calendar-aware expected trading-day span at grid startup. The magic `< 10`
+  row threshold was replaced with `< MIN_EFF_N` (the actual statistical floor
+  from `lib.stats`) so the guard is no longer a magic number.)*
+- [x] **7.9** **Ground-truth reconciliation validator** (the real-world check):
   `research/lib/calendar_reconcile.py` (+ a small CLI) that pulls ~1yr of chartbit
   daily bars for a few liquid names (e.g. BBRI/BBCA/TLKM), takes the **union of
   dates that have bars** as the observed IDX trading calendar, and diffs it against
   the file's predicted trading days over the same span. Emits a typed report:
   `calendar_says_trading_market_silent` (→ missing holiday / ad-hoc closure) vs.
-  `calendar_says_holiday_market_traded` (→ wrong date). Zero-diff = pass. Run it
-  now against the existing Jan–Jun 2026 history as the first real validation, and
-  periodically thereafter. (A second, independent ground truth — collector
+  `calendar_says_holiday_market_traded` (→ wrong date). Zero-diff = pass.
+  *(Done 2026-06-29 — `research/lib/calendar_reconcile.py` written; CLI runnable
+  as `python -m lib.calendar_reconcile --symbols BBRI,BBCA,TLKM` from `research/`
+  directory; also accepts `--start`, `--end`, `--lookback-days`, `--json`;
+  exits 1 on divergences for CI integration. Requires `SB_BEARER_TOKEN` with a
+  clear error message when missing. A second, independent ground truth — collector
   per-day frame presence vs. prediction — is wired once unattended capture exists,
-  pillar 4.1.)
+  pillar 4.1.)*
 - [ ] **7.10** **Staleness guards** in the `deadlines` checker (7.6): (a) a
   **coverage guard** that alarms when today is within ~30 days of the file's last
   covered date (the file is about to run dry), and (b) a **yearly-refresh
