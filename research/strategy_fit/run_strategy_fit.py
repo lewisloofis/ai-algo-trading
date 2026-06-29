@@ -69,6 +69,8 @@ from strategy_fit.intraday_walk_forward import (
     IntradayWalkForwardResult,
 )
 from strategy_fit.report import emit_strategy_portfolio
+from lib.market_calendar import CALENDAR as _CALENDAR
+from lib.stats import MIN_EFF_N
 
 try:
     from screener.metrics import min_spread_bps as _min_spread_bps
@@ -603,6 +605,18 @@ def run_grid(
     universe = ds.funding_universe()
     logger.info("Universe: %s", sorted(universe))
 
+    # Log the calendar-aware expected trading-day span for this date window.
+    # Uses CALENDAR.trading_days_between so the count reflects IDX holidays, not
+    # just weekdays — the shared reader (plan-14 §4) is the single source of truth.
+    from datetime import date as _date
+    _start_d = _date.fromisoformat(start)
+    _end_d = _date.fromisoformat(end)
+    _expected_tdays = _CALENDAR.trading_days_between(_start_d, _end_d)
+    logger.info(
+        "Date window %s → %s: %d expected trading days (calendar-aware, IDX holidays applied)",
+        start, end, _expected_tdays,
+    )
+
     # Load history for all symbols.
     hist_dict: dict[str, pd.DataFrame] = {}
     min_edge_map: dict[str, float] = {}
@@ -612,8 +626,11 @@ def run_grid(
         except Exception as exc:
             logger.warning("Could not load history for %s: %s", symbol, exc)
             continue
-        if len(df) < 10:
-            logger.warning("Skipping %s: too few rows (%d)", symbol, len(df))
+        # Minimum rows guard: must have at least MIN_EFF_N rows (the statistical
+        # floor for a meaningful test) before we bother computing walk-forward or
+        # cost-gate metrics.  MIN_EFF_N = 30 from lib.stats, not a magic number.
+        if len(df) < MIN_EFF_N:
+            logger.warning("Skipping %s: too few rows (%d < MIN_EFF_N=%d)", symbol, len(df), MIN_EFF_N)
             continue
         hist_dict[symbol] = df
 
