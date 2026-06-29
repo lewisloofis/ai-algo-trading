@@ -1,6 +1,6 @@
 # Market-Data Capture — Architecture & AWS Deployment
 
-> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-26
+> **Status:** ✔️ Done · **Owner:** @lewis · **Updated:** 2026-06-26
 > **Related:** [02-storage-format-and-replay.md](./02-storage-format-and-replay.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md)
 
 > ✅ **Result: Complete.** EC2 + EventBridge scheduler running on AWS account `047915756052`.

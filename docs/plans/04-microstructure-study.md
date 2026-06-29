@@ -1,6 +1,6 @@
 # Microstructure Signal Study — OBI / Micro-Price Go/No-Go Gate
 
-> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-18 · **Verdict:** ~~PASS~~ → **INCONCLUSIVE** (post-audit)
+> **Status:** ✔️ Done · **Owner:** @lewis · **Updated:** 2026-06-18 · **Verdict:** ~~PASS~~ → **INCONCLUSIVE** (post-audit)
 > **Related:** [Thesis: microstructure signals](../thesis/01-microstructure-signals.md) · [02-storage-format-and-replay.md](./02-storage-format-and-replay.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md)
 
 This plan builds the harness that **tests the microstructure thesis** on the BUMI

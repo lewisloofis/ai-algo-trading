@@ -1,6 +1,6 @@
 # Seamless Token Rotation
 
-> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-19
+> **Status:** ✔️ Done · **Owner:** @lewis · **Updated:** 2026-06-19
 > **Related:** [01-market-data-capture.md](./01-market-data-capture.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [Authentication](../reference/01-authentication.md)
 
 This plan makes Stockbit token rotation seamless and self-healing for the

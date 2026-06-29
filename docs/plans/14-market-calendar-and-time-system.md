@@ -1,6 +1,6 @@
 # Market Calendar & Time System — One Holiday-Aware Clock for the Whole Repo
 
-> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-29
+> **Status:** ✔️ Done · **Owner:** @lewis · **Updated:** 2026-06-29
 
 > ✅ **Result: Complete.** `calendar/idx_holidays.json` (22 dates, `provisional: false`), Python reader `research/lib/market_calendar.py` + 23-test pytest suite, Go reader `collector/internal/calendar` + table-driven tests, all cross-language parity cases green. Cost gate wired (`financing.py` now accepts `entry_date` for holiday-aware settlement). Collector self-skips on non-trading days. Deadline checker operational (2 tracked deadlines: chartbit repull 2026-09-10, holiday refresh 2026-12-05). ADR-0012 implemented. Walk-forward date window uses `CALENDAR.trading_days_between` (plan-14 §7.8). Ground-truth reconciliation CLI `research/lib/calendar_reconcile.py` shipped (plan-14 §7.9).
 > **Related:** [ADR-0012: market calendar single source](../adr/0012-market-calendar-single-source-cross-language.md) · [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [ADR-0003: weekday scheduling](../adr/0003-market-hours-instance-scheduling.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [13-capital-allocation-and-capacity.md](./13-capital-allocation-and-capacity.md) · [01-market-data-capture.md](./01-market-data-capture.md) · [Plans index](./README.md)

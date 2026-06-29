@@ -1,6 +1,6 @@
 # Repo Restructure — Top-Level Layout Mirrors Trading-System Pillars
 
-> **Status:** ✅ Complete · **Owner:** @lewis · **Updated:** 2026-06-19
+> **Status:** ✔️ Done · **Owner:** @lewis · **Updated:** 2026-06-19
 > **Related:** [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) · [ADR-0008](../adr/0008-top-level-layout-mirrors-pillars.md) · [Plans index](./README.md)
 
 > ✅ **Result: Executed.** The top-level layout now mirrors the five pillars from the

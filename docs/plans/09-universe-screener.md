@@ -1,6 +1,6 @@
 # Universe Screener — Objective, Layered, Signal-Agnostic
 
-> **Status:** ✅ Complete · **Tier A live-verified** (Tier B + opportunity scan deferred) · **Owner:** @lewis · **Updated:** 2026-06-19
+> **Status:** ✔️ Done · **Tier A live-verified** (Tier B + opportunity scan deferred) · **Owner:** @lewis · **Updated:** 2026-06-19
 > **Related:** [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) (§7.1) · [08-alpha-factory-workflows.md](./08-alpha-factory-workflows.md) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [docs/reference/06-pre-trade-rules.md](../reference/06-pre-trade-rules.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [ADR-0009: universe = funding intersection](../adr/0009-universe-is-funding-intersection-strategy-fit-downstream.md)
 
 > **What this is.** The concrete build of the roadmap §7.1 "Universe screening"
