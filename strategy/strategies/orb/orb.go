@@ -1,9 +1,8 @@
-// Package orb implements an Opening Range Breakout strategy on the plan-17
-// engine. For each symbol it captures the first observed liveprice as the
-// opening price, then enters one position when price breaks the opening range
-// by ORBBreakoutPct, and exits at end of session (15:49 WIB = 08:49 UTC) or
-// when a new trading day's events arrive. This matches plan-10's run_orb_family
-// exit rule: hold until the last bar of the trading day.
+// Package orb implements a long-only Opening Range Breakout strategy on the
+// plan-17 engine. Short selling is not available to retail accounts on IDX.
+// For each symbol it captures the first liveprice as the opening price, enters
+// long when price breaks above the opening range by ORBBreakoutPct, and exits
+// at session close (15:49 WIB = 08:49 UTC) or on the first event of a new day.
 package orb
 
 import (
@@ -42,7 +41,6 @@ type posState int
 const (
 	flat posState = iota
 	long
-	short
 )
 
 // symbolState tracks the per-symbol lifecycle of the strategy.
@@ -129,14 +127,10 @@ func (s *Strategy) OnEvent(ctx context.Context, e engine.MarketEvent, eng engine
 	}
 
 	upper := st.openPx * (1 + ORBBreakoutPct)
-	lower := st.openPx * (1 - ORBBreakoutPct)
 	s.lastSig = (price - st.openPx) / st.openPx
 
-	switch {
-	case price >= upper:
+	if price >= upper {
 		s.enter(ctx, e.Symbol, "buy", price, st, eng, now)
-	case price <= lower:
-		s.enter(ctx, e.Symbol, "sell", price, st, eng, now)
 	}
 }
 
@@ -156,19 +150,12 @@ func (s *Strategy) enter(ctx context.Context, symbol, side string, refPx float64
 		st.entryOrder = ""
 		return
 	}
-	if side == "buy" {
-		st.pos = long
-	} else {
-		st.pos = short
-	}
+	st.pos = long
 	st.entryDate = now
 }
 
 func (s *Strategy) exit(ctx context.Context, symbol string, st *symbolState, eng engine.Engine) {
 	side := "sell"
-	if st.pos == short {
-		side = "buy"
-	}
 	id := s.newOrderID(symbol)
 	intent := engine.OrderIntent{
 		Symbol:   symbol,

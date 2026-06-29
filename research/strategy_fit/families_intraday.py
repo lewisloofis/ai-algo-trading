@@ -93,7 +93,8 @@ def run_orb_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
     Opening-Range Breakout family.
 
     ORB window: 09:00–09:29 (30 bars). Trigger bar: 09:30.
-    Long if trigger_close > OR_high; Short if trigger_close < OR_low.
+    Long if trigger_close > OR_high.
+    Long-only: down-breaks are skipped (no short selling on IDX for retail accounts).
     Exit: last bar of day close.
 
     Parameters
@@ -134,22 +135,17 @@ def run_orb_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
             continue
 
         entry_price = 0.0
-        signal = 0.0
         for close_val in post_bars["close"].to_numpy(dtype=float):
             if close_val > or_high:
-                signal = 1.0
                 entry_price = close_val
                 break
-            if close_val < or_low:
-                signal = -1.0
-                entry_price = close_val
-                break
-        if signal == 0.0 or entry_price == 0.0:
-            continue  # no breakout occurred this day
+            # down-break is not tradeable (no short selling on IDX for retail)
+        if entry_price == 0.0:
+            continue  # no long breakout this day
 
         # Exit: last bar close of the day.
         exit_close = float(day.iloc[-1]["close"])
-        ret = signal * (exit_close - entry_price) / entry_price
+        ret = (exit_close - entry_price) / entry_price
         signed_returns.append(ret)
 
     if len(signed_returns) < MIN_EFF_N:
