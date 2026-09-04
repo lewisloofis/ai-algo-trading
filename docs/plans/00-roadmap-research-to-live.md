@@ -66,7 +66,7 @@ few look good by chance.*
       [plan 10](./10-strategy-fit-and-portfolio.md).
 - [ ] **More data across regimes** — multi-day capture so a verdict rests on
       trending/choppy/high-low-vol days, not one session. Capture is running
-      (pillar 4.1) but the data is **not yet reachable by research** — see §6 W1.1.
+      (pillar 4.1). The data became reachable by research on 2026-09-04 (§6 W1.1).
       Note 2.5 months is still a *single regime*; regime breadth remains untested.
 - [ ] **Day-aware multi-day pooling** in the study harness — concat N days, split
       OOS *by day* (train early days, test later days), keep effective-N and
@@ -259,7 +259,7 @@ Waves are ordered by **cost of delay**, not by dependency alone.
 *Every item here is losing something that cannot be bought back later. Ordered by
 deadline.*
 
-- [ ] **W0.1 — Chartbit intraday re-pull.** Due **2026-09-10** (`calendar/deadlines.yaml`).
+- [x] **W0.1 — Chartbit intraday re-pull.** Due **2026-09-10** (`calendar/deadlines.yaml`).
       The chartbit endpoint serves a rolling ~90-day window; `research/data/intraday/`
       is frozen at 2026-06-19, so the 2026-03-25 → 06-19 history is the only copy
       that will ever exist. Run `python -m screener.intraday_store snapshot` with
@@ -267,6 +267,15 @@ deadline.*
       token. Add BREN, RAJA and RATU while there — they were never in the store, so
       they can only reach back ~90 days, but that aligns it with the capture universe.
       Then convert this deadline to **recurring**, since the 90-day clock restarts.
+
+      > ✔️ Done 2026-09-04 — store now spans 2026-03-25 → 2026-09-04
+      > (PTRO/BRPT/TPIA/ENRG 55 → 108 trading days; BREN/RAJA/RATU seeded at 62), with
+      > no gap at the 06-19 junction. Deadline rolled to 2026-11-26. Three latent
+      > defects blocked the pull: `pyarrow` and `certifi` missing from
+      > `requirements.txt`, and an empty TLS trust store presenting as "self-signed
+      > certificate in certificate chain" — which reads like a MITM proxy and means
+      > "root not trusted".
+
 - [ ] **W0.2 — Widen the capture watchlist.** The collector records only the 7 names
       that already passed plan 10 (`infra/terraform.tfvars`). Order book cannot be
       backfilled, so every further session on the narrow list is permanently lost
@@ -308,14 +317,24 @@ sits in S3 and research consumed five days of it. Nothing turns segments into
 research inputs, and nothing notices when an input goes stale — the chartbit
 store was dead for ten weeks and an ad-hoc audit found it, not the system.*
 
-- [ ] **W1.1 — Segments → bars builder.** There is no path from captured protobuf to
+- [x] **W1.1 — Segments → bars builder.** There is no path from captured protobuf to
       a research-ready series. `sbcap` has `stat / dump / export / book / features /
       trades` and no `bars`; the 1-minute bars in `research/data/intraday/` come from
       a *different substrate* (the chartbit HTTP endpoint). Build the missing edge —
       a `bars` subcommand or a Python job over `export` — so the 53 captured sessions
       become usable input. **This single piece unblocks plans 10, 15 and 17
       simultaneously**, and is the reason all three are stuck on a 5-day sample.
-- [ ] **W1.2 — Durable data inventory + freshness checks.** Build the
+
+      > ✔️ Done 2026-09-04 — `sbcap bars` plus `screener/tick_bars.py`, building two
+      > stores: `data/tick_bars/` (full tape) and `data/tick_bars_tagged/` (book-
+      > accessible, the default for anything keyed on a price level). Validated
+      > against the independent chartbit substrate: OHLC 96–99 % exact across 4
+      > symbols × 5 sessions. **Capture fidelity is not uniform** — see [plan 12
+      > §5b](./12-data-gap-backlog-and-demand-driven-capture.md). Volume loss is
+      > concentrated in the busiest bars, so volume- and flow-keyed families are
+      > measured on biased data while price-keyed families are not.
+
+- [x] **W1.2 — Durable data inventory + freshness checks.** Build the
       [plan 12](./12-data-gap-backlog-and-demand-driven-capture.md) §8.4 inventory
       (names × date-ranges × granularity × fields) for real and wire a staleness
       assertion into `calendar/check_deadlines.py`. Today `DataInventory` in
@@ -323,9 +342,25 @@ store was dead for ten weeks and an ad-hoc audit found it, not the system.*
       hand-written priors that still claims `intraday_trading_days_survivors = 5` and
       `universe_size = 5` — **the triage brain is ranking families against a data
       picture that is ten weeks out of date**, and nothing in the system can tell.
-- [ ] **W1.3 — Deployment self-checks.** Assert deployed binary hash vs. `main` in the
+
+      > ✔️ Done 2026-09-04 — `research/lib/data_inventory.py` plus a freshness section
+      > in `calendar/check_deadlines.py`. Measured 239/60/5/5 → **242/108/62/7**.
+      > `daily_bar_trading_days` is a source *capability*, deliberately a distinct
+      > type from on-disk coverage: deriving it from the intraday store gives 62,
+      > because the 90-day rolling cap applies only to the intraday endpoint. Knock-
+      > on: `event_driven` feasible N is 7×242/20 = **84** against the old prior's 59
+      > — more feasible, not less.
+
+- [x] **W1.3 — Deployment self-checks.** Assert deployed binary hash vs. `main` in the
       health check; alert on a **zero-record non-holiday session**. W0.4 fixes today's
       instance of a stale deploy; this is what makes the next one impossible to miss.
+
+      > ✔️ Done 2026-09-04 — `scripts/collector_healthcheck.py`. The first real run
+      > confirmed W0.4 with evidence: the S3 artifact is **77.2 days old**
+      > (2026-06-19) while the collector itself is healthy (20/20 trading days
+      > checked, 0 zero-record sessions). Capture has been running current data on
+      > 2.5-month-old code.
+
 
 ### Wave 2 — Make the verdict trustworthy *(the gate)*
 
@@ -403,13 +438,29 @@ went stale for ten weeks without anyone noticing.
 
 ## 7. Immediate next actions
 
-1. **Run the chartbit snapshot** (W0.1) — hard deadline 2026-09-10, six days out,
-   blocked only on `SB_BEARER_TOKEN`. Missing it costs the March–June intraday
-   history permanently.
-2. **Widen the capture watchlist** (W0.2) — every additional session on the
-   7-survivor list is book breadth that cannot be recovered at any price.
-3. **Build the segments→bars edge** (W1.1) — the one piece that unblocks plans
-   10, 15 and 17 at once, and the precondition for the Wave 2 re-run.
+*W0.1 and all of Wave 1 closed 2026-09-04. What remains, in order:*
+
+1. **Drop the `raw/` DEEP_ARCHIVE transition** (W0.3) — hard deadline
+   **2026-09-15**, when the first objects lock. Free to prevent before that date;
+   costs a restore-and-re-upload cycle after. Two lines in `infra/s3.tf`.
+2. **Re-upload the collector artifact** (W0.4) — now measured, not suspected: the
+   deployed binary is **77.2 days old**. `scripts/collector_healthcheck.py` will
+   confirm the fix, and will catch the next one automatically.
+3. **Widen the capture watchlist** (W0.2) — every session still recording only the
+   7 survivors is book breadth that cannot be bought back later. Note the capture
+   layer currently re-introduces the selection bias plan 09 exists to remove.
+4. **Then Wave 2, starting with W2.1** — make the gates blocking *before*
+   re-running anything. The substrate is now trustworthy enough to re-run on; the
+   verdict semantics are not yet trustworthy enough to believe the result.
+
+> **What Wave 1 changed about Wave 2.** Two constraints are now measured rather
+> than assumed. Volume capture degrades only in the busiest bars — quintiles 1–3
+> are ~100 % for every symbol, TPIA's busiest quintile is 92.9 %, and its top 3 %
+> of bars carry 86 % of the shortfall — so volume- and flow-keyed families cannot
+> be judged on tick volume, while price-keyed families can. And whether that loss
+> is the collector dropping frames under burst or the feed sampling upstream is
+> **not established**; the two call for different responses, so W2 must not assume
+> either.
 
 ---
 
