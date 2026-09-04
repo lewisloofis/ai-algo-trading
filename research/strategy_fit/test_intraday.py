@@ -442,15 +442,24 @@ class TestSignedReturnPValue:
 # ============================================================
 
 def _make_orb_breakout_most_days_df(
-    n_days: int = 40, ref_price: float = 1000.0, seed: int = 7
+    n_days: int = 40, ref_price: float = 1000.0, seed: int = 7,
+    all_down: bool = False,
 ) -> pd.DataFrame:
     """Intraday fixture where price breaks the opening range AFTER the OR window
     on most days (the breakout bar is several minutes past 09:30, not the 09:30
-    bar itself). Direction alternates so the fixture is not trivially one-sided.
+    bar itself). Direction alternates by default so the fixture is not trivially
+    one-sided.
 
     OR window 09:00–09:29: a tight band around ref_price.
     From 09:35 onward: price steps clearly above (or below) the OR band and
-    holds there into the close. This must trigger ~1 trade/day.
+    holds there into the close. Since ORB is long-only (down-breaks are never
+    entered, see run_orb_family / commit c62eba8), this triggers ~1 trade
+    every OTHER day by default — only the alternating UP days are tradeable,
+    not every day.
+
+    Pass all_down=True to make every day break DOWN instead of alternating.
+    That fixture must yield zero long entries — it exercises the long-only
+    contract directly (see TestOrbTradesMostDays.test_orb_down_breaks_are_never_traded).
     """
     rng = np.random.default_rng(seed)
     rows: list[dict] = []
@@ -460,7 +469,7 @@ def _make_orb_breakout_most_days_df(
         if date.weekday() >= 5:
             date += pd.Timedelta(days=1)
             continue
-        up = (days_added % 2 == 0)  # alternate breakout direction
+        up = False if all_down else (days_added % 2 == 0)  # alternate breakout direction
         breakout_close = ref_price * (1.015 if up else 0.985)
         exit_close = ref_price * (1.020 if up else 0.980)
         # AM 09:00–11:59
@@ -502,29 +511,59 @@ class TestOrbTradesMostDays:
     """Regression for the ORB-never-trades bug (eff_n ~3 over 55 days)."""
 
     def test_orb_eff_n_near_trading_days(self):
-        """Breaks-on-most-days fixture → eff_n close to the day count (>= 30)."""
+        """Breaks-on-most-days fixture → eff_n close to the number of UP days,
+        not the total day count.
+
+        ORB is long-only (c62eba8): the fixture's alternating down days are
+        never entered, so eff_n tracks n_days // 2. We need that long-only
+        half to clear MIN_EFF_N=30 with some margin, hence n_days=70
+        (up_days = 70 // 2 = 35).
+        """
         from strategy_fit.families_intraday import run_orb_family
         from lib.stats import MIN_EFF_N
-        n_days = 40
+        n_days = 70
+        up_days = n_days // 2  # only alternating UP days are tradeable (long-only)
         df = _make_orb_breakout_most_days_df(n_days=n_days)
         result = run_orb_family(df)
         assert result["status"] == "tested", (
             f"Expected tested; got {result['status']}: {result.get('skip_reason')}"
         )
         assert result["eff_n"] >= MIN_EFF_N, (
-            f"ORB should trade most days; eff_n={result['eff_n']} (n_days={n_days})"
+            f"ORB should trade every up-day; eff_n={result['eff_n']} (n_days={n_days})"
         )
-        # Should trade on the large majority of days, not a handful.
-        assert result["eff_n"] >= int(0.8 * n_days), (
-            f"ORB eff_n={result['eff_n']} far below day count {n_days}"
+        # Every UP day triggers a long entry by construction; DOWN days never
+        # do (long-only). eff_n should therefore equal up_days exactly, not
+        # approach the full day count.
+        assert result["eff_n"] == up_days, (
+            f"ORB eff_n={result['eff_n']} != up_days={up_days} (n_days={n_days})"
         )
 
     def test_orb_breakout_after_window_is_detected(self):
         """A breakout that occurs AFTER the 09:30 bar must still be entered."""
         from strategy_fit.families_intraday import run_orb_family
-        df = _make_orb_breakout_most_days_df(n_days=35)
+        n_days = 70  # up_days = 35 clears MIN_EFF_N=30 with margin (see above)
+        up_days = n_days // 2
+        df = _make_orb_breakout_most_days_df(n_days=n_days)
         result = run_orb_family(df)
         assert result["status"] == "tested"
-        # Directions alternate, magnitudes are symmetric → mean edge is the
-        # held breakout-to-exit move; eff_n must reflect ~all days.
-        assert result["eff_n"] >= 30
+        # Directions alternate and magnitudes are symmetric, but ORB is
+        # long-only: only the alternating UP-day breakouts are entered, so
+        # eff_n reflects that half of the fixture, not all days.
+        assert result["eff_n"] == up_days
+
+    def test_orb_down_breaks_are_never_traded(self):
+        """Long-only contract: when every day breaks DOWN, ORB must yield zero
+        entries rather than silently trading them as synthetic shorts.
+
+        This is the regression test commit c62eba8 ("constrain to long-only;
+        remove short leg") should have shipped with.
+        """
+        from strategy_fit.families_intraday import run_orb_family
+        from lib.stats import MIN_EFF_N
+        df = _make_orb_breakout_most_days_df(n_days=40, all_down=True)
+        result = run_orb_family(df)
+        assert result["status"] == "insufficient_n", (
+            f"Down-only breakouts must never be traded; got status={result['status']}"
+        )
+        assert result["eff_n"] is None
+        assert result["skip_reason"] == f"eff_n=0 < MIN_EFF_N={MIN_EFF_N}"

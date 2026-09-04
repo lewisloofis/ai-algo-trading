@@ -174,6 +174,145 @@ any component in the loop:
   authoritative record; the inventory is a derived summary updated after each
   capture session.
 
+## 5b. Measured capture fidelity baseline (2026-09-04)
+
+*Produced by roadmap W1.1. The inventory above answers "do we have this name on
+this date". This section answers the question underneath it: **is what we
+captured actually correct?** Until now nothing had checked.*
+
+**Method.** `sbcap bars` rebuilds 1-minute OHLCV from the captured protobuf
+tick stream. `research/data/intraday/*.parquet` holds the same bars from a
+completely independent substrate — the chartbit HTTP endpoint. Comparing them
+is a true cross-substrate audit, not a self-consistency check. Window: the five
+`plan10-survivors` sessions 2026-06-22 → 06-26, continuous session only
+(09:00–15:59 WIB), side-tagged trades.
+
+| Symbol | Bars | OHLC exact | Volume exact | Volume ratio | Median trades/bar |
+|---|---|---|---|---|---|
+| PTRO | 1540 | 1529 (99.3 %) | 1490 (96.8 %) | 0.99196 | 25 |
+| BRPT | 1540 | 1516 (98.4 %) | 1434 (93.1 %) | 0.99094 | 65 |
+| ENRG | 1532 | 1519 (99.2 %) | 1493 (97.5 %) | 1.00046 | 23 |
+| TPIA | 1540 | 1485 (96.4 %) | 1227 (79.7 %) | 0.95315 | 146 |
+
+**Finding 1 — prices are trustworthy, volumes are not.** OHLC reconstructs to
+96–99 % exact. Volume does not, and the error is not noise: TPIA is short
+**4.7 %** of continuous-session volume while ENRG is dead-on.
+
+**Finding 2 — the loss is load-dependent, and that makes it a bias, not an
+error bar.** Volume capture rate by bar-activity quintile:
+
+| Quintile | BRPT | ENRG | PTRO | TPIA |
+|---|---|---|---|---|
+| Q1 quiet | 0.9993 | 0.9998 | 1.0013 | 0.9991 |
+| Q2 | 1.0006 | 0.9991 | 0.9996 | 1.0011 |
+| Q3 | 1.0003 | 1.0005 | 0.9992 | 1.0004 |
+| Q4 | 1.0001 | 1.0072 | 1.0036 | 0.9842 |
+| **Q5 busy** | **0.9846** | **0.9981** | **0.9863** | **0.9287** |
+
+Quintiles 1–3 are essentially perfect for every name. Degradation appears only
+in the busiest quintile and scales with trade rate — TPIA's Q5 median is 588
+trades/minute and loses 7.1 %. For TPIA the top 3 % of bars carry **86 %** of
+the entire shortfall.
+
+**Why this matters more than the headline percentage.** A uniform 4 % loss would
+be a tolerable haircut. This is not uniform: the tape is truncated *precisely in
+the minutes of highest activity* — the minutes most signals fire in. Any family
+keyed on volume spikes, participation rate, or signed flow is being measured on
+data that is thinnest exactly where it is being asked the most. Price-keyed
+families (ORB, intraday momentum) are unaffected.
+
+**Ruled out.** `replay.go` fans each `running_trade` batch into one event per
+trade and `sbcap bars` reads every one, so the loss is upstream of the bar
+builder, not in it. `trade_number` gap analysis cannot diagnose this: the field
+is **market-wide**, not per-symbol — four symbols on 2026-06-24 shared one number
+space of 24,877 → 1,983,458 with *zero* collisions, so a single symbol's
+"missing" numbers are simply other tickers' trades. A naive read of that field
+suggests 94 % loss and means nothing.
+
+**Not yet established** — whether the collector's websocket read loop drops
+frames under burst, or the upstream feed itself samples `running_trade` when
+busy. These call for different responses (fix and re-capture vs. accept the
+limit and never trust tick volume), so W2 must not assume either.
+
+**Second-order observations.**
+- Untagged trades (no aggressor side) are *not* only the pre-opening auction, as
+  the collector docs implied. They occur in three places: pre-open (~08:58),
+  scattered mid-session crossings, and the whole 16:00–16:15 post-trading
+  session — 12 % of PTRO's daily volume on 2026-06-22. Chartbit excludes the
+  mid-session ones but includes post-trading. `sbcap bars` therefore reports
+  `untagged_vol` as its own column rather than silently choosing.
+
+  **Correction — mid-session is not a footnote.** The first pass through this
+  data treated mid-session untagged crossings as a minor third population
+  behind the pre-open auction. Measured per-day, that is backwards: on
+  2026-06-22, PTRO's mid-session untagged volume was **1.89M shares against
+  only 108.8K pre-open** — 17× larger, and it sits *inside* the nominal
+  09:00–15:59 continuous session, where nobody auditing "outside-session
+  volume" would think to look for it. A continuous-session volume or OHLC diff
+  against chartbit will disagree for this reason alone, with no capture defect
+  involved (verified by re-running `sbcap bars --tagged-only`, which drops
+  mid-session untagged trades along with the rest and reproduces chartbit's
+  continuous-session bars exactly — see roadmap W1.1).
+
+  Per-day breakdown, `plan10-survivors` window (shares):
+
+  | Date | PTRO total vol | PTRO pre-open | PTRO mid-session untagged | PTRO post-trading | BRPT total vol | BRPT pre-open | BRPT mid-session untagged | BRPT post-trading |
+  |---|---|---|---|---|---|---|---|---|
+  | 2026-06-22 | 22,319,890 | 108,800 | **1,886,700** | 1,910,190 | 145,141,303 | 1,471,100 | 818,071 | 7,099,432 |
+  | 2026-06-23 | 37,172,100 | 1,054,400 | 40,000 | 800,200 | 136,927,400 | 520,200 | 2,200,000 | 5,496,900 |
+  | 2026-06-24 | 39,832,700 | 581,500 | 1,382,700 | 1,679,100 | 130,814,200 | 579,100 | 822,000 | 3,193,000 |
+  | 2026-06-25 | 40,842,457 | 257,000 | 407,457 | 1,310,800 | 173,305,130 | 342,200 | 236 | 2,663,094 |
+  | 2026-06-26 | 29,991,035 | 246,900 | 1,227,135 | 844,200 | 206,461,549 | 706,400 | 1,535,649 | 15,919,500 |
+
+  Mid-session untagged volume is not a fixed small tax: it ranges from
+  negligible (BRPT 06-25: 236 shares) to the largest of the three populations
+  on a given day (PTRO 06-22, BRPT 06-23 and 06-26). It cannot be predicted
+  from the pre-open or post-trading columns, so it must be measured per day,
+  not assumed.
+
+  **Build-time consequence (roadmap W1.1).** Because a mid-session untagged
+  print can set a bar's `high` or `low`, it cannot be subtracted back out of
+  OHLC after the fact the way `untagged_vol` can be subtracted from volume —
+  the moment it is folded into a bar, the tagged-only price series is gone.
+  `screener/tick_bars.py` therefore builds two independent stores rather than
+  filtering one: `data/tick_bars/` (full tape — correct for volume,
+  participation, turnover, impact calibration) and `data/tick_bars_tagged/`
+  (`--tagged-only` — book-accessible prices only, the default input for any
+  signal keyed on an OHLC level, e.g. ORB). A negotiated print inside an ORB
+  opening-range window would otherwise manufacture a breakout the book never
+  offered — the same failure class as the short leg removed in c62eba8.
+- Bars are bucketed on collector **arrival** time; the feed carries no exchange
+  trade timestamp. This puts a handful of boundary trades one bar either side of
+  chartbit's placement — visible as ~105 bars with a small excess against 208
+  short. Harmless at 1-minute width, material below it.
+- The first three capture days are unusable for tick bars *for the survivor
+  names* — 2026-06-17/18/19 ran the `default`, `lq45-mining` and `mining-sample`
+  watchlists, none of which contain PTRO/BRPT/TPIA/ENRG. They do carry trade data
+  for other names.
+- **`watchlist_id` is not a reliable partition key, and the data already violates
+  the invariant.** `infra/terraform.tfvars` states "changing the SET also changes
+  `watchlist_id` so old/new segments don't mix in S3". It does not hold. The
+  single directory `segments/dt=2026-06-17/default/` contains two different
+  configurations under one id:
+
+  | Segments | Channels | Symbols |
+  |---|---|---|
+  | `seg-044221`, `seg-062153`, `seg-062241` | `orderBook`, `liveprice` | BUMI |
+  | `seg-112231`, `seg-112812` | `runningTradeBatch`, `orderBook`, `liveprice`, `iepiev` | BBCA, BMRI, TLKM, ASII, BBRI |
+
+  Same day, same `watchlist_id`, different symbol set *and* different channel set.
+  Any code that treats `watchlist_id` as implying a symbol set is wrong on data
+  already on disk. The inventory must union `symbols[]` and `channels[]` across
+  **every** manifest in a directory and gate per-symbol coverage on the required
+  channel — reading one manifest per directory, or trusting the directory name,
+  silently invents coverage that does not exist. (I made exactly that sampling
+  error when first writing this section: I read the first manifest per directory
+  and concluded `default` was BUMI-only with no trade channel. The union-based
+  scan built for W1.2 is what caught it.)
+- So a day can sit on disk, look like coverage, and contain no trade data for the
+  name you are asking about — either because the channel was never subscribed, or
+  because the symbol was not in that segment's slice of the watchlist.
+
 ## 6. Roadmap consolidation — what this plan formalises
 
 | Roadmap item | Location | Resolved here |

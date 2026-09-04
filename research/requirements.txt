@@ -1,7 +1,9 @@
+boto3
 certifi
 matplotlib
 numpy
 pandas
 pyarrow
+pytz
 scipy
 statsmodels
