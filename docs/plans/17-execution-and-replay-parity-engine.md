@@ -427,47 +427,47 @@ measurement — close the loop between simulated fills and live slippage").
 
 ### Build-now tasks
 
-- [ ] **7.1** `strategy/engine/strategy.go` — `Strategy` and `Engine` interfaces
+- [x] **7.1** `strategy/engine/strategy.go` — `Strategy` and `Engine` interfaces
   (§3.1, §5.1); `Clock` interface with replay-timestamp and wall-clock
   implementations; `MarketEvent` wrapper type re-exporting the collector's
-  types.
-- [ ] **7.2** `strategy/engine/engine.go` — `Run()` event loop (§5.1); dispatch
+  types. *(Done — `engine/strategy.go` (`Strategy`, `Engine`, `MarketEvent`) + `engine/clock.go` (`Clock`))*
+- [x] **7.2** `strategy/engine/engine.go` — `Run()` event loop (§5.1); dispatch
   to `Strategy.OnEvent` synchronously; log decision record to the post-trade
-  store before dispatch; handle context cancellation and source exhaustion.
-- [ ] **7.3** `strategy/engine/sink.go` — `OrderSink` interface + `PaperSink`
+  store before dispatch; handle context cancellation and source exhaustion. *(Done — `engine/engine.go`)*
+- [x] **7.3** `strategy/engine/sink.go` — `OrderSink` interface + `PaperSink`
   implementation (§5.3) with taker fill model and fee schedule from
   reference/07 (`buy: 0.0015, sell: 0.0025`); tick-snapping via the
   `roundTick()` logic already in `strategy/`; post-trade store write on every
-  simulated fill.
-- [ ] **7.4** `strategy/engine/store.go` — `PostTradeStore` backed by SQLite
+  simulated fill. *(Done — `engine/sink.go`; `feeRateBuy = 0.0015`, `feeRateSell = 0.0025` per reference/07)*
+- [x] **7.4** `strategy/engine/store.go` — `PostTradeStore` backed by SQLite
   (§5.4); schema migrations on first open; `LogDecision`, `LogIntent`,
   `LogFill`, `LogAttribution` methods; `hold_calendar_days` computed via the
   plan-14 calendar reader (`settlement_calendar_days`). Append-only: no UPDATE
-  or DELETE. Store path configurable at startup.
-- [ ] **7.5** `strategy/engine/replay_source.go` — `ReplaySource` function
+  or DELETE. Store path configurable at startup. *(Done with two deviations — `engine/store.go`, WAL-mode SQLite, append-only (no UPDATE/DELETE). Methods are named `InsertDecision` / `InsertIntent` / `InsertFill` / `InsertAttribution`, not `Log*`. **`hold_calendar_days` is a schema column but the plan-14 calendar reader is not yet wired** — no `collector/internal/calendar` import in `engine/`; the value is passed in by the caller. Follow-on)*
+- [x] **7.5** `strategy/engine/replay_source.go` — `ReplaySource` function
   (§5.2) wrapping `collector/internal/replay.Replay`; both pacing modes; buffer
-  size 256 events; context cancellation propagated.
-- [ ] **7.6** ORB strategy implementation `strategy/strategies/orb/orb.go` —
+  size 256 events; context cancellation propagated. *(Done — `engine/replay_source.go`; buffer 256, `ModeFast` / `ModePaced` re-exported)*
+- [x] **7.6** ORB strategy implementation `strategy/strategies/orb/orb.go` —
   `Strategy` interface implementation for the ORB signal survivors from plan 10;
   reads opening price from the first `LivePrice` event per symbol; sets a
   breakout threshold; submits order intents via the engine handle; calls
-  `OnFill` to update internal position state.
-- [ ] **7.7** `strategy/cmd/strategy-run/main.go` — CLI: `--segments
+  `OnFill` to update internal position state. *(Done — `strategies/orb/orb.go`; long-only after commit `c62eba8` (short leg removed))*
+- [x] **7.7** `strategy/cmd/strategy-run/main.go` — CLI: `--segments
   <glob-or-list>`, `--strategy orb`, `--sink paper`, `--store <path>`,
   `--pacing fast|paced`; wires replay source → engine → paper sink → store;
-  emits a run summary on exit (trades attempted, fills, net PnL bps).
-- [ ] **7.8** ORB event-driven re-validation run (§5.5) — run `strategy-run`
+  emits a run summary on exit (trades attempted, fills, net PnL bps). *(Done — `cmd/strategy-run/main.go`; all five flags present)*
+- [x] **7.8** ORB event-driven re-validation run (§5.5) — run `strategy-run`
   against the ORB survivor segments; compare attribution-record summary against
   plan-10's CSV-based output; record whether the results agree or diverge in
-  plan-10's status document.
-- [ ] **7.9** Unit tests — engine dispatch order (OnEvent before OnFill, no
+  plan-10's status document. *(Done — run executed and recorded in plan-10 §"Event-driven re-validation status". **Result: DIVERGES.** First pass (30-min timer exit + phantom post-close re-entry) discarded as invalid; corrected run (EOD exit at 08:49 UTC, no-re-entry guard, Jun 22–26, 7 symbols, 21 round-trips) gives mean net −112.3 bps taker / −76.2 bps mid, 3 of 7 symbols gross-positive. Plan-10 §8 red flag NOT closed. Caveats: N=3 round-trips per symbol, 5-day stub universe, live-data confirmation blocked on SB_BEARER_TOKEN. **Re-run on the full 53-session capture before drawing any conclusion**)*
+- [x] **7.9** Unit tests — engine dispatch order (OnEvent before OnFill, no
   out-of-order dispatch); PaperSink fee math matches the reference/07 worked
   example; post-trade store round-trip (write then read gives identical records);
   replay-reproducibility (two runs over the same segments produce byte-identical
-  stores).
-- [ ] **7.10** `strategy/engine/` Go tests — mock strategy and sink; verify
+  stores). *(Done — `TestEventFiresBeforeFill`, `TestPaperSinkFeeMath`, `TestStoreRoundTrip`, `TestReplayReproducibility`, `TestReplayReproducibilityWithTrades`, `TestStoreWALMode`, `TestStoreAppendOnly` (commit `0ed479b`))*
+- [x] **7.10** `strategy/engine/` Go tests — mock strategy and sink; verify
   that `Run()` exhausts the source and closes cleanly; verify context
-  cancellation unblocks the loop within one event.
+  cancellation unblocks the loop within one event. *(Done — `TestRunExhaustsSourceCleanly`, `TestContextCancellation`)*
 
 ### Deferred tasks (design sketch only; not tickable until §2 gate passes)
 

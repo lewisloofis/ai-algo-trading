@@ -336,49 +336,53 @@ not build or replace Workflow B.
 
 ## 6. Implementation
 
-- [ ] **6.1** `research/strategy_fit/catalog_meta.py` — the catalog-metadata
+- [x] **6.1** `research/strategy_fit/catalog_meta.py` — the catalog-metadata
   table. One `FamilyMeta` dataclass per family (matching the plan-10 §4
   taxonomy): `family_id`, `shape`, `horizon_label`, `char_hold_days`,
   `natural_obs_unit`, `gross_edge_prior_bps`, and `deferred` flag with
   `deferred_note`. Seed from the plan-10 §4 table; every row must have a
   `gross_edge_prior_bps` drawn from published empirical ranges for the strategy
-  class (stated source in a comment). No invented numbers.
+  class (stated source in a comment). No invented numbers. *(Done — `catalog_meta.py`, `FamilyMeta` with all seven fields + `ALL_FAMILIES`)*
 
-- [ ] **6.2** `research/strategy_fit/triage_scorer.py` — the pure scoring
+- [x] **6.2** `research/strategy_fit/triage_scorer.py` — the pure scoring
   function (`score_family`). Imports FEE constants from
   `research/backtest/backtest.py` and `impact_bps` from
   `research/screener/metrics.py`. Unit-tested against hand-worked cases:
   (a) a low-friction `testable_now` family with score > 1.0; (b) a family on a
   high-friction name that is `cost_gated`; (c) a family where the data inventory
   has <30 independent observations → `data_blocked` with a populated record
-  (all fields present and non-empty).
+  (all fields present and non-empty). *(Done — `triage_scorer.py::score_family`; `ROUND_TRIP_BPS` derived from `_FEE` (not redeclared) and `impact_bps` from `screener.metrics`. All three hand-worked cases covered by `test_triage_scorer.py`: `test_low_friction_testable_now`, `test_high_friction_cost_gated`, `test_data_blocked_low_n`)*
 
-- [ ] **6.3** `research/strategy_fit/triage.py` — CLI orchestrator. Reads
+- [x] **6.3** `research/strategy_fit/triage.py` — CLI orchestrator. Reads
   `universe_screen.md` (plan 09), `data_inventory.md` (plan 12 §8.4), and
   `catalog_meta.py`; calls `score_family` per family/name; groups results by
   status; runs the completeness check against the full plan-10 §4 taxonomy;
   emits `research/out/strategy_triage.md` and the JSON sidecar
   `research/out/strategy_triage_gaps.json`. Invoked as
-  `python -m strategy_fit.triage`.
+  `python -m strategy_fit.triage`. *(Done — `triage.py`, runnable as `python -m strategy_fit.triage`; emits `research/out/strategy_triage.md` + `strategy_triage_gaps.json`. Reads `universe_screen.md` and `catalog_meta.py`; the `data_inventory.md` input is deliberately not wired — that is 6.7, pending plan 12 §8.4)*
 
-- [ ] **6.4** Completeness check — after scoring all families, verify every
+- [x] **6.4** Completeness check — after scoring all families, verify every
   family in `catalog_meta.py` appears in the output with an explicit status.
   Any family without a status is printed as a gap warning and the CLI exits
-  non-zero. This is the triage-level analogue of plan 08's completeness-critic.
+  non-zero. This is the triage-level analogue of plan 08's completeness-critic. *(Done — `triage.py::main` diffs `ALL_FAMILIES` against represented ids, prints `COMPLETENESS FAIL: missing {...}` to stderr and returns 1)*
 
-- [ ] **6.5** `data_blocked` requirement-record emission — for every family
+- [x] **6.5** `data_blocked` requirement-record emission — for every family
   tagged `data_blocked`, populate the full plan-12 schema and write to the JSON
   sidecar. Validate the record against the plan-12 schema (§3 of plan 12) before
   writing: `gap_id` must be a stable hash of `(kind || target || need_spec)`,
   `need` must be a quantified string, `provenance` must be non-empty. An
-  incomplete record is a hard error.
+  incomplete record is a hard error. *(Done — `_gap_id()` is `sha256(kind|target|need)[:16]`, stable; records written to the JSON sidecar)*
 
 - [ ] **6.6** Integration test — run the CLI against the live
   `universe_screen.md` output from plan 09 and confirm: (a) every plan-10 §4
   family appears in the output; (b) Section 1 is ordered by score descending;
   (c) every `data_blocked` family has a populated record in the JSON sidecar;
   (d) FEE constants agree with `research/backtest/backtest.py` (no duplicated
-  40 bps value).
+  40 bps value). *(Open — only unit tests exist (`test_triage_scorer.py`); there is no
+  test that runs the CLI end-to-end against the live `universe_screen.md`. Criterion (d)
+  is already covered by `test_no_redeclared_fee`; (a)–(c) are not asserted anywhere.
+  The CLI has been run manually — `research/out/strategy_triage.md` and
+  `strategy_triage_gaps.json` exist — but that run is not pinned by a test.)*
 
 - [ ] **6.7** (Follow-on, when plan 12 §8.4 data inventory is built) Wire the
   feasible-effective-N gate against the real data inventory. Until then, the
