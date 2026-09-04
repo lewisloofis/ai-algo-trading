@@ -12,6 +12,7 @@
 //	book     Reconstruct the order book at a given point in time.
 //	features Emit a consolidated book+price feature CSV for study use.
 //	trades   Emit a per-trade CSV (continuous-session, side-tagged only).
+//	bars     Emit an OHLCV bar CSV on a fixed interval (chartbit-comparable).
 //
 // Segment paths may be uncompressed (.binpb) or zstd-compressed (.binpb.zst).
 // Both local paths and S3 paths (s3://) are accepted in principle; S3 support
@@ -66,6 +67,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "sbcap trades: %v\n", err)
 			os.Exit(1)
 		}
+	case "bars":
+		if err := runBars(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "sbcap bars: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "sbcap: unknown subcommand %q\n\n", subcommand)
 		usage()
@@ -83,6 +89,7 @@ Usage:
   sbcap book     <seg> --symbol S --at HH:MM:SS
   sbcap features <seg>... --symbol S [--depth N] [--from HH:MM] [--to HH:MM]
   sbcap trades   <seg>... --symbol S [--from HH:MM] [--to HH:MM]
+  sbcap bars     <seg>... --symbol S [--interval 1m] [--from HH:MM] [--to HH:MM] [--tagged-only]
 
 Segment files: .binpb (raw) or .binpb.zst (zstd-compressed)`)
 }
