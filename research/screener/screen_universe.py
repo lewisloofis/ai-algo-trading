@@ -126,6 +126,13 @@ def _build_ssl_context() -> ssl.SSLContext:
     - SB_INSECURE_TLS=1/true/yes  — disable certificate verification entirely
       (use ONLY behind a trusted corporate MITM proxy).
     - SB_CA_BUNDLE=<path>         — path to a CA bundle PEM for custom roots.
+
+    When neither is set and the interpreter has no usable root store, fall back
+    to the certifi bundle.  A bare venv on macOS loads zero roots, which makes
+    OpenSSL reject the real DigiCert chain with the misleading error
+    "self-signed certificate in certificate chain" — it means "root not
+    trusted", not "MITM proxy".  Verification stays ON in every branch but
+    SB_INSECURE_TLS.
     """
     insecure = os.environ.get("SB_INSECURE_TLS", "").lower() in ("1", "true", "yes")
     ca = os.environ.get("SB_CA_BUNDLE")
@@ -140,7 +147,19 @@ def _build_ssl_context() -> ssl.SSLContext:
         return ctx
     if ca:
         return ssl.create_default_context(cafile=ca)
-    return ssl.create_default_context()
+    ctx = ssl.create_default_context()
+    if ctx.get_ca_certs():
+        return ctx
+    try:
+        import certifi
+    except ImportError:
+        logger.warning(
+            "TLS trust store is empty and certifi is not installed — HTTPS "
+            "requests will fail. Install certifi or set SB_CA_BUNDLE."
+        )
+        return ctx
+    logger.info("TLS trust store empty; falling back to certifi bundle")
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 # ---------------------------------------------------------------------------

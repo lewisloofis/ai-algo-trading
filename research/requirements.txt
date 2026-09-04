@@ -1,5 +1,7 @@
-pandas
+certifi
+matplotlib
 numpy
+pandas
+pyarrow
 scipy
 statsmodels
-matplotlib
