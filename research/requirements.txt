@@ -1,9 +1,13 @@
 boto3
+botocore
 certifi
 matplotlib
 numpy
 pandas
 pyarrow
+pytest
 pytz
+PyYAML
+scikit-learn
 scipy
 statsmodels
