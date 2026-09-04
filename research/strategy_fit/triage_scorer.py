@@ -2,19 +2,28 @@
 strategy_fit/triage_scorer.py — Pure triage scoring functions for Plan 16.
 
 No I/O.  No numpy.  No pandas.  All functions are fully type-annotated.
+
+Exception: `DataInventory.from_scan` performs real filesystem I/O (via
+`lib.data_inventory`) to measure actual data coverage. Everything else in
+this module remains pure.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
 from typing import Optional
 
 from strategy_fit.catalog_meta import FamilyMeta
 from strategy_fit.families_single_name import ROUND_TRIP_BPS
 from strategy_fit.financing import financing_bps
 from screener.metrics import impact_bps
+
+logger = logging.getLogger(__name__)
 
 MIN_EFF_N: int = 30
 DEFAULT_POSITION_IDR: float = 50_000_000
@@ -33,15 +42,93 @@ class NameAnnotations:
 
 @dataclass(frozen=True)
 class DataInventory:
-    """Static approximation of available data history (plan 16 §6.7).
+    """Available-data-history inputs to the triage scorer (plan 16 §6.7).
 
-    Values are conservative priors from plan-09/10 data notes.
+    The defaults below are NOT current data. They are a hardcoded fallback
+    of last resort — hand-written plan-09/10 notes that were already ten
+    weeks stale when roadmap W1.2 measured against them (see
+    docs/plans/00-roadmap-research-to-live.md §6 Wave 1). Constructing this
+    dataclass bare ranks strategy families against fiction. Prefer
+    :meth:`DataInventory.from_scan`, which measures the real on-disk stores
+    via `lib.data_inventory` and only falls back to these numbers — loudly,
+    via a logged warning — when no real data can be found.
     """
 
     daily_bar_trading_days: int = 239
     intraday_trading_days_core: int = 60
     intraday_trading_days_survivors: int = 5
     universe_size: int = 5
+
+    @classmethod
+    def from_scan(
+        cls,
+        intraday_store_dir: Optional[Path] = None,
+        segments_root: Optional[Path] = None,
+        today: Optional[date] = None,
+    ) -> "DataInventory":
+        """Measure real data availability (lib.data_inventory). Two DIFFERENT facts feed this:
+
+        `daily_bar_trading_days` comes from `lib.data_inventory.daily_bar_source_capability`
+        — the chartbit DAILY endpoint's fetchable-on-demand depth — NOT from
+        the intraday store. The two are governed by different limits: the
+        daily endpoint takes `limit=0` for its whole ~365-calendar-day
+        lookback in one call, while the intraday endpoint pages in <=90-day
+        chunks, which is why the on-disk intraday store is shallow. There is
+        no on-disk daily-bar store to measure instead (`scan_daily_store`
+        reports `()`). Falls back to the hardcoded prior, per-field, with a
+        logged warning, if this capability estimate is unavailable.
+
+        `intraday_trading_days_core`/`_survivors` and `universe_size` come
+        from the on-disk intraday store: the minimum distinct-trading-day
+        count across the relevant symbols — the number of periods for which
+        that group has data simultaneously, which is what a balanced
+        cross-sectional/pairs panel actually needs. Falls back to the
+        hardcoded priors, with a logged warning, if the scan finds no usable
+        intraday data at all.
+        """
+        from lib.data_inventory import build_inventory
+
+        scan_kwargs = {}
+        if intraday_store_dir is not None:
+            scan_kwargs["intraday_store_dir"] = intraday_store_dir
+        if segments_root is not None:
+            scan_kwargs["segments_root"] = segments_root
+        if today is not None:
+            scan_kwargs["today"] = today
+        report = build_inventory(**scan_kwargs)
+
+        if report.daily_bar_capability is not None:
+            daily_bar_trading_days = report.daily_bar_capability.estimated_trading_days
+        else:
+            logger.warning(
+                "DataInventory.from_scan could not measure daily-bar source capability; "
+                "falling back to hardcoded prior daily_bar_trading_days=%d.",
+                cls.daily_bar_trading_days,
+            )
+            daily_bar_trading_days = cls.daily_bar_trading_days
+
+        covered = [cov for cov in report.intraday_bars if cov.distinct_trading_days > 0]
+        if not covered:
+            logger.warning(
+                "DataInventory.from_scan found no usable intraday data; falling back to "
+                "hardcoded priors for intraday-derived fields (intraday_trading_days_core=%d, "
+                "intraday_trading_days_survivors=%d, universe_size=%d) that are ten-weeks-stale "
+                "plan-09/10 notes, not measured data.",
+                cls.intraday_trading_days_core,
+                cls.intraday_trading_days_survivors,
+                cls.universe_size,
+            )
+            return cls(daily_bar_trading_days=daily_bar_trading_days)
+
+        core_days = [cov.distinct_trading_days for cov in covered if cov.symbol in _INTRADAY_CORE_SYMBOLS]
+        other_days = [cov.distinct_trading_days for cov in covered if cov.symbol not in _INTRADAY_CORE_SYMBOLS]
+
+        return cls(
+            daily_bar_trading_days=daily_bar_trading_days,
+            intraday_trading_days_core=min(core_days) if core_days else 0,
+            intraday_trading_days_survivors=min(other_days) if other_days else 0,
+            universe_size=len(covered),
+        )
 
 
 @dataclass(frozen=True)
