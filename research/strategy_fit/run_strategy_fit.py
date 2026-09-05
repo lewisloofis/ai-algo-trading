@@ -12,7 +12,9 @@ Flow:
          a. Reject if hold > MAX_HOLD_TRADING_DAYS (capital_blocked).
          b. Run walk_forward_cell → WalkForwardResult.
          c. If decayed: record as decayed, skip cost gate.
-         d. Apply cost gate at worst-case entry_dow=Thursday.
+         d. Apply cost gate at the best-feasible (cheapest-financing) entry
+            weekday — the allocator chooses when to enter.  See
+            financing.best_feasible_hurdle_bps and ADR-0014.
     5. Collect all CellResult objects.
     6. Apply Benjamini-Hochberg FDR at α=0.10 across tested cells.
     7. Emit research/out/strategy_portfolio.md.
@@ -96,7 +98,10 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-WORST_CASE_ENTRY_DOW: int = 3       # Thursday — maximises financing cost
+# (A WORST_CASE_ENTRY_DOW constant lived here, pinned to Thursday.  It was
+#  unused, and ADR-0014 makes it wrong besides: the costliest 1-day-hold entry
+#  is Wednesday, whose settlement window straddles the weekend.  The gate uses
+#  financing.best_feasible_hurdle_bps, which sweeps every weekday.)
 FDR_ALPHA: float = 0.10             # Benjamini-Hochberg FDR level
 MODELLED_IMPACT_BPS: float = 0.0
 # Impact for daily / event / cross-sectional / pairs cells: still 0 (plan-13

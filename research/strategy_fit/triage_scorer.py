@@ -28,6 +28,14 @@ logger = logging.getLogger(__name__)
 MIN_EFF_N: int = 30
 DEFAULT_POSITION_IDR: float = 50_000_000
 FINANCING_ENTRY_DOW: int = 0
+"""
+Representative entry weekday for the triage financing estimate (Monday).
+
+Monday is one of the cheapest entry days at every hold within the ≤2-day
+ceiling (ADR-0014), so this matches what ``best_feasible_hurdle_bps`` would
+pick in the full grid: triage never scores a family against a weekend-
+straddling entry the allocator would simply not choose.
+"""
 
 
 @dataclass(frozen=True)

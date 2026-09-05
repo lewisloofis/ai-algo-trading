@@ -207,7 +207,8 @@ def emit_strategy_portfolio(
     lines.append(f"**Generated:** {generated_at}  ")
     lines.append(
         "**Capital model:** ADR-0011 — 300M IDR T+2 leverage sleeve, "
-        "10 bps/cal-day financing, ≤2 trading-day horizon ceiling."
+        "10 bps/cal-day financing (ADR-0014 settlement clock), "
+        "≤2 trading-day horizon ceiling."
     )
     lines.append("")
 
@@ -344,7 +345,14 @@ def emit_strategy_portfolio(
         reason = c.skip_reason or ""
         if c.status == "tested" and not reason:
             if c.passes_cost_gate is False:
-                reason = f"cost_gated: net_edge={_fmt_float(c.net_edge_bps, 1)} bps < hurdle={_fmt_float(c.min_edge_hurdle_bps, 1)} bps"
+                # net_edge_bps is ALREADY gross − hurdle, so the gate test is
+                # "> 0", not "> hurdle".  Phrase it that way: the old wording
+                # ("net_edge=X < hurdle=Y") invited reading X as a gross edge
+                # and comparing it against Y a second time.
+                reason = (
+                    f"cost_gated: net_after_cost={_fmt_float(c.net_edge_bps, 1)} bps ≤ 0 "
+                    f"(gross − hurdle, where hurdle={_fmt_float(c.min_edge_hurdle_bps, 1)} bps)"
+                )
             elif c.decay_status == "decayed":
                 reason = f"decayed: mean_sharpe={_fmt_float(c.decay_metric, 2)}"
             elif c.fdr_accepted is False:
@@ -371,8 +379,8 @@ def emit_strategy_portfolio(
     # ---- Methodology notes ----
     lines.append("## Methodology Notes")
     lines.append("")
-    lines.append("- **Financing model:** ADR-0011, T+1 settlement lag (empirical). Holidays out of scope (v1).")
-    lines.append("- **Cost gate entry_dow:** Best-feasible (cheapest) weekday chosen by `best_feasible_hurdle_bps`. The allocator controls entry timing — deployability is tested at the cheapest day, not worst-case Thursday.")
+    lines.append("- **Financing model:** ADR-0011 rate (10 bps/calendar-day) on the ADR-0014 settlement clock: charged over `[settle(entry), settle(exit)]` with both legs at T+2, so the cost is 10 bps per trading day held except where the settlement window straddles a weekend (Wed entry on a 1-day hold: 30 bps). Holiday-aware when an entry date is supplied; the weekday sweep below assumes a holiday-free week.")
+    lines.append("- **Cost gate entry_dow:** Best-feasible (cheapest) weekday chosen by `best_feasible_hurdle_bps`. The allocator controls entry timing — deployability is tested at the cheapest day, not the worst case (which is Wednesday for a 1-day hold — see ADR-0014, not Thursday as ADR-0011 stated).")
     lines.append("- **FDR correction:** Benjamini-Hochberg at α=0.10 across the full (name, strategy, horizon) grid.")
     lines.append("- **Effective-N:** single_name per-symbol de-overlap; event_driven pooled across universe.")
     lines.append("- **Walk-forward:** fit=120 rows, test=40 rows, roll by test_window. Decay = majority of windows below Sharpe=0 AND hit_rate=0.5.")
