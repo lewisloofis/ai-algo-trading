@@ -54,53 +54,35 @@ resource "aws_ssm_parameter" "watchlist_id" {
 
 # §4 (Plan 03) — Credentials + stable device identity for headless re-login
 #
-# These three params support refresh-token-death self-healing (docs/plans/03-token-rotation.md).
-# When the refresh token dies the collector re-logs-in headlessly using username +
-# password + a pre-trusted player_id UUID, then re-seeds the token params above.
+# /sb-collector/{username,password,player_id} are DELIBERATELY NOT MANAGED BY OPENTOFU.
+# They are created and rotated entirely out-of-band; see infra/README.md
+# "Plan 03 headless re-login setup" for the seeding procedure.
 #
-# Like the token params, all three use lifecycle { ignore_changes = [value] }:
-#   1. TF writes the placeholder on first apply only.
-#   2. Real values are seeded out-of-band (see infra/README.md §Plan 03).
-#   3. Credentials NEVER enter TF state.
+# They *were* declared here as managed resources in 742d7e2 (2026-06-19 18:42), about
+# eight minutes AFTER the real values had already been hand-seeded (SSM shows username
+# v1 18:32:34, player_id v2 18:32:22, password v1 18:34:33). Because they were never in
+# state, every `tofu plan` from that day until 2026-09-05 read
+# "3 to add ... value = PLACEHOLDER_SEED_OUT_OF_BAND" — i.e. the next apply would have
+# silently overwritten the live Stockbit credentials and the server-trusted player_id
+# with placeholder strings.
 #
-# IAM coverage: the existing SSMParameters statement in iam.tf already grants
-# ssm:GetParameter/ssm:GetParameters/ssm:PutParameter on
-# arn:aws:ssm:<region>:<account>:parameter/sb-collector/*
-# which covers /sb-collector/username, /sb-collector/password, and
-# /sb-collector/player_id with no IAM change required.
-
-resource "aws_ssm_parameter" "username" {
-  name        = "/sb-collector/username"
-  description = "Stockbit account username for headless re-login (Plan 03). Seeded out-of-band; never set via TF after initial apply."
-  type        = "SecureString"
-  value       = "PLACEHOLDER_SEED_OUT_OF_BAND"
-
-  lifecycle {
-    # Prevent TF from reverting the credential seeded out-of-band.
-    ignore_changes = [value]
-  }
-}
-
-resource "aws_ssm_parameter" "password" {
-  name        = "/sb-collector/password"
-  description = "Stockbit account password for headless re-login (Plan 03). Seeded out-of-band; never set via TF after initial apply."
-  type        = "SecureString"
-  value       = "PLACEHOLDER_SEED_OUT_OF_BAND"
-
-  lifecycle {
-    # Prevent TF from reverting the credential seeded out-of-band.
-    ignore_changes = [value]
-  }
-}
-
-resource "aws_ssm_parameter" "player_id" {
-  name        = "/sb-collector/player_id"
-  description = "Stable random UUID used as Stockbit device identity (player_id). Established once interactively; trusted thereafter. Seeded out-of-band; never set via TF after initial apply."
-  type        = "SecureString"
-  value       = "PLACEHOLDER_SEED_OUT_OF_BAND"
-
-  lifecycle {
-    # Prevent TF from reverting the player_id seeded out-of-band.
-    ignore_changes = [value]
-  }
-}
+# `lifecycle { ignore_changes = [value] }` was on all three and did NOT protect them:
+# ignore_changes applies to UPDATES of an already-managed resource, never to CREATE.
+# That is what made the trap invisible — the guard read as protection.
+#
+# Failure mode had it fired: nothing breaks immediately, because the collector only
+# touches these when the refresh token dies. The next refresh-token death would fall
+# through to headless re-login, authenticate with a placeholder username/password, fail,
+# and take capture down mid-week — the exact failure plan 03 exists to prevent. Losing
+# player_id is worse than losing a password: it is a device identity trusted server-side
+# once, so re-establishing it needs an interactive login with OTP (README step 1-5).
+#
+# Do NOT re-add them as managed resources. `tofu import` is also the wrong fix: it would
+# pull the real secret values into terraform.tfstate, breaking the invariant stated at the
+# top of this file that credentials never enter TF state. Out-of-band is the correct and
+# intended lifecycle for all three.
+#
+# IAM is unaffected — the SSMParameters statement in iam.tf grants the collector
+# ssm:GetParameter/GetParameters/PutParameter on
+# arn:aws:ssm:<region>:<account>:parameter/sb-collector/* , which already covers these
+# three by prefix and never depended on them being TF-managed.

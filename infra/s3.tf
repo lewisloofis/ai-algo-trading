@@ -1,18 +1,20 @@
-# §7.4 / §12.3 — S3 bucket with versioning suspended, SSE-S3, public-access-block, and lifecycle
+# §7.4 / §12.3 — S3 bucket with versioning enabled, SSE-S3, public-access-block, and lifecycle
 # Bucket name includes account ID to guarantee global uniqueness.
 
 resource "aws_s3_bucket" "marketdata" {
   bucket = "marketdata-${data.aws_caller_identity.current.account_id}"
 }
 
-# Versioning suspended to cap storage costs — AWS does not allow fully removing versioning
-# once it has been enabled, so "Suspended" is the correct setting. Noncurrent-version expiry
-# in the lifecycle below cleans up any versions accumulated while versioning was active.
+# Versioning ENABLED (roadmap W0.3, 2026-09-05). Previously "Suspended", which meant an
+# accidental `aws s3 rm` or an overwrite of artifacts/collector had no undo. The corpus is
+# append-only under unique keys, so in steady state versioning creates no noncurrent versions
+# at all and therefore costs nothing; it exists purely as the undo path for operator error.
+# Noncurrent-version expiry in the lifecycle below bounds the cost of any that do appear.
 resource "aws_s3_bucket_versioning" "marketdata" {
   bucket = aws_s3_bucket.marketdata.id
 
   versioning_configuration {
-    status = "Suspended"
+    status = "Enabled"
   }
 }
 
@@ -38,14 +40,24 @@ resource "aws_s3_bucket_public_access_block" "marketdata" {
 }
 
 # Lifecycle policy on raw/ prefix (§7.4 / §4 of 02-storage-format-and-replay.md):
-#   0–29 days  → Standard (fast access for recent backtests)
-#   30–89 days → Standard-IA (~45% saving, millisecond access)
-#   90+ days   → Glacier Deep Archive (~$0.00099/GB-month cold archive)
-# Note: AWS requires STANDARD_IA transitions ≥30 days, and ≥30 days in IA
-# before transitioning to DEEP_ARCHIVE — hence 30/90 rather than 7/30.
+#   0–29 days → Standard (fast access for recent backtests)
+#   30+ days  → Standard-IA (~45% saving, millisecond access)
+# Note: AWS requires STANDARD_IA transitions ≥30 days — hence 30 rather than 7.
+#
+# The 90-day DEEP_ARCHIVE transition was REMOVED 2026-09-05 (roadmap W0.3). It was
+# measured on 2026-09-04 and is not worth its cost:
+#   * It saves ≈ $0.33/yr (0.91 GB today, ~3.9 GB/yr projected at 15.6 MB/day).
+#   * Restore is 12–48 h with a 180-day minimum billing per object — that latency would
+#     land on exactly the full-window re-reads Wave 2 depends on, and the minimum makes
+#     it expensive to undo once objects have locked.
+#   * It is counterproductive for most objects: 709 of 1028 are <128 KB manifests, too
+#     small to have transitioned to IA. Deep Archive bills +32 KB/object at archive rates
+#     and +8 KB/object at Standard, so the manifests — the index scanned first to locate
+#     a session — would occupy ~3x more billed storage archived than they do now.
+# If an archive tier is ever wanted on principle, push it to 365 days; do not restore 90.
 # Additional rules:
 #   abort incomplete multipart uploads after 7 days (cost hygiene)
-#   expire noncurrent versions after 1 day (purge versions accumulated before versioning was suspended)
+#   expire noncurrent versions after 30 days (bounds the cost of the undo window above)
 resource "aws_s3_bucket_lifecycle_configuration" "marketdata" {
   bucket = aws_s3_bucket.marketdata.id
 
@@ -65,20 +77,19 @@ resource "aws_s3_bucket_lifecycle_configuration" "marketdata" {
       storage_class = "STANDARD_IA"
     }
 
-    transition {
-      days          = 90
-      storage_class = "DEEP_ARCHIVE"
-    }
-
     # Abort incomplete multipart uploads — avoids orphaned MPU storage charges.
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
     }
 
-    # Expire any noncurrent versions after 1 day — cleans up versions accumulated
-    # before versioning was suspended, preventing ongoing storage charges.
+    # Expire noncurrent versions after 30 days. With versioning enabled this is the
+    # length of the undo window for an accidental overwrite or delete under raw/.
+    # 1 day (the previous value, set when versioning was Suspended and this rule was
+    # only purging historical leftovers) would be a 24-hour hole in that safety net.
+    # Cost of the longer window is ~0 because append-only unique keys produce no
+    # noncurrent versions in normal operation.
     noncurrent_version_expiration {
-      noncurrent_days = 1
+      noncurrent_days = 30
     }
   }
 }
