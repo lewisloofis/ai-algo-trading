@@ -632,6 +632,17 @@ gate is now agreement, not a PASS.*
       > walk-forward — so the selection-bias lesson that killed ORB (§6) is **untested
       > here**, over a 115-name × several-family × several-hold grid.
       >
+      > **✅ RESOLVED 2026-09-05 (evening) — see §7.** Plan 13's daily impact model
+      > shipped and ran live; all of these cells are now judged and none remains
+      > `impact_not_priced`. The daily shape also got the missing out-of-sample split
+      > (`strategy_fit/daily_walk_forward.py`). Outcome: **3 survivors** (PTRO
+      > `daily_momentum` h2, PTRO `volume_breakout` h2, TINS `mean_reversion` h2). The
+      > BNBR warning immediately above was correct in full — pricing impact moved its
+      > hurdle from ~170 bps to **459.2 bps** and its net to **−129.5 bps**. The new OOS
+      > split separately killed BREN h2, RATU h1 and WIFI h2 on negative out-of-sample
+      > edge, confirming the selection-bias lesson was indeed untested here and did
+      > apply.
+      >
       > Also settled: **cross-sectional and pairs are structurally infeasible** and now
       > say so instead of being scored. The best cointegrated pair (BUMI/DEWA) is
       > gross −100.0 bps at hold 1 anyway. All six pooled event cells are cost-gated
@@ -835,34 +846,69 @@ gate it sits behind was not cleared, it was answered in the negative.*
    a t4g.nano and the box needs resizing. Rollback:
    `git checkout infra/terraform.tfvars && cd infra && tofu apply`.
 
-**Then the highest-value work, now measured rather than guessed: build plan 13's
-daily impact model.** W2.3 tested 1,392 cells; on the corrected ADR-0014 financing
-clock 815 of the 836 tested are cost-gated outright, and of the 21 that clear the
-cost gate **17 are blocked solely because `impact.py` does not cover the
-`single_name_time_series` shape**. Those 17 are FDR-accepted at α=0.10 (BNBR
-`daily_momentum` h2 at 169.7 bps p=0.001 down to PTRO `daily_momentum` h1 at ~0.0 bps
-p=0.001). They are *unjudgeable*, not dead — and they cannot be judged in either
-direction until daily impact is priced. Nothing else in the backlog unblocks as much
-for as little.
+**✅ DONE 2026-09-05 (evening) — plan 13's daily impact model is built and has run
+live. The 17 blocked cells are resolved; `impact_not_priced` no longer appears on any
+cell in the grid.** `strategy_fit/impact.py` now prices the `single_name_time_series`
+shape from daily bars, and `strategy_fit/daily_walk_forward.py` (new) gives the daily
+shape its first genuine out-of-sample split.
 
-> Four of the 17 (DEWA `volume_breakout` h2 +5.3, INET `volume_breakout` h2 +4.8,
-> WIFI `mean_reversion` h2 +0.4, PTRO `daily_momentum` h1 ≈ +0.0) clear the gate by
-> **less than the 10 bps the financing correction itself was worth**. They are
-> knife-edge by construction and any non-zero daily impact charge will re-kill them;
-> do not treat them as four new candidates. The correction's real effect is
-> correctness, not candidates — see
-> [ADR-0014](../adr/0014-financing-accrues-between-settlement-dates.md).
+**Verdict: PASS on 3 cells** (115-name universe, `--use-calibrated`, 1,385 cells: 826
+cost-gated, 345 skipped_horizon, ~190 insufficient_n, 11 decayed, 8 through the cost
+gate — of which 3 pass, 3 are killed by the new OOS split, 2 are FDR-rejected):
 
-Two things must happen alongside it, or it will reproduce the exact failure that
-killed ORB:
+| Cell | Net | Impact | OOS edge (n) | Persistent |
+|---|---|---|---|---|
+| PTRO `daily_momentum` h2 | +43.5 | 5.5 | +209.5 (53) | YES |
+| PTRO `volume_breakout` h2 | +11.7 | 5.5 | +106.7 (67) | yes, UNDERPOWERED |
+| TINS `mean_reversion` h2 | +4.6 | 21.9 | +183.1 (48) | yes, UNDERPOWERED |
 
-- **Give the daily shape an out-of-sample split.** It uses a decay metric, not a
-  walk-forward, so none of the 13 has ever been tested outside the window it was
-  selected from — across a 115-name × families × holds grid. FDR controls for
-  multiplicity; it does not control for that.
-- **Scrutinise the penny names.** BNBR's friction hurdle is ~170 bps, so its 159.7 bps
-  net implies ~330 bps gross. That is precisely where impact at 30M IDR notional could
-  be the entire result.
+**The headline is BNBR, and it vindicates the whole exercise.** BNBR `daily_momentum`
+h2 was the largest cell in the W2.3 report at 169.7 bps. Pricing impact moved its
+hurdle from ~170 bps to **459.2 bps** — a ~290 bps charge, because it is a sub-Rp-100
+name and 30M IDR is an enormous share of its turnover. Net **−129.5 bps**: dead. Same
+for VKTR (hurdle 184.2), BUVA (299.5), SSIA (115.4), INCO (97.0). **For the biggest
+apparent edges the unpriced impact was not a detail, it was the entire result.**
+
+Both guard-rails demanded above were built, and both fired:
+
+- **The OOS split killed three cells that the cost gate had passed** — BREN
+  `daily_momentum` h2 (OOS −87.9 on n=49), RATU `daily_momentum` h1 (−53.9 on n=60),
+  WIFI `daily_momentum` h2 (−21.9 on n=59). Real in-sample-only edges, caught.
+- **The penny names were where the impact lived**, exactly as predicted.
+
+> **A gate bug shipped and was caught only by the live run — worth remembering.** The
+> first live run reported PASS on *six* cells, including the three above with negative
+> OOS edge. `_is_pass_eligible` called `_clears_oos_power_gate`, which only asks
+> whether the OOS sample is big *enough* — it never asked what the sample *said*. The
+> split was built to catch in-sample-only edges and its verdict was not consumed.
+> Fixed: `_is_pass_eligible` now also requires `oos_persistent is not False` (`is not
+> False`, not `is True` — `None` means no split applies to that shape). Five regression
+> tests in `test_verdict_gates.py::TestOosPersistenceIsBlocking`.
+
+> **A data-volume assumption that was wrong.** The pre-work estimate — repeated
+> independently by a subagent — was that hold=2 daily cells would be untestable
+> out-of-sample (~21 vs ~22–24 observations against `MIN_EFF_N=30`), both derived from
+> "~1 yr of chartbit daily bars". **The 90-day cap is on the *intraday* endpoint.** The
+> daily endpoint returns 631 rows (2024-01-02 → 2026-09-04), so OOS is ~250 rows and
+> ~60 observations at h2 — which is why h2 cells dominate the survivor list. Two
+> independent estimates agreeing confirmed the arithmetic, not the shared bad premise;
+> a cheap live probe settled it in seconds. **Probe the data before reasoning about its
+> size.**
+
+**These 3 are provisional leads, not a green light.** Before anything downstream
+treats them as deployable:
+
+- **The impact coefficient is borrowed.** `impact_coeffs.json` was calibrated (plan 15)
+  from tick fills on *intraday* executions for 7 large-caps. Applying it to daily cells
+  is an assumption, recorded in `impact.DAILY_COEFF_IS_BORROWED_NOTE`.
+- **TINS clears by 4.6 bps against a 21.9 bps impact charge** — entirely inside that
+  coefficient's error bar. Treat as non-deployable until TINS has measured ticks (it
+  joined the capture watchlist 2026-09-05; first session Mon 2026-09-07).
+- **Two of the three are the same name.** That is concentration, not a portfolio.
+- All three are h2, i.e. maximum financing exposure under the ADR-0011 clock.
+- 2 of 3 are UNDERPOWERED: OOS n clears the hard floor but misses the power-derived
+  required-N.
+
 
 **Then, what is worth testing next?** Not more machinery. The factory now works — it is
 what produced both the kill and the block. Constraints that now bound any new
@@ -880,16 +926,16 @@ hypothesis:
   removes two of the five shapes in the §4 catalog outright, which
   `catalog_meta.py` still lists as `testable_now` and should be corrected.
 - **Selected before the window.** The failure that killed ORB was evaluating names on
-  the period they were chosen on. The W0.2 widening (43 names, including a
+  the period they were chosen on. The W0.2 widening (47 names, including a
   **10-name random control slice** sampled before any result is known) exists exactly
   so the next test can avoid it. That control slice is the most valuable thing capture
   is now accruing — it is the only part of the universe no backtest has touched.
 
-**And the standing blocker:** a full plan-10 grid re-run needs `--source live`, i.e.
-a valid `SB_BEARER_TOKEN` (the daily families have no on-disk store). The intraday
-answer above did not need one, but the daily families — BREN `daily_momentum`, RATU
-`volume_breakout` — are currently excluded by the `impact_priced` gate rather than by
-re-measurement, and remain formally untested under the corrected long-only code.
+**The standing `SB_BEARER_TOKEN` blocker is cleared** — the live grid above ran on a
+valid token, so the daily families are no longer excluded by the `impact_priced` gate
+and are now formally tested under the corrected long-only code. A token is still
+required for any future re-run (the daily families have no on-disk store), and tokens
+expire in roughly a day.
 
 > **What Wave 1 changed about Wave 2.** Two constraints are now measured rather
 > than assumed. Volume capture degrades only in the busiest bars — quintiles 1–3

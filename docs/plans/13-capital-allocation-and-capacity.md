@@ -1,6 +1,6 @@
 # Capital Allocation & Capacity — Sizing the 300M Leverage Sleeve as a Periodic Batch Allocator
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-20
+> **Status:** 🟡 Partially delivered — the **daily impact model shipped 2026-09-05** (see §Impact-model delivery below); basket construction, capacity caps, duty-cycle scheduling and drawdown guardrails remain unbuilt · **Owner:** @lewis · **Updated:** 2026-09-05
 > **Related:** [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [09-universe-screener.md](./09-universe-screener.md) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [08-alpha-factory-workflows.md](./08-alpha-factory-workflows.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) (§2–3) · [Plans index](./README.md)
 
 > **What this is.** The layer that decides *how much to deploy and when*, given
@@ -33,6 +33,46 @@ should simply consume.
 > all be run and unit-tested against plan 10's output. The live allocation loop
 > (§7 steps 7.5–7.7) is blocked on live execution (pillar 2) and the post-trade
 > store (pillar 4.2), consistent with plan 11's blocked status.
+
+## 1b. Impact-model delivery (2026-09-05)
+
+The piece of this plan that plan 10 was blocked on — **pricing market impact for the
+daily `single_name_time_series` shape** — is built and has run live. Everything else in
+this plan (basket construction, per-name capacity caps, duty-cycle scheduling, drawdown
+guardrails) is still unbuilt.
+
+**What shipped:**
+- `research/strategy_fit/impact.py` — `compute_daily_vol_bps_from_daily_bars`,
+  `compute_adv_notional_idr_from_daily_bars`, `compute_impact_bps_from_daily_df`.
+  The **formula is unchanged** from the intraday path: the square-root law prices *one
+  execution*, and the `2×` factor is the entry leg plus the exit leg. A 2-day hold does
+  **not** double impact — holding is not executing, and under ADR-0011 the basket is
+  entered atomically in one day and exited in one day. Only the *estimation* of
+  `daily_vol_bps` and ADV differs, because daily bars are already one row per day (the
+  intraday helpers' `groupby("date")` was the plumbing gap). ADV prefers chartbit's own
+  `value` column over a close×volume reconstruction, and keeps zero-turnover days in the
+  median — a day the name did not trade is real evidence about capacity, and dropping
+  those days would understate impact precisely on the thin names where it decides the
+  cell.
+- `research/strategy_fit/daily_walk_forward.py` (new) — the daily shape's first
+  out-of-sample split. Raw bars are split by row position *before* the signal is
+  computed, so no lookback or forward-return window can straddle the boundary.
+
+**Result:** verdict PASS on 3 cells; the 17 previously blocked on `impact_not_priced`
+are all resolved. Full numbers and caveats in
+[roadmap §7](./00-roadmap-research-to-live.md#7-immediate-next-actions).
+
+**Two constants this plan still owes.** `POSITION_NOTIONAL_IDR = 30M` and the impact
+coefficient are both placeholders that the delivered model consumes:
+- 30M IDR is a flat "300M sleeve / ~10 names" slice. Real per-name capacity sizing is
+  §7 of this plan and is unbuilt, so **every impact number in the live grid is
+  conditional on that flat slice.** Impact scales analytically as `coeff·√(size/30M)`,
+  so a sensitivity sweep needs no re-fetch.
+- The coefficient is **borrowed**: `impact_coeffs.json` was calibrated (plan 15) from
+  tick fills on *intraday* executions for 7 large-caps. Names outside that sample fall
+  through to `global_default = 1.0` — the conservative high-friction end, so
+  uncalibrated names are over-charged rather than under-charged. See
+  `impact.DAILY_COEFF_IS_BORROWED_NOTE`.
 
 ## 2. Locked decisions (inherited from ADR-0011)
 
