@@ -26,3 +26,34 @@ deadlines:
       and collector/internal/calendar/idx_holidays.json. Verify trading-day count
       matches IDX published JUMLAH HARI BURSA. Set provisional: false after
       reconciliation.
+      THEN REBUILD AND REDEPLOY THE COLLECTOR - idx_holidays.json is compiled
+      into the binary via //go:embed (collector/internal/calendar/calendar.go:12),
+      so editing the JSON alone changes NOTHING on the running box. This is
+      exactly the W0.4 failure mode: a stale 2026-06-19 artifact kept booting and
+      shipping heartbeat segments on 2026-08-17 and 2026-08-25 because the
+      holiday self-skip it needed was only ever in the repo. Redeploy with:
+      make build-linux-arm64 && aws s3 cp bin/linux-arm64/collector
+      s3://marketdata-047915756052/artifacts/collector
+      Back up the current artifact to a .bak-YYYYMMDD key first, then confirm
+      with: python scripts/collector_healthcheck.py (artifact age must read ~0d).
+      The two JSON copies must stay byte-identical - verify with shasum -a 256.
+
+  - id: verify-widened-watchlist-capture
+    due: "2026-09-08"
+    lead_days: 3
+    desc: >
+      ONE-OFF. First session under watchlist_id=w02-widened (43 names, applied
+      2026-09-05 while the box was stopped). Confirm the widening did not degrade
+      capture. collector_healthcheck.py catches a ZERO-record session but NOT
+      partial degradation, so both checks are needed:
+      (1) python scripts/collector_healthcheck.py  -- expect exit 0, artifact ~3d.
+      (2) Re-run the plan-12 section 5d sequence-gap analysis on the first
+      w02-widened session and compare the 7 survivors against the 2026-09-04
+      baseline: RATU -1.1, BREN 8.5, ENRG 12.2, BRPT 14.7, RAJA 18.6, PTRO 19.3,
+      TPIA 20.6 percent. Those losses are UPSTREAM conflation, so they should be
+      roughly unchanged. If they worsen materially the collector IS saturating at
+      43 symbols on t4g.nano (0.5 GB, burstable) and the box needs resizing.
+      Also confirm S3 now writes under raw/dt=<date>/w02-widened/ and that
+      research readers still union the old plan10-survivors prefix.
+      Rollback: git checkout infra/terraform.tfvars && cd infra && tofu apply
+

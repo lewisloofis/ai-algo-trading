@@ -13,6 +13,34 @@
 
 ---
 
+
+> ## ⚠️ 2026-09-05 — THE PARITY ENGINE DOES NOT HAVE PARITY
+>
+> This plan's premise (roadmap §2) is "the event-driven **Go** engine that runs the
+> *same* `strategy.go` interface live and in replay". At the strategy-definition level
+> that is **not currently true**, and §7.8 has been treated as an arbiter of the Python
+> harness's result while testing a different rule:
+>
+> | | entry trigger | threshold |
+> |---|---|---|
+> | Go `strategy/strategies/orb/orb.go` | any liveprice **tick** | fixed **0.5 %** above the day's **first tick** (`ORBBreakoutPct = 0.005`; `st.openPx` is set from the first tick, not an opening range) |
+> | Python `research/strategy_fit/families_intraday.py` | 1-minute bar **close** | **high of the first 30 minutes** (`ORB_WINDOW_MINUTES = 30`) |
+>
+> "Buy on a 0.5 % move off the open" and "buy on a bar close above the opening-range
+> high" are different strategies. The replay finds ~45 trades/symbol where the bar-based
+> family finds ~25 over the same 53 sessions — that gap is the rule, not the substrate.
+>
+> This inflated the roadmap's central "the harness and the tape disagree" mystery, which
+> turned out to be **three** differences at once: different windows (in-sample vs
+> out-of-sample), different trade universes (the harness scored unrealizable shorts until
+> `c62eba8`), and different rules (this).
+>
+> **Both rules lose.** The W2.4 re-run over 53 sessions: 319 round-trips, **−59.5 bps
+> gross / −99.4 bps net**, every symbol negative gross, win rate 26–44 %. The Python rule
+> loses too (roadmap §6). So the conclusion is not in doubt — but it was reached by
+> accident, and until the definitions are reconciled this engine cannot be used to
+> confirm or refute a research result. **Open, and a prerequisite for §7.11–7.16.**
+
 ## 1. Why now / scope discipline
 
 The roadmap (plan 00 §6) defers execution machinery until a confirmed edge

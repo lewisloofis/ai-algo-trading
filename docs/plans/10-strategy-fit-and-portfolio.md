@@ -317,6 +317,48 @@ on the low-friction names the intersection surfaces (e.g. ITMG-class).
 
 ---
 
+## ⛔ VERDICT SUPERSEDED 2026-09-05 — the PASS does not survive correction
+
+*Everything in this plan describing surviving cells, an impact-robust ORB core, or a
+provisional PASS is superseded. The full reasoning, tables and method live in
+[roadmap §6 "Wave 2 exit criterion MET"](./00-roadmap-research-to-live.md); this is the
+short form so nobody reads the sections below without it.*
+
+Three independent defects each inflated the reported result, and they compound:
+
+1. **The report scored trades a retail account cannot make.**
+   `research/out_live/strategy_portfolio.md` has mtime **2026-06-27 22:37**;
+   `c62eba8` "constrain to long-only; remove short leg" landed **2026-06-29 12:12** and
+   the report was never regenerated. IDX retail cannot short. Signature: it shows ~54 ORB
+   trades for PTRO in ~55 days (~98 % of days firing) where the corrected long-only code
+   finds 27. That fix had been applied to **ORB only** — every other family in the
+   library still scored `sign(signal) × forward_return` until 2026-09-05.
+2. **The gates could not change the verdict.** 9 of 11 surviving cells carried
+   `OOS Eff-N = 0` and the other 2 an impact of `0.0` that had never actually been
+   priced. Both are now blocking (roadmap W2.1), and the verdict becomes
+   **INCONCLUSIVE with an empty survivor table**.
+3. **The evaluation was in-sample.** This plan's live run was **2026-06-20** against
+   chartbit data spanning 2026-03-25 → 06-19; forward capture of exactly those seven
+   survivors began **2026-06-22**. Splitting at that date, the ORB edge is
+   ENRG +94.2 → −0.8, TPIA +54.0 → −0.7, BRPT +38.0 → +0.7 bps, and PTRO was negative
+   in both. The edge exists only in the window the names were chosen on.
+
+**Cross-substrate check (the [plan 17](./17-execution-and-replay-parity-engine.md) §7.8
+contradiction, resolved).** Restricted to the same 53 sessions, the tick-tagged bars and
+the chartbit bars select the **same breakout days** — trade counts match exactly on 5 of
+7 names — and 5 of 7 are negative gross on both. There was never a substrate
+disagreement; §7.8's replay was simply measuring the out-of-sample period while this
+plan measured the in-sample one. **The replay was right.**
+
+**Also, independently: ORB cannot be tested on the captured tick window at all.** It
+fires on ~45–50 % of days, so 53 sessions yields 20–28 trades per name — every one below
+`MIN_EFF_N = 30`.
+
+**Recommendation: kill the intraday ORB / intraday-momentum family**, as plan 06 was
+killed. Not because the machinery failed — it worked, and is what produced this answer —
+but because the answer is *no edge*. Do not re-tune thresholds to keep cells alive. The
+§8 red flag is now closed, in the negative.
+
 ## Event-driven re-validation status (plan 17)
 
 **Harness:** live as of commit `4d3e51a` — `strategy/engine/` event-driven

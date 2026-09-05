@@ -29,7 +29,13 @@ out/
 *.png
 
 # Derived research data (regenerable from S3 segments or API pulls).
-research/data/
+# `/*` (not a bare directory match) so the negations below can still
+# un-ignore specific files — git cannot re-include a file whose parent
+# directory pattern excluded the directory itself.
+research/data/*
+# ...except the extraction script and its tests — source, not derived data.
+!research/data/extract_survivors.sh
+!research/data/test_extract_survivors.py
 
 # ---------------------------------------------------------------------------
 # Go
