@@ -640,6 +640,20 @@ gate is now agreement, not a PASS.*
       > every one below 50 %. The 5-day run's −112.3 bps taker was not a small-sample
       > artefact; on 15x the data it is −99.4.
       >
+      > **Mid fills — the unachievable best case — do not rescue it either.** Re-run with
+      > `-fill-mode mid`, same 319 round-trips: **−20.2 bps gross / −60.2 bps net**
+      > (5-day run was −76.2). The ~39 bps gap between taker gross (−59.5) and mid gross
+      > (−20.2) is the round-trip spread. Only 2 of 7 names turn gross-positive at mid
+      > (PTRO +12.7, RATU +2.1) and **both are still net-negative** once the ~40 bps fee
+      > lands — PTRO, the best cell in the best case, is −27.3 bps. A retail taker cannot
+      > systematically fill at mid, so this is a bound the strategy could never actually
+      > reach, and it loses anyway.
+      >
+      > | Fill mode | RTs | gross | net | 5-day equivalent |
+      > |-----------|----:|------:|----:|-----------------:|
+      > | taker | 319 | −59.5 | **−99.4** | −112.3 |
+      > | mid   | 319 | −20.2 | **−60.2** | −76.2 |
+      >
       > ⚠️ **But this is NOT a replay of the strategy the Python harness tested, and
       > §7.8 should stop being called "the arbiter" until that is fixed.** The two
       > implementations sharing the name "ORB" encode **different rules**:
