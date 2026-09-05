@@ -4,6 +4,18 @@
 - **Date:** 2026-06-20
 - **Deciders:** Lewis
 - **Tags:** capital, leverage, financing, cost-gate, sizing, risk
+- **Amended by:** [ADR-0014](./0014-financing-accrues-between-settlement-dates.md) (2026-09-05) — financing arithmetic only
+
+> ⚠️ **Amended 2026-09-05.** The capital model below stands in full — the 300M
+> facility, the T+2/T+3/T+4 clock, one borrow per cycle, the ~2-trading-day
+> horizon ceiling, and the 10 bps/calendar-day rate are unchanged. But the
+> **worked example and the day-of-week conclusion in this ADR are wrong**:
+> financing accrues between the two legs' T+2 *settlement* dates, so a Thu-entry /
+> Fri-sell costs 1 calendar day (10 bps), not 4 (40 bps), and **Wednesday** is the
+> expensive entry day rather than Thursday and Friday. The passages affected are
+> flagged inline below. Read
+> [ADR-0014](./0014-financing-accrues-between-settlement-dates.md) before using any
+> financing number from this document.
 
 > Pins the capital model that feeds [plan 10](../plans/10-strategy-fit-and-portfolio.md)'s
 > cost gate and motivates a forthcoming plan 13 (capital allocation & capacity).
@@ -47,6 +59,14 @@ This roughly **doubles** the real cost hurdle compared with a fee-only gate and
 introduces a **day-of-week structure** (early-week entries beat late-week and
 weekend-spanning ones).
 
+> ⚠️ **Superseded by [ADR-0014](./0014-financing-accrues-between-settlement-dates.md).**
+> The rate is right; the arithmetic above is not. Financing is charged over
+> `[settle(buy), settle(sell)]` with both legs at T+2, so the shift cancels and
+> the Thu→Fri example costs **1 calendar day (10 bps)**. The expensive entry is
+> **Wednesday** (settles Fri, exit settles Mon → the weekend lands inside the
+> charged window → 3 days), not Thursday or Friday. "Roughly doubles" and
+> "early-week entries beat late-week" are both artefacts of the overstated count.
+
 The only genuine owned-cash inflow is ~15M IDR/month from salary. At full
 deployment, financing costs approximately 0.6–1.2M IDR per cycle, ~4
 cycles/month ≈ 2.4–4.8M/month — a meaningful fraction of the salary drip.
@@ -81,7 +101,9 @@ plan 10 and plan 13 can build on them.
 
 4. **Financing is 10 bps/calendar-day on the borrowed amount.** The cost gate
    gains a `financing_bps = 10 × calendar_days_outstanding(entry_dow, hold)`
-   term. This makes the effective hurdle day-of-week-dependent and roughly
+   term. *(The formula stands; `calendar_days_outstanding` is redefined by
+   [ADR-0014](./0014-financing-accrues-between-settlement-dates.md) as
+   `settle(entry + hold) − settle(entry)`, both legs T+2.)* This makes the effective hurdle day-of-week-dependent and roughly
    doubles it relative to fees alone. The 40 bps round-trip fee gate from
    ADR-0009 / `research/backtest/backtest.py` remains the single source of
    truth for round-trip fees; financing is *added on top*, not a second copy of
@@ -147,8 +169,11 @@ rolling is not available without a reset gap that erases the position.
   bounded at the ADR level; exit-liquidity and drawdown constraints follow
   directly.
 - Day-of-week structure in the cost gate creates a real scheduling optimisation
-  lever: early-week entries are structurally cheaper and should be preferred by
-  the allocator.
+  lever. *(Direction corrected by
+  [ADR-0014](./0014-financing-accrues-between-settlement-dates.md): the lever is
+  to avoid the entry day whose settlement window straddles the weekend —
+  **Wednesday** on a 1-day hold, Tue/Wed on a 2-day hold — not to prefer
+  early-week entries.)*
 
 **Negative / costs**
 

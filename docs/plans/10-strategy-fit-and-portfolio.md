@@ -53,8 +53,10 @@ borrow is outstanding under T+2 settlement. The full pass test is therefore
 financing_bps`. The 40 bps round-trip FEE in `research/backtest/backtest.py`
 remains the single source of truth for round-trip fees; financing is added on
 top of it, not a second copy of it. Because financing is a function of hold
-length and entry day-of-week, the gate is now **day-of-week-dependent**: early-
-week entries are structurally cheaper; weekend-spanning holds are punishing.
+length and entry day-of-week, the gate is **day-of-week-dependent**: a hold
+whose settlement window straddles a weekend is punishing, and per
+[ADR-0014](../adr/0014-financing-accrues-between-settlement-dates.md) that is a
+**Wednesday** entry on a 1-day hold — not an early-week/late-week split.
 
 **Horizon-spanning and shape-spanning, data-chosen.** We do not pre-pick a
 horizon or a strategy shape. The panel spans from intraday (seconds–minutes,
@@ -126,23 +128,40 @@ is modelled per strategy from ADV and realised vol (plan 09 §3 square-root law)
 Financing is distinct from the per-name floor above: `min_edge_to_clear_bps`
 is fixed for a given name and price level; financing varies by hold length and
 entry day-of-week. The two are additive — both must be beaten for the full pass
-test to clear. Calendar days outstanding is the settlement-driven count: a
-Thursday borrow, sold Friday, settles Monday = 4 calendar days = 40 bps of
-financing, regardless of the 1-trading-day hold. Same-day round-trips complete
-within the trading session and carry 0 calendar days outstanding, so financing
-is zero. Weekend-spanning holds roughly double the worst-case hurdle versus a
-fee-only gate (per ADR-0011).
+test to clear.
 
-| Entry → exit | Calendar days outstanding | financing\_bps | Effective hurdle (≈ fee + financing) |
-|---|---|---|---|
-| Same-day round-trip | 0 | 0 | ~40 bps |
-| Mon→Tue (overnight) | ~1–3 | ~10–30 | ~50–70 bps |
-| Thu→Fri (settles Mon, carries weekend) | 4 | 40 | ~80 bps |
+**Calendar days outstanding is the gap between the two legs' settlement dates**
+([ADR-0014](../adr/0014-financing-accrues-between-settlement-dates.md)). The
+borrowed cash is out from the moment the *buy* settles until the *sell* settles,
+and both legs settle T+2, so the shift cancels:
 
-This day-of-week structure creates a real scheduling optimisation lever: early-
-week entries are structurally cheaper and should be preferred by the allocator
-(plan 13). Same-day round-trips avoid financing entirely and reopen the
-larger-move intraday band (see §4 below).
+```
+calendar_days_outstanding = settle(entry + hold) − settle(entry),   settle(d) = d + 2 trading days
+```
+
+The consequence is that the entry weekday only matters through the weekday its
+*settlement* lands on. A Wednesday buy settles Friday and its next-day exit
+settles Monday, so the weekend falls inside the charged window; every other
+weekday's 1-day hold is charged a single day.
+
+| Entry → exit | buy settles | sell settles | Calendar days | financing\_bps |
+|---|---|---|---|---|
+| Same-day round-trip | — | same date | 0 | 0 |
+| Mon→Tue | Wed | Thu | 1 | 10 |
+| Thu→Fri | Mon | Tue | 1 | 10 |
+| **Wed→Thu** | **Fri** | **Mon** | **3** (+Sat, +Sun) | **30** |
+| Mon→Wed (2-day hold) | Wed | Fri | 2 | 20 |
+| **Tue→Thu** (2-day hold) | **Thu** | **Mon** | **4** | **40** |
+
+An IDX holiday inside the charged window costs like a weekend day; one that
+shifts both settlements equally costs nothing.
+
+This is a real scheduling optimisation lever for the allocator (plan 13), but it
+is a *one-day-to-avoid* lever, not an early-week preference: skip the Wednesday
+entry on a 1-day hold, skip Tue/Wed on a 2-day hold. With the entry day chosen
+freely the best-feasible financing is exactly **10 bps per trading day held**
+within ADR-0011's ≤2-day ceiling. Same-day round-trips avoid financing entirely
+and reopen the larger-move intraday band (see §4 below).
 
 ## 4. The strategy panel — full catalog, status-tagged
 
@@ -358,6 +377,18 @@ fires on ~45–50 % of days, so 53 sessions yields 20–28 trades per name — e
 killed. Not because the machinery failed — it worked, and is what produced this answer —
 but because the answer is *no edge*. Do not re-tune thresholds to keep cells alive. The
 §8 red flag is now closed, in the negative.
+
+**One defect ran the other way (2026-09-05).** The financing clock overcharged every
+hold ≥ 1 cell by 10 bps — it counted from the trade date rather than between the two
+legs' T+2 settlement dates
+([ADR-0014](../adr/0014-financing-accrues-between-settlement-dates.md); §3 above is
+corrected). Re-running the grid on the corrected clock over the identical universe and
+the identical 1,390 coverage rows moves **815** cells to cost-gated (from 819), **21**
+through the cost gate (from 17), and **17** FDR-accepted cells blocked solely on
+`impact_not_priced` (from 13). It changes no verdict: the four newly-passing cells all
+clear by less than the 10 bps correction itself, so any non-zero daily impact charge
+re-kills them, and the intraday band is hold = 0 where financing was always zero. The
+kill above is unaffected.
 
 ## Event-driven re-validation status (plan 17)
 

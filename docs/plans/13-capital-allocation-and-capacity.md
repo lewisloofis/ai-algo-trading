@@ -56,6 +56,9 @@ it builds against them.
   from plan 10 applies: `net_edge_per_trade > 0` after `min_edge_to_clear_bps +
   modelled_impact + financing_bps`, where `financing_bps = 10 ×
   calendar_days_outstanding(entry_dow, hold)` (ADR-0011 §4; plan 10 §2–3).
+  Calendar days outstanding is the gap between the two legs' T+2 **settlement**
+  dates, so with the entry day chosen freely it is 10 bps per trading day held
+  ([ADR-0014](../adr/0014-financing-accrues-between-settlement-dates.md)).
 - **~15M IDR/month salary** is the only owned-cash drip. At full deployment,
   financing consumes ~0.6–1.2M/cycle, ~4 cycles/month ≈ 2.4–4.8M/month — a
   meaningful fraction of the salary inflow. Owned cash carries no T+4 clock.
@@ -78,9 +81,11 @@ raise utilisation above ~50% is owned cash (no T+4 clock), not more leverage.
 
 This framing also sizes the financing nut. Every cycle must clear
 `financing_bps × deployed_capital` before it is net positive. At 10 bps/cal-day
-and a 2-trading-day hold with no weekend crossing (~2–3 calendar days), the
-financing term is 20–30 bps on top of the 40 bps round-trip fee gate — roughly
-60–70 bps total hurdle before the cycle is in profit.
+and a 2-trading-day hold whose settlement window avoids the weekend, the
+financing term is **20 bps** on top of the 40 bps round-trip fee gate — roughly
+60 bps total hurdle before the cycle is in profit. A Tue or Wed entry on that
+same 2-day hold pays 40 bps instead, which is why the entry day is a scheduling
+decision and not a detail (ADR-0014).
 
 ## 4. Per-cycle basket construction & sizing
 
@@ -92,8 +97,12 @@ Each deployment cycle, the allocator:
 2. **Screens on the day-of-week financing cost** — recalculates the full pass
    test (`min_edge_to_clear_bps + modelled_impact + financing_bps`) for the
    current entry day-of-week and intended hold. Cells that cleared the static
-   gate in plan 10 may fail the dynamic day-of-week recheck on Thursday or Friday;
-   early-week entries are preferred (plan 10 §3, ADR-0011 §4).
+   gate in plan 10 may fail the dynamic day-of-week recheck on the one weekday
+   whose settlement window straddles the weekend: **Wednesday** for a 1-day hold,
+   **Tuesday or Wednesday** for a 2-day hold. Every other weekday is equally
+   cheap — there is no early-week preference (plan 10 §3, ADR-0014). Because the
+   allocator picks the entry day, this screen should normally be a scheduling
+   input ("do not open a 1-day basket on Wednesday") rather than a cell filter.
 3. **Caps each name at C\*** — see §5.
 4. **Builds a single basket** that fits the 300M one-shot budget subject to per-
    name C* caps. The basket is entered atomically; no second tranche, no add-to-
@@ -178,9 +187,12 @@ recalculation, C* caps applied, and the drawdown limit in force. Matches the
 
 - **C* consistency** — C* for each name reproduces the plan 09 §3 impact model;
   no name is over-allocated past its C* cap in the emitted basket.
-- **Financing recheck fires correctly** — a Thursday entry with a 1-trading-day
-  hold (4 calendar days; ADR-0011 example) raises the hurdle by 40 bps and
-  correctly rejects any survivor whose net edge is 40 bps or less.
+- **Financing recheck fires correctly** — a **Wednesday** entry with a
+  1-trading-day hold (3 calendar days: Fri settle → Mon settle, +Sat +Sun;
+  ADR-0014) raises the hurdle by 30 bps and correctly rejects any survivor whose
+  net edge is 30 bps or less, while the same cell entered Mon/Tue/Thu/Fri pays
+  only 10 bps and passes. A test that still expects a Thursday penalty is
+  asserting the superseded ADR-0011 arithmetic.
 - **Basket fits the facility** — total basket notional ≤ 300M in all test cases;
   no second tranche is ever emitted by the optimiser.
 - **Drawdown limit applied** — a synthetic basket whose worst-case loss exceeds

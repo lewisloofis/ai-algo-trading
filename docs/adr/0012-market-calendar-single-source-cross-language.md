@@ -37,6 +37,14 @@ how many trading/calendar days lie between A and B?" — and neither can today:
    not 4, so financing (and therefore the hurdle) is **understated** exactly when
    it matters most. This is a correctness gap in the gate, not a convenience item.
 
+   > **Note (2026-09-05):** the holiday-blindness argued here stands, and the
+   > calendar this ADR introduced is what makes the corrected clock possible. The
+   > *illustrative* 4-vs-5 calendar-day figures describe the trade-date-anchored
+   > count that
+   > [ADR-0014](./0014-financing-accrues-between-settlement-dates.md) has since
+   > replaced; financing now runs between the two legs' T+2 settlement dates.
+   > Read them as a description of the bug of the day, not as current values.
+
 A third, smaller need surfaced operationally: dated reminders such as "re-pull
 the chartbit intraday store before its rolling-90-day window leaves a gap" (see
 [plan 10](../plans/10-strategy-fit-and-portfolio.md) intraday-accrual note). That

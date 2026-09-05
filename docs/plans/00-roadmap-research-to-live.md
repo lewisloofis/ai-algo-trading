@@ -582,9 +582,17 @@ gate is now agreement, not a PASS.*
       >
       > **Only 17 cells pass the cost gate, and 13 of them are blocked on ONE missing
       > piece — `impact.py` does not model the daily shape.** These are FDR-accepted at
-      > α=0.10, not marginal:
+      > α=0.10, not marginal.
       >
-      > | Cell | hold | net bps | p | blocked by |
+      > ⚠️ **Superseded 2026-09-05 by the ADR-0014 financing correction** — the counts
+      > and net-bps figures in this block were computed on the trade-date-anchored
+      > settlement clock, which overcharged financing by 10 bps on every hold ≥ 1 cell.
+      > Re-run on the corrected clock, same universe and same 1,390 coverage rows:
+      > **815 cost-gated, 21 clear the cost gate, and 17 are FDR-accepted and blocked
+      > solely on `impact_not_priced`.** Every net-bps figure below is 10 bps low.
+      > The table is kept as the W2.3 record; the current numbers are in §7.
+      >
+      > | Cell | hold | net bps (as run) | p | blocked by |
       > |------|-----:|--------:|--:|------------|
       > | BNBR daily_momentum | 2 | 159.7 | 0.001 | impact_not_priced |
       > | WIFI daily_momentum | 2 |  51.9 | 0.006 | impact_not_priced |
@@ -813,13 +821,22 @@ gate it sits behind was not cleared, it was answered in the negative.*
    `git checkout infra/terraform.tfvars && cd infra && tofu apply`.
 
 **Then the highest-value work, now measured rather than guessed: build plan 13's
-daily impact model.** W2.3 tested 1,392 cells; 819 of the 836 tested are cost-gated
-outright, and of the 17 that clear the cost gate **13 are blocked solely because
-`impact.py` does not cover the `single_name_time_series` shape**. Those 13 are
-FDR-accepted at α=0.10 (BNBR `daily_momentum` h2 at 159.7 bps p=0.001 down to SSIA at
-6.6 bps p=0.023). They are *unjudgeable*, not dead — and they cannot be judged in
-either direction until daily impact is priced. Nothing else in the backlog unblocks
-as much for as little.
+daily impact model.** W2.3 tested 1,392 cells; on the corrected ADR-0014 financing
+clock 815 of the 836 tested are cost-gated outright, and of the 21 that clear the
+cost gate **17 are blocked solely because `impact.py` does not cover the
+`single_name_time_series` shape**. Those 17 are FDR-accepted at α=0.10 (BNBR
+`daily_momentum` h2 at 169.7 bps p=0.001 down to PTRO `daily_momentum` h1 at ~0.0 bps
+p=0.001). They are *unjudgeable*, not dead — and they cannot be judged in either
+direction until daily impact is priced. Nothing else in the backlog unblocks as much
+for as little.
+
+> Four of the 17 (DEWA `volume_breakout` h2 +5.3, INET `volume_breakout` h2 +4.8,
+> WIFI `mean_reversion` h2 +0.4, PTRO `daily_momentum` h1 ≈ +0.0) clear the gate by
+> **less than the 10 bps the financing correction itself was worth**. They are
+> knife-edge by construction and any non-zero daily impact charge will re-kill them;
+> do not treat them as four new candidates. The correction's real effect is
+> correctness, not candidates — see
+> [ADR-0014](../adr/0014-financing-accrues-between-settlement-dates.md).
 
 Two things must happen alongside it, or it will reproduce the exact failure that
 killed ORB:

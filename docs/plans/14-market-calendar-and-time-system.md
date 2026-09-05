@@ -25,6 +25,11 @@ Three independent needs converged on the same missing primitive:
   weekend-only arithmetic. A Thursday entry whose settlement leg crosses a Monday
   public holiday spans **5** calendar days, not 4 — so financing, and the hurdle a
   strategy must beat, is **understated** precisely on the expensive entries.
+  *(The holiday-blindness described here was real and is fixed. The specific
+  4-vs-5 figures quote the pre-[ADR-0014](../adr/0014-financing-accrues-between-settlement-dates.md)
+  settlement arithmetic, which counted from the trade date; do not reuse them as
+  current values. The primitive this plan delivered — `add_trading_days` on a
+  shared holiday file — is exactly what ADR-0014's corrected clock is built on.)*
 - **The collector cannot tell "market closed" from "outage."** ADR-0003 boots the
   box on a weekday EventBridge schedule with no holiday concept; on an IDX holiday
   it wakes into a dead session.

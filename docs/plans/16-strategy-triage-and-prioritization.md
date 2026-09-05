@@ -98,7 +98,8 @@ universe) has three components, all computable without running a backtest:
   must clear on this name: 40 bps base round-trip (from `research/backtest/
   backtest.py` FEE constants, per `reference/07-fees-and-costs.md`), plus
   financing for the family's characteristic hold horizon (10 bps per calendar day
-  outstanding under T+2 settlement, per ADR-0011), capped at the ≤2 trading-day
+  outstanding, counted between the two legs' T+2 settlement dates per
+  [ADR-0014](../adr/0014-financing-accrues-between-settlement-dates.md)), capped at the ≤2 trading-day
   ceiling the leverage facility imposes, plus modelled market impact at the name's
   ADV from plan 09's square-root law. Names with lower friction rank higher, all
   else equal.
@@ -182,6 +183,7 @@ The CLI is invoked as `python -m strategy_fit.triage` and emits
 | Data inventory | `research/out/data_inventory.md` (plan 12 §8.4) | "what history do we currently have?"; queried to compute feasible effective-N per family |
 | FEE constants | `research/backtest/backtest.py` | 40 bps round-trip; single source of truth; do not redeclare |
 | Financing rate | ADR-0011 | 10 bps per calendar day outstanding; ≤2 trading-day ceiling under the leverage facility |
+| Financing settlement clock | [ADR-0014](../adr/0014-financing-accrues-between-settlement-dates.md) | days charged = `settle(entry + hold) − settle(entry)`, both legs T+2 → 10 bps per trading day held at the cheapest entry weekday |
 
 The triage module imports FEE constants from `research/backtest/backtest.py`,
 consistent with the import discipline established in plans 09 and 10. No 40 bps
