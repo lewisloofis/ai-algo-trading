@@ -190,6 +190,43 @@ class TestRecomputeCellAtImpact:
         assert result.net_edge_bps == c.net_edge_bps
         assert result.passes_cost_gate == c.passes_cost_gate
 
+    def test_untested_intraday_cell_with_no_hurdle_is_returned_unchanged(self) -> None:
+        """Regression: an intraday cell that was never cost-gated must not crash.
+
+        `_run_strategy_fit._run_intraday_cell` returns early when the family
+        status is not "tested" (e.g. insufficient_n).  That branch sets
+        modelled_impact_bps — impact is computed before the family runs — but
+        leaves min_edge_hurdle_bps None, because a cell that was never scored
+        was never cost-gated.  The floor extraction
+        `min_edge_hurdle_bps - modelled_impact_bps` then raised
+        `TypeError: unsupported operand type(s) for -: 'NoneType' and 'float'`,
+        which surfaced as two failures in TestCLIFlag rather than here.
+
+        This became reachable in the fixture universe once the family library
+        was constrained to long-only (IDX retail cannot short): halving the
+        tradeable observations pushes the noise symbols below MIN_EFF_N, so
+        they return insufficient_n with impact already computed.
+        """
+        from strategy_fit.impact_sweep import recompute_cell_at_impact
+        c = dataclasses.replace(
+            _intraday_cell(),
+            status="insufficient_n",
+            skip_reason="eff_n=12 < MIN_EFF_N=30",
+            gross_edge_bps=None,
+            net_edge_bps=None,
+            p_value=None,
+            passes_cost_gate=None,
+            min_edge_hurdle_bps=None,   # never cost-gated ...
+            modelled_impact_bps=18.5,   # ... but impact was still computed
+        )
+        result = recompute_cell_at_impact(
+            c, coeff=0.5, position_notional_idr=15_000_000.0
+        )
+        assert result.status == "insufficient_n"
+        assert result.min_edge_hurdle_bps is None
+        assert result.modelled_impact_bps == 18.5
+        assert result.passes_cost_gate is None
+
     def test_intraday_cell_recomputes_hurdle_and_net(self) -> None:
         """Intraday cell with new coeff/size → hurdle and net_edge_bps updated."""
         from strategy_fit.impact_sweep import recompute_cell_at_impact, scale_impact_bps

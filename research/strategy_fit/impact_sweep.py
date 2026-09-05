@@ -160,6 +160,20 @@ def recompute_cell_at_impact(
     if cell.modelled_impact_bps is None:
         return dataclasses.replace(cell)
 
+    # A cell that was never cost-gated has no hurdle to re-derive a floor from.
+    # This is reachable and is NOT the same condition as the check above:
+    # _run_intraday_cell's early return for status != "tested" sets
+    # modelled_impact_bps (a real float, impact is computed before the family
+    # runs) but leaves min_edge_hurdle_bps None, because a cell that was never
+    # scored was never cost-gated. The subtraction below would then raise
+    # TypeError: unsupported operand type(s) for -: 'NoneType' and 'float'.
+    # Sweeping is meaningless for such a cell anyway — there is no gross edge to
+    # re-test against a new hurdle — so return it unchanged, exactly as for a
+    # non-intraday cell. (The `type: ignore[operator]` that used to sit on that
+    # line silenced this rather than handling it.)
+    if cell.min_edge_hurdle_bps is None:
+        return dataclasses.replace(cell)
+
     # Rescale impact analytically.
     new_impact = scale_impact_bps(
         impact_base_bps=cell.modelled_impact_bps,
@@ -168,7 +182,7 @@ def recompute_cell_at_impact(
     )
 
     # Reconstruct floor from the stored hurdle and base impact.
-    floor = cell.min_edge_hurdle_bps - cell.modelled_impact_bps  # type: ignore[operator]
+    floor = cell.min_edge_hurdle_bps - cell.modelled_impact_bps
 
     new_hurdle = floor + new_impact
     gross = cell.gross_edge_bps or 0.0

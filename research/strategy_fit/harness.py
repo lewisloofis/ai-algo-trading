@@ -315,3 +315,58 @@ class CellResult:
     Survivors with oos_persistent=False are NOT removed — data is thin —
     but they are annotated clearly in the report for human review.
     """
+    oos_sigma_bps: float | None = None
+    """
+    Measured OOS per-trade return dispersion in bps — the sample std of the
+    SAME de-overlapped signed-returns series that produces oos_eff_n and
+    oos_edge_bps (families_intraday.py's per_trade_sigma_bps, threaded
+    through strategy_fit/intraday_walk_forward.py).  Never a proxy (e.g. NOT
+    unconditional daily close-to-close vol) and never a hardcoded constant.
+    None when unavailable (non-intraday shape, or fewer than 2 OOS trades) —
+    oos_required_eff_n must not be computed with a fallback in that case.
+    """
+    oos_required_eff_n: int | None = None
+    """
+    Power-derived minimum OOS effective-N needed to resolve this cell's
+    observed OOS edge at z=2 sigma, given oos_sigma_bps (see
+    lib.stats.required_effective_n and intraday_walk_forward.py).
+    None when not computable (non-intraday shape, OOS edge non-positive, or
+    oos_sigma_bps unavailable).  This is NOT the hard not-zero floor
+    (MIN_OOS_EFF_N) — a cell can clear the hard floor and still fall short of
+    this number; see oos_underpowered.
+    """
+    oos_underpowered: bool | None = None
+    """
+    True iff this intraday cell clears the OOS hard floor (MIN_OOS_EFF_N) but
+    its oos_eff_n falls short of oos_required_eff_n — an honest, expected
+    "not enough data yet" verdict (plan-10 W2.1), not a pipeline failure.
+    False when the cell is not underpowered, when it fails the hard floor for
+    an unrelated reason (e.g. a non-positive OOS edge), or when oos_sigma_bps
+    was unavailable (power could not be assessed at all — a distinct, rarer
+    condition from "assessed and underpowered").
+    None → not applicable (non-intraday shape).
+    """
+    oos_split_skip_reason: str | None = None
+    """
+    The intraday walk-forward's own diagnostic for why the IS/OOS split
+    couldn't validate persistence (IntradayWalkForwardResult.skip_reason),
+    e.g. "thin OOS", "invalid split: neither IS nor OOS is usable at this
+    split frequency", or "OOS edge non-positive".  Distinct from the top-level
+    CellResult.skip_reason (populated only when status != "tested") — a cell
+    can be status="tested" (its full-window test succeeded) while its
+    walk-forward split independently found a problem; that must be reported
+    explicitly rather than silently discarded.  None when is_persistent=True
+    or not applicable (non-intraday shape).
+    """
+    # --- Impact-pricing provenance (plan-10 W2.1) ---
+    impact_priced: bool = False
+    """
+    Whether modelled_impact_bps reflects an actual measured/modelled impact
+    computation (True) versus impact never being priced for this cell's shape
+    (False, default).  Only intraday_same_day cells price impact today (see
+    strategy_fit/impact.py); single_name_time_series / event_driven /
+    cross_sectional / pairs cells leave this False until plan-13 extends the
+    impact model to those shapes.  Distinguishes "impact priced at a genuine
+    0.0" from "impact never priced at all" — a hard prerequisite for a cell
+    to contribute to a PASS verdict (see strategy_fit/report.py:compute_verdict).
+    """

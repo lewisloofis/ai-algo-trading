@@ -5,6 +5,8 @@ Validates strategy_fit/intraday_walk_forward.py:
   - IntradayWalkForwardResult: frozen dataclass fields
   - walk_forward_intraday: split logic (60/40 IS/OOS), persistence flag,
     thin-OOS conservative case, decay_ratio
+  - required_oos_eff_n / oos_underpowered: power-derived floor (plan-10 W2.1),
+    distinct from the hard MIN_OOS_EFF_N not-zero floor
 """
 from __future__ import annotations
 
@@ -367,3 +369,236 @@ class TestInsufficientData:
         result = walk_forward_intraday(df, run_orb_family)
         # Very few days → insufficient_n or thin OOS → conservative
         assert result.is_persistent is False
+
+
+# ---------------------------------------------------------------------------
+# Section F: power-derived required-N / oos_underpowered (plan-10 W2.1)
+# ---------------------------------------------------------------------------
+
+def _make_fixed_sigma_edge_df(
+    n_days: int = 100,
+    ref_price: float = 1000.0,
+    edge_bps: float = 15.0,
+    sigma_bps: float = 150.0,
+) -> pd.DataFrame:
+    """Intraday df with an EXACT, deterministic per-trade mean and dispersion.
+
+    Every day triggers the same ORB long breakout (OR bars flat at ref_price,
+    trigger bar at ref_price*1.001).  The per-trade return alternates between
+    (edge_bps + sigma_bps) and (edge_bps - sigma_bps) bps on successive days,
+    so — with no RNG, hence no seed-dependent flakiness — the realized signed-
+    returns series has sample mean == edge_bps exactly and sample std ==
+    sigma_bps (up to the ddof=1 correction) exactly, in both the IS and OOS
+    halves (n_days chosen so each half's day-count is even).
+
+    This models the *actual* per-trade dispersion measured by
+    families_intraday.py's per_trade_sigma_bps — unlike an injected day-level
+    price random walk (which cancels out of the trade-return ratio and would
+    leave the true per-trade sigma at ~0), this varies the trade's own P&L
+    directly, which is what lib.stats.required_effective_n must be fed.
+    """
+    rows: list[dict] = []
+    date = pd.Timestamp("2025-01-06")
+    days_added = 0
+    while days_added < n_days:
+        if date.weekday() >= 5:
+            date += pd.Timedelta(days=1)
+            continue
+        # OR bars 09:00-09:29: flat at ref_price (identical every day).
+        for m in range(30):
+            rows.append({"datetime": date.replace(hour=9, minute=m), "date": date.date(),
+                         "open": ref_price, "high": ref_price, "low": ref_price,
+                         "close": ref_price, "volume": 1000})
+        # Trigger bar 09:30: fixed small breakout — this IS the entry price.
+        trigger_close = ref_price * 1.001
+        rows.append({"datetime": date.replace(hour=9, minute=30), "date": date.date(),
+                     "open": ref_price, "high": trigger_close * 1.001, "low": ref_price,
+                     "close": trigger_close, "volume": 1000})
+        # Exit: alternating +/- sigma_bps around edge_bps, exact by construction.
+        delta = sigma_bps if (days_added % 2 == 0) else -sigma_bps
+        trade_return_bps = edge_bps + delta
+        exit_close = trigger_close * (1.0 + trade_return_bps / 1e4)
+        for h, m in [(11, 0), (16, 15)]:
+            rows.append({"datetime": date.replace(hour=h, minute=m), "date": date.date(),
+                         "open": trigger_close, "high": max(exit_close, trigger_close) * 1.001,
+                         "low": min(exit_close, trigger_close), "close": exit_close, "volume": 1000})
+        days_added += 1
+        date += pd.Timedelta(days=1)
+    return pd.DataFrame(rows)
+
+
+class TestPowerDerivedRequiredN:
+    def test_result_exposes_required_oos_eff_n_and_underpowered_fields(self) -> None:
+        """IntradayWalkForwardResult must expose the two new fields."""
+        from strategy_fit.intraday_walk_forward import IntradayWalkForwardResult
+        r = IntradayWalkForwardResult(
+            is_edge_bps=10.0,
+            oos_edge_bps=5.0,
+            is_hit_rate=0.55,
+            oos_hit_rate=0.52,
+            oos_eff_n=15,
+            decay_ratio=0.5,
+            is_persistent=True,
+            skip_reason=None,
+        )
+        assert hasattr(r, "required_oos_eff_n")
+        assert hasattr(r, "oos_underpowered")
+        # Defaults when omitted: not computed / not flagged.
+        assert r.required_oos_eff_n is None
+        assert r.oos_underpowered is False
+
+    def test_small_edge_against_large_sigma_is_underpowered(self) -> None:
+        """Clears MIN_OOS_EFF_N (oos_eff_n=40) but the edge is tiny vs. the
+        MEASURED per-trade sigma (~150bps, exact by construction) → required N
+        is huge → oos_underpowered=True, while is_persistent stays True (edge
+        is positive, hard floor cleared).
+
+        This is the expected, honest "underpowered" verdict from plan-10 W2.1 —
+        NOT a pipeline failure.  Deterministic (no RNG): edge_bps=15 vs.
+        sigma_bps=150 gives required_n=ceil((2*~152/15)^2)~=411, oos_eff_n=40.
+        """
+        from strategy_fit.intraday_walk_forward import walk_forward_intraday, MIN_OOS_EFF_N
+        from strategy_fit.families_intraday import run_orb_family
+        df = _make_fixed_sigma_edge_df(n_days=100, edge_bps=15.0, sigma_bps=150.0)
+        result = walk_forward_intraday(df, run_orb_family)
+        assert result.oos_eff_n is not None and result.oos_eff_n >= MIN_OOS_EFF_N, (
+            f"Test setup should clear the hard floor; got oos_eff_n={result.oos_eff_n}"
+        )
+        assert result.is_persistent is True, (
+            f"Small-but-positive OOS edge with sufficient N should be persistent; "
+            f"oos_edge_bps={result.oos_edge_bps}, skip_reason={result.skip_reason}"
+        )
+        assert result.oos_sigma_bps is not None
+        assert abs(result.oos_sigma_bps - 150.0) < 10.0, (
+            f"oos_sigma_bps={result.oos_sigma_bps} should be close to the "
+            "injected 150bps dispersion (ddof=1 correction aside)"
+        )
+        assert result.required_oos_eff_n is not None
+        assert result.required_oos_eff_n > result.oos_eff_n, (
+            f"required_oos_eff_n={result.required_oos_eff_n} should exceed "
+            f"oos_eff_n={result.oos_eff_n} for a small edge vs. large sigma"
+        )
+        assert result.oos_underpowered is True
+
+    def test_large_edge_against_same_sigma_is_not_underpowered(self) -> None:
+        """A much larger, still-consistent edge against the same MEASURED
+        per-trade sigma needs far fewer samples → oos_underpowered=False.
+        """
+        from strategy_fit.intraday_walk_forward import walk_forward_intraday, MIN_OOS_EFF_N
+        from strategy_fit.families_intraday import run_orb_family
+        df = _make_fixed_sigma_edge_df(n_days=100, edge_bps=500.0, sigma_bps=150.0)
+        result = walk_forward_intraday(df, run_orb_family)
+        assert result.oos_eff_n is not None and result.oos_eff_n >= MIN_OOS_EFF_N
+        assert result.is_persistent is True
+        assert result.required_oos_eff_n is not None
+        assert result.required_oos_eff_n <= result.oos_eff_n, (
+            f"required_oos_eff_n={result.required_oos_eff_n} should be well below "
+            f"oos_eff_n={result.oos_eff_n} for a large edge vs. modest sigma"
+        )
+        assert result.oos_underpowered is False
+
+    def test_thin_oos_is_not_labelled_underpowered(self) -> None:
+        """Failing the HARD floor is a more fundamental issue than power —
+        thin-OOS results must not also carry oos_underpowered=True.
+        """
+        from strategy_fit.intraday_walk_forward import walk_forward_intraday
+        from strategy_fit.families_intraday import run_orb_family
+        df = _make_positive_edge_df(n_days=8)  # ~3 OOS days < MIN_OOS_EFF_N=10
+        result = walk_forward_intraday(df, run_orb_family)
+        assert result.is_persistent is False
+        assert result.oos_underpowered is False
+
+    def test_negative_oos_edge_is_not_labelled_underpowered(self) -> None:
+        """A non-positive OOS edge is a directional failure, not a power one."""
+        from strategy_fit.intraday_walk_forward import walk_forward_intraday
+        from strategy_fit.families_intraday import run_orb_family
+        df = _make_negative_oos_df(n_days=100)
+        result = walk_forward_intraday(df, run_orb_family)
+        assert result.is_persistent is False
+        assert result.oos_underpowered is False
+        assert result.required_oos_eff_n is None
+
+
+# ---------------------------------------------------------------------------
+# Section G: sigma must be measured, never a fallback constant (plan-10 W2.1)
+# ---------------------------------------------------------------------------
+
+class TestSigmaIsMeasuredNeverAFallback:
+    def test_sigma_unavailable_does_not_fall_back_to_a_default(self) -> None:
+        """When family_fn's OOS result omits per_trade_sigma_bps (e.g. a
+        family implementation that hasn't been updated to report it),
+        required_oos_eff_n must NOT be computed via any fallback constant —
+        it must stay None, and oos_underpowered must stay False (an honestly
+        reported "power unassessed", never a false positive or negative).
+        is_persistent is unaffected: power is a separate, non-blocking
+        annotation, not a persistence input.
+        """
+        from strategy_fit.intraday_walk_forward import walk_forward_intraday
+
+        def _stub_family_fn(df: pd.DataFrame) -> dict:
+            return {
+                "status": "tested",
+                "skip_reason": None,
+                "gross_edge_bps": 50.0,
+                "hit_rate": 0.6,
+                "eff_n": int(df["date"].nunique()),
+                "p_value": 0.01,
+                "net_edge_bps": None,
+                # per_trade_sigma_bps deliberately omitted.
+            }
+
+        df = _make_positive_edge_df(n_days=100)
+        result = walk_forward_intraday(df, _stub_family_fn)
+        assert result.oos_sigma_bps is None
+        assert result.required_oos_eff_n is None
+        assert result.oos_underpowered is False
+        assert result.is_persistent is True
+
+    def test_real_family_reports_a_measured_sigma_when_tested(self) -> None:
+        """families_intraday.py's real family functions must populate
+        per_trade_sigma_bps (not None) whenever they return status=tested —
+        this is the field the power calculation depends on end-to-end."""
+        from strategy_fit.families_intraday import run_orb_family
+        df = _make_positive_edge_df(n_days=100)
+        result = run_orb_family(df)
+        assert result["status"] == "tested"
+        assert result["per_trade_sigma_bps"] is not None
+        assert result["per_trade_sigma_bps"] >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# Section H: neither half of the split is usable — report that explicitly
+# ---------------------------------------------------------------------------
+
+class TestInvalidSplitReportedExplicitly:
+    def test_neither_half_usable_reports_invalid_split_explicitly(self) -> None:
+        """When BOTH IS and OOS individually fail the family's own MIN_EFF_N
+        threshold, the skip_reason must say so explicitly — a generic "thin
+        OOS" message would wrongly imply IS was a valid comparison point,
+        when in fact NEITHER half could be validated at this split frequency
+        (this is what the team measured on the real 108-day store: every
+        symbol dropped below MIN_EFF_N=30 on BOTH halves).
+        """
+        from strategy_fit.intraday_walk_forward import walk_forward_intraday
+        from strategy_fit.families_intraday import run_orb_family
+        df = _make_positive_edge_df(n_days=40)  # IS~24, OOS~16 — both < MIN_EFF_N=30
+        result = walk_forward_intraday(df, run_orb_family)
+        assert result.is_persistent is False
+        assert result.skip_reason is not None
+        assert "invalid split" in result.skip_reason
+        assert "neither IS" in result.skip_reason
+
+    def test_oos_alone_thin_with_valid_is_uses_the_plain_thin_oos_message(self) -> None:
+        """When IS IS valid but only OOS is thin, keep the original, narrower
+        "thin OOS" message — it is a real distinction from "neither half
+        usable" and must not be conflated with it.
+        """
+        from strategy_fit.intraday_walk_forward import walk_forward_intraday
+        from strategy_fit.families_intraday import run_orb_family
+        # n_days chosen so IS (60%) clears MIN_EFF_N=30 but OOS (40%) doesn't.
+        df = _make_positive_edge_df(n_days=55)  # IS=33 (tested), OOS=22 (insufficient_n)
+        result = walk_forward_intraday(df, run_orb_family)
+        assert result.is_persistent is False
+        assert result.skip_reason is not None
+        assert "thin OOS" in result.skip_reason
+        assert "invalid split" not in result.skip_reason

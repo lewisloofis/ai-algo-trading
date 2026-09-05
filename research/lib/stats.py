@@ -11,9 +11,12 @@ decile_means              — bin signal into deciles; return (centers, means, s
 is_monotone               — crude monotonicity check on an array of means
 ols_hac                   — OLS with Newey-West HAC SE; returns (slope, t_stat, r2)
 
+required_effective_n      — power-derived minimum-N to resolve an edge at z-sigma
+
 Constants
 ---------
 MIN_EFF_N   — minimum independent observations required to trust an OOS hit-rate
+REQUIRED_N_UNRESOLVABLE — sentinel "required N" for a non-positive target edge
 """
 
 from __future__ import annotations
@@ -31,6 +34,15 @@ import statsmodels.api as sm
 MIN_EFF_N = 30          # minimum de-overlapped OOS conditional observations
 N_BOOTSTRAP = 500       # default number of bootstrap draws
 BOOTSTRAP_BLOCK = 30    # default block length for circular block bootstrap
+
+REQUIRED_N_UNRESOLVABLE: int = 10 ** 9
+"""
+Sentinel "required N" returned by required_effective_n() when the target edge
+is non-positive (or NaN).  A non-positive edge is never confirmed a genuine
+win no matter how much data is collected, so "required sample size" is
+reported as effectively unreachable rather than some finite, misleadingly
+small, number.
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -244,3 +256,69 @@ def ols_hac(
         return float(fit.params[1]), float(fit.tvalues[1]), float(fit.rsquared)
     except Exception:
         return np.nan, np.nan, np.nan
+
+
+# ---------------------------------------------------------------------------
+# Power / required sample-size calculation (plan-10 W2.1)
+# ---------------------------------------------------------------------------
+
+def required_effective_n(
+    target_edge_bps: float,
+    per_trade_sigma_bps: float,
+    z: float = 2.0,
+) -> int:
+    """
+    Minimum independent (de-overlapped) observations needed to resolve
+    ``target_edge_bps`` at ``z`` standard errors, given the observed
+    per-trade dispersion ``per_trade_sigma_bps``.
+
+    The standard error of a mean estimated from N i.i.d. per-trade returns
+    with per-trade standard deviation ``per_trade_sigma_bps`` is
+    ``per_trade_sigma_bps / sqrt(N)``.  Requiring the edge to clear ``z``
+    standard errors means::
+
+        target_edge_bps >= z * per_trade_sigma_bps / sqrt(N)
+        N                >= (z * per_trade_sigma_bps / target_edge_bps) ** 2
+
+    Worked example (plan-10 roadmap §6 W2.1): a 20 bps edge at z=2 against a
+    ~150 bps per-trade spread needs N >= (2 * 150 / 20) ** 2 = 225 round-trips.
+
+    This is a *power* calculation, distinct from any not-zero floor (e.g.
+    ``MIN_OOS_EFF_N`` in ``strategy_fit/intraday_walk_forward.py``).  A cell
+    can clear a not-zero floor and still be badly underpowered relative to
+    this number — see that module's ``oos_underpowered`` flag, which is
+    exactly this: "clears the hard floor, misses the power-derived N".  An
+    UNDERPOWERED verdict is expected to be common and honest, not a pipeline
+    failure.
+
+    Parameters
+    ----------
+    target_edge_bps : float
+        The edge (in bps) the sample is claiming to have detected.  Must be
+        > 0 to be resolvable at all — a non-positive or NaN edge returns
+        ``REQUIRED_N_UNRESOLVABLE`` (no amount of data confirms a
+        non-positive edge as a genuine win).
+    per_trade_sigma_bps : float
+        Observed standard deviation of per-trade returns, in bps.  Must be
+        >= 0; a degenerate 0 (no dispersion at all) returns the theoretical
+        minimum, 1.
+    z : float
+        Number of standard errors required (default 2.0, ~97.7% one-sided /
+        ~95.4% two-sided under a normal approximation — NOT the common
+        "95% one-sided" shorthand, which is z=1.645; 95% two-sided is z=1.96).
+
+    Returns
+    -------
+    int
+        The required effective-N, rounded up to the nearest integer, with a
+        floor of 1.  Returns ``REQUIRED_N_UNRESOLVABLE`` when
+        ``target_edge_bps`` is non-positive or non-finite.
+    """
+    if target_edge_bps is None or per_trade_sigma_bps is None:
+        return REQUIRED_N_UNRESOLVABLE
+    if not np.isfinite(target_edge_bps) or target_edge_bps <= 0:
+        return REQUIRED_N_UNRESOLVABLE
+    if not np.isfinite(per_trade_sigma_bps) or per_trade_sigma_bps <= 0:
+        return 1
+    n = (z * per_trade_sigma_bps / target_edge_bps) ** 2
+    return max(1, int(np.ceil(n)))

@@ -11,6 +11,15 @@ where:
 Scope: intraday same-day cells only (hold=0).  Daily / event / cross-sectional /
 pairs cells retain impact=0 for now — plan-13 will extend impact to other shapes.
 
+Provenance (plan-10 W2.1): CellResult.impact_priced records whether *this*
+module actually ran for a given cell.  Only strategy_fit/run_strategy_fit.py's
+_run_intraday_cell sets impact_priced=True — every other shape leaves it False
+(the default), and strategy_fit/report.py treats impact_priced=True as a hard
+prerequisite for PASS.  Do not infer "impact priced" from modelled_impact_bps
+being non-None/non-zero alone; a genuinely-priced 0.0 (e.g. near-zero
+participation) is a valid outcome of this module and must read differently
+from "never priced at all".
+
 Round-trip justification
 ------------------------
 The ``2 *`` factor accounts for crossing the book at BOTH entry and exit.  The

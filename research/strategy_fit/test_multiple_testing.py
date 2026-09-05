@@ -217,6 +217,12 @@ class TestVerdictAndSurvivorsCostGate:
         fdr_accepted: bool,
         net_edge_bps: float,
     ) -> CellResult:
+        # impact_priced=True: these tests exercise the cost-gate/FDR
+        # interaction (Bugs 1 & 2) in isolation from the W2.1 impact-priced
+        # gate (test_verdict_gates.py covers that gate specifically) — a
+        # single_name_time_series cell never has impact priced in production,
+        # but pinning it True here keeps this fixture's PASS/INCONCLUSIVE
+        # outcomes governed only by the cost-gate/FDR logic under test.
         return CellResult(
             symbol=symbol,
             family_name="mean_reversion",
@@ -230,6 +236,7 @@ class TestVerdictAndSurvivorsCostGate:
             p_value=0.001 if fdr_accepted else 0.90,
             hit_rate=0.6,
             eff_n=50,
+            impact_priced=True,
             min_edge_hurdle_bps=100.0,
         )
 

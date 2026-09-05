@@ -19,6 +19,17 @@ This mirrors the constants and spirit of strategy_fit/walk_forward.py.  Reuses
 DECAY_THRESHOLD_SHARPE, DECAY_THRESHOLD_HR, DECAY_MAJORITY_FRAC from that module
 for conceptual consistency (even though the single-split approach does not use
 rolling windows).
+
+Two distinct floors on oos_eff_n (plan-10 W2.1)
+------------------------------------------------
+MIN_OOS_EFF_N is a hard, not-zero floor: below it, OOS is too thin to say
+anything at all, so is_persistent is forced False.  This is NOT a power
+calculation.  Separately, required_oos_eff_n (via lib.stats.
+required_effective_n) asks whether oos_eff_n is enough to *trust* the
+specific observed edge given its dispersion.  A cell can clear the hard floor
+and still miss this power-derived number — that state is oos_underpowered,
+an expected, common, and honest outcome (NOT a pipeline failure), distinct
+from failing the hard floor outright.
 """
 
 from __future__ import annotations
@@ -28,6 +39,8 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 import pandas as pd
+
+from lib.stats import required_effective_n
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +58,22 @@ OOS coverage (~24 obs → enough to be slightly above MIN_OOS_EFF_N).
 
 MIN_OOS_EFF_N: int = 10
 """
-Minimum out-of-sample effective-N required to declare a persistence verdict.
+Hard, not-zero floor on out-of-sample effective-N (plan-10 W2.1 role).
 
-Below this threshold, OOS data is too thin to distinguish edge from noise, so
-the result is conservatively marked non-persistent.  Consistent with the daily
-walk-forward's "insufficient windows → decayed" stance.
+This is a "too thin to compute anything at all" check, NOT a power
+calculation — it does not ask whether MIN_OOS_EFF_N observations are enough
+to *trust* the observed edge, only whether there are enough to have a signal
+at all.  Below this floor, OOS data is too thin to distinguish edge from
+noise, so the result is conservatively marked non-persistent (is_persistent
+=False) and can never contribute to a PASS verdict (strategy_fit/report.py).
+Consistent with the daily walk-forward's "insufficient windows → decayed"
+stance.
+
+For the power question — "is oos_eff_n enough to trust THIS edge, given its
+observed dispersion?" — see lib.stats.required_effective_n and the
+required_oos_eff_n / oos_underpowered fields below.  A cell can clear this
+hard floor (is_persistent=True) and still be honestly UNDERPOWERED: expected
+to be a common, non-failure outcome, not evidence the pipeline is broken.
 """
 
 
@@ -83,6 +107,31 @@ class IntradayWalkForwardResult:
         Conservatively False when data is insufficient.
     skip_reason : str or None
         Populated when is_persistent=False with a human-readable explanation.
+    oos_sigma_bps : float or None
+        Measured OOS per-trade return dispersion in bps — the sample std of
+        THIS SAME de-overlapped signed-returns series that produces
+        oos_eff_n and oos_edge_bps (families_intraday.py's
+        per_trade_sigma_bps).  This is a measurement, never a constant or a
+        proxy (e.g. NOT unconditional daily close-to-close vol, which over-
+        or under-states the true per-trade dispersion depending on how
+        exposed the family actually is to full-day variance).  None when
+        unavailable (fewer than 2 OOS observations, or OOS not "tested") —
+        required_oos_eff_n must not be computed with a fallback in that case.
+    required_oos_eff_n : int or None
+        Power-derived minimum oos_eff_n needed to resolve oos_edge_bps at
+        z=2 sigma against oos_sigma_bps (lib.stats.required_effective_n).
+        None when not computable — i.e. whenever oos_edge_bps is not a
+        positive number (including when the hard floor was never cleared),
+        OR oos_sigma_bps is unavailable.  NOT a blocking gate; see
+        oos_underpowered.
+    oos_underpowered : bool
+        True iff oos_eff_n clears MIN_OOS_EFF_N (the hard floor) but falls
+        short of required_oos_eff_n.  An honest, expected "not enough data
+        yet" outcome — not a pipeline failure.  Always False when
+        is_persistent is False (the cell already failed for a more
+        fundamental reason: thin OOS or a non-positive edge) OR when
+        oos_sigma_bps is unavailable (power cannot be assessed at all, which
+        is a distinct, rarer condition from "assessed and underpowered").
     """
 
     is_edge_bps: float | None
@@ -93,6 +142,9 @@ class IntradayWalkForwardResult:
     decay_ratio: float | None
     is_persistent: bool
     skip_reason: str | None
+    oos_sigma_bps: float | None = None
+    required_oos_eff_n: int | None = None
+    oos_underpowered: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -203,16 +255,38 @@ def walk_forward_intraday(
         )
 
     # 4. Extract metrics; handle non-"tested" statuses gracefully.
-    is_edge = is_result.get("gross_edge_bps") if is_result.get("status") == "tested" else None
-    is_hr = is_result.get("hit_rate") if is_result.get("status") == "tested" else None
+    is_tested = is_result.get("status") == "tested"
+    is_edge = is_result.get("gross_edge_bps") if is_tested else None
+    is_hr = is_result.get("hit_rate") if is_tested else None
 
-    oos_edge = oos_result.get("gross_edge_bps") if oos_result.get("status") == "tested" else None
-    oos_hr = oos_result.get("hit_rate") if oos_result.get("status") == "tested" else None
-    oos_eff_n = oos_result.get("eff_n") if oos_result.get("status") == "tested" else None
+    oos_tested = oos_result.get("status") == "tested"
+    oos_edge = oos_result.get("gross_edge_bps") if oos_tested else None
+    oos_hr = oos_result.get("hit_rate") if oos_tested else None
+    oos_eff_n = oos_result.get("eff_n") if oos_tested else None
+    # Measured per-trade dispersion from the SAME series that produced
+    # oos_eff_n/oos_edge_bps (families_intraday.py) — never a proxy or a
+    # fallback constant.  None whenever OOS wasn't "tested" at all.
+    oos_sigma_bps = oos_result.get("per_trade_sigma_bps") if oos_tested else None
 
     # 5. Thin-OOS check: too few observations → conservative.
     if oos_eff_n is None or oos_eff_n < min_oos_eff_n:
         actual_n = oos_eff_n if oos_eff_n is not None else 0
+        if not is_tested:
+            # Neither half of the split is usable — a materially different,
+            # more fundamental failure than "OOS merely thin with a valid IS
+            # comparison available".  Report this explicitly rather than
+            # letting a generic "thin OOS" message imply IS was fine.
+            reason = (
+                f"invalid split: neither IS (status={is_result.get('status')!r}) "
+                f"nor OOS (oos_eff_n={actual_n} < MIN_OOS_EFF_N={min_oos_eff_n}) "
+                "is usable at this split frequency — cannot validate persistence "
+                "or form a decay comparison"
+            )
+        else:
+            reason = (
+                f"thin OOS: oos_eff_n={actual_n} < MIN_OOS_EFF_N={min_oos_eff_n}; "
+                "insufficient evidence for persistence"
+            )
         return IntradayWalkForwardResult(
             is_edge_bps=is_edge,
             oos_edge_bps=oos_edge,
@@ -221,10 +295,7 @@ def walk_forward_intraday(
             oos_eff_n=actual_n,
             decay_ratio=None,
             is_persistent=False,
-            skip_reason=(
-                f"thin OOS: oos_eff_n={actual_n} < MIN_OOS_EFF_N={min_oos_eff_n}; "
-                "insufficient evidence for persistence"
-            ),
+            skip_reason=reason,
         )
 
     # 6. Decay ratio: only meaningful when IS edge is positive.
@@ -244,6 +315,28 @@ def walk_forward_intraday(
         else:
             skip = f"oos_eff_n={oos_eff_n} < MIN_OOS_EFF_N={min_oos_eff_n}"
 
+    # 8. Power-derived required-N (plan-10 W2.1): given the hard floor is
+    # already cleared (we're past the thin-OOS early return) and the OOS edge
+    # is positive, is oos_eff_n actually enough to trust THIS edge, given its
+    # MEASURED dispersion?  Meaningless when the edge is non-positive (that's
+    # already a persistence failure for reasons unrelated to power).
+    #
+    # oos_sigma_bps comes only from families_intraday.py's per_trade_sigma_bps
+    # — the sample std of the exact same signed-returns series that produced
+    # oos_eff_n/oos_edge_bps.  There is NO fallback to a constant or a proxy
+    # (e.g. unconditional daily vol) here: when oos_sigma_bps is unavailable,
+    # required_n/is_underpowered simply stay unset ("sigma unavailable" is a
+    # distinct, honestly-reported state, not silently substituted).
+    required_n: int | None = None
+    is_underpowered = False
+    if oos_edge is not None and oos_edge > 0 and oos_sigma_bps is not None:
+        required_n = required_effective_n(
+            target_edge_bps=oos_edge,
+            per_trade_sigma_bps=oos_sigma_bps,
+            z=2.0,
+        )
+        is_underpowered = oos_eff_n < required_n
+
     return IntradayWalkForwardResult(
         is_edge_bps=is_edge,
         oos_edge_bps=oos_edge,
@@ -253,4 +346,7 @@ def walk_forward_intraday(
         decay_ratio=decay_ratio,
         is_persistent=is_persistent,
         skip_reason=skip,
+        oos_sigma_bps=oos_sigma_bps,
+        required_oos_eff_n=required_n,
+        oos_underpowered=is_underpowered,
     )

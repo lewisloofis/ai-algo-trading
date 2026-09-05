@@ -21,6 +21,7 @@ Flow:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import os
 import sys
@@ -515,6 +516,13 @@ def _run_intraday_cell(
        intraday edge persists out-of-sample.  Survivors with oos_persistent=False
        are NOT removed from the report (data is thin — only ~55 trading days);
        they are annotated for human review.  See intraday_walk_forward.py.
+
+    impact_priced=True is set unconditionally here (impact is always computed
+    for intraday cells, tested or not) — this is what lets report.py's
+    compute_verdict distinguish "impact priced at 0" from "impact never
+    priced" (W2.1).  oos_required_eff_n / oos_underpowered are threaded
+    through from the walk-forward result so the report can distinguish a
+    below-hard-floor cell from an honestly UNDERPOWERED one.
     """
     # 1. Per-symbol market impact (replaces MODELLED_IMPACT_BPS=0 for intraday).
     intraday_impact_bps = compute_impact_bps_from_df(
@@ -538,6 +546,7 @@ def _run_intraday_cell(
             hit_rate=result.get("hit_rate"),
             eff_n=result.get("eff_n"),
             modelled_impact_bps=intraday_impact_bps,
+            impact_priced=True,
         )
 
     # Cost gate: for hold=0, financing=0, hurdle = min_edge + impact.
@@ -565,11 +574,16 @@ def _run_intraday_cell(
         min_edge_hurdle_bps=hurdle,
         best_entry_dow=entry_dow,
         modelled_impact_bps=intraday_impact_bps,
+        impact_priced=True,
         oos_edge_bps=wf_intraday.oos_edge_bps,
         oos_hit_rate=wf_intraday.oos_hit_rate,
         oos_eff_n=wf_intraday.oos_eff_n,
         oos_decay_ratio=wf_intraday.decay_ratio,
         oos_persistent=wf_intraday.is_persistent,
+        oos_sigma_bps=wf_intraday.oos_sigma_bps,
+        oos_required_eff_n=wf_intraday.required_oos_eff_n,
+        oos_underpowered=wf_intraday.oos_underpowered,
+        oos_split_skip_reason=wf_intraday.skip_reason,
     )
 
 
@@ -785,38 +799,19 @@ def apply_fdr_to_grid(cells: list[CellResult], alpha: float = FDR_ALPHA) -> list
     }
 
     # Reconstruct immutable CellResult list with fdr_accepted populated.
-    updated: list[CellResult] = []
-    for i, c in enumerate(cells):
-        if i in fdr_map:
-            updated.append(
-                CellResult(
-                    symbol=c.symbol,
-                    family_name=c.family_name,
-                    shape=c.shape,
-                    horizon_trading_days=c.horizon_trading_days,
-                    status=c.status,
-                    skip_reason=c.skip_reason,
-                    hit_rate=c.hit_rate,
-                    eff_n=c.eff_n,
-                    gross_edge_bps=c.gross_edge_bps,
-                    net_edge_bps=c.net_edge_bps,
-                    p_value=c.p_value,
-                    decay_status=c.decay_status,
-                    decay_metric=c.decay_metric,
-                    passes_cost_gate=c.passes_cost_gate,
-                    min_edge_hurdle_bps=c.min_edge_hurdle_bps,
-                    best_entry_dow=c.best_entry_dow,
-                    fdr_accepted=fdr_map[i],
-                    modelled_impact_bps=c.modelled_impact_bps,
-                    oos_edge_bps=c.oos_edge_bps,
-                    oos_hit_rate=c.oos_hit_rate,
-                    oos_eff_n=c.oos_eff_n,
-                    oos_decay_ratio=c.oos_decay_ratio,
-                    oos_persistent=c.oos_persistent,
-                )
-            )
-        else:
-            updated.append(c)
+    #
+    # dataclasses.replace, NOT a field-by-field CellResult(...) rebuild. This used
+    # to enumerate all 28 fields by hand, and every field added since was silently
+    # dropped back to its default — which is uniquely dangerous here, because the
+    # cells passed to this function are exactly the cost-gate-passing pool that can
+    # become survivors. W2.1's impact_priced defaults to False, so a dropped field
+    # would have permanently blocked every real intraday cell from reaching PASS,
+    # with no error anywhere. replace() copies every field by construction, so the
+    # next field added cannot reintroduce the bug.
+    updated: list[CellResult] = [
+        dataclasses.replace(c, fdr_accepted=fdr_map[i]) if i in fdr_map else c
+        for i, c in enumerate(cells)
+    ]
     return updated
 
 
