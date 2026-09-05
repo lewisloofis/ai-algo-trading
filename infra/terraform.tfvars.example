@@ -13,8 +13,25 @@ cost_center = "market-data"
 # Watchlist — symbols to subscribe and capture.
 # Changing this list requires an SSM parameter update + collector restart.
 # Changing the SET should also change watchlist_id so old/new S3 segments don't mix.
-watchlist    = ["ADRO", "PTBA", "ITMG", "INDY", "ANTM", "INCO", "MDKA", "HRUM", "BUMI"]
-watchlist_id = "lq45-mining"
+# Current live set as of 2026-09-05 (roadmap W0.2, rationale in
+# docs/plans/12-data-gap-backlog-and-demand-driven-capture.md 5c): 43 names in three
+# layers — the 7 plan-10 survivors kept unconditionally so their history extends rather
+# than forks, + the 30-name screener slice (plan 09 / ADR-0010), + a 10-name RANDOM
+# CONTROL slice (random.Random(20260620) over the unselected remainder of the funding
+# universe). The control slice is the point: survivors were chosen by a backtest grid
+# and the screener slice by a liquidity rule, so a forward result on either alone cannot
+# separate a real edge from the selection process that picked the names.
+#
+# NOTE: terraform.tfvars itself is gitignored, so this example is the only record in git
+# of what the live watchlist is. Keep it in step with the real file.
+watchlist = [
+  "AALI", "ADRO", "AMMN", "ANTM", "ARCI", "ASII", "BBCA", "BBNI", "BBRI", "BMRI",
+  "BREN", "BRMS", "BRPT", "BSDE", "BULL", "BUMI", "BUVA", "CUAN", "DEWA", "EMTK",
+  "ENRG", "GGRM", "HRTA", "HRUM", "INCO", "INDF", "INET", "ITMG", "KIJA", "LSIP",
+  "MBMA", "MDKA", "MEDC", "MPMX", "PTRO", "RAJA", "RATU", "SMGR", "TLKM", "TOBA",
+  "TPIA", "UNTR", "WIFI",
+]
+watchlist_id = "w02-widened"
 
 # Compute
 instance_type    = "t4g.nano"
