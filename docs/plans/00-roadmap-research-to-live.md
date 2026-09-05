@@ -289,9 +289,22 @@ deadline.*
       changes the S3 key prefix — keep the 7 survivors in the set and teach the
       research readers to span both ids, or the series forks.
 
-      > ✔️ Done 2026-09-05 — **7 → 43 names**, `watchlist_id` `plan10-survivors` →
-      > `w02-widened`. SSM now carries 43 symbols (versions 4→5 and 3→4); the box is
-      > stopped and the market closed, so it takes effect on Monday's 01:30 UTC boot.
+      > ✔️ Done 2026-09-05 — **7 → 47 names**, `watchlist_id` `plan10-survivors` →
+      > `w02-widened`. Applied in two steps the same day: 43 symbols first (SSM watchlist
+      > v4→v5, watchlist_id v3→v4), then **BNBR, VKTR, TINS, SSIA** added (watchlist
+      > v5→v6). `watchlist_id` was deliberately **not** bumped for the second step because
+      > the 43-name set had captured nothing — a live S3 check found **zero objects** under
+      > `w02-widened` — so the id still maps to exactly one symbol set in the data. The box
+      > is stopped and the market closed, so it takes effect on Monday 2026-09-07's
+      > 01:30 UTC boot.
+      >
+      > The four added names are the plan-10 cells that clear the cost gate and are
+      > FDR-accepted but blocked on `impact_not_priced`, and that had **no tick capture at
+      > all** — so plan 13's daily impact model could only ever have priced them with the
+      > `high_liq` bucket coefficient (0.377) fit on TPIA/BREN/BRPT/PTRO/ENRG/RATU. BNBR is
+      > the sharpest case: sub-Rp-100, ~170 bps friction hurdle, and the single largest
+      > blocked cell in the grid. Borrowing a large-cap coefficient for it would be a guess
+      > wearing a decimal point.
       > Proposal and sampling procedure in
       > [plan 12 §5c](./12-data-gap-backlog-and-demand-driven-capture.md): all 7
       > survivors kept unconditionally, + the 30-name screener slice, + a **10-name
@@ -314,12 +327,12 @@ deadline.*
       > names include BBCA/BBRI/BMRI/ASII/TLKM, among the most heavily traded on IDX —
       > but the frame-loss measurement below ([plan 12 §5d](./12-data-gap-backlog-and-demand-driven-capture.md))
       > shows the collector is **not** the bottleneck at 7 symbols: loss tracks each
-      > symbol's own update rate, not process load. **Monday 2026-09-08 needs an
-      > explicit check** — `scripts/collector_healthcheck.py` catches a zero-record
+      > symbol's own update rate, not process load. **The first widened session (Monday
+      > 2026-09-07, checked Tuesday 2026-09-08) needs an explicit check** — `scripts/collector_healthcheck.py` catches a zero-record
       > session but NOT partial degradation, so re-run the §5d sequence-gap analysis on
       > the first `w02-widened` session and compare the survivors' loss rates against
       > the 2026-09-04 baseline (RATU −1.1% … TPIA 20.6%). If they worsen materially,
-      > the collector *is* saturating at 43 and the box needs resizing. Rollback is
+      > the collector *is* saturating at 47 and the box needs resizing. Rollback is
       > `git checkout infra/terraform.tfvars && tofu apply`.
 - [x] **W0.3 — Drop the `raw/` DEEP_ARCHIVE transition** (`infra/s3.tf:68`). First
       objects lock **2026-09-15** (2026-06-17 + 90 d); the `plan10-survivors` series
@@ -809,14 +822,16 @@ gate it sits behind was not cleared, it was answered in the negative.*
 
 **The only dated item:**
 
-1. **Verify the widened capture on Monday 2026-09-08**
-   (`calendar/deadlines.yaml: verify-widened-watchlist-capture`). The first session
-   under `watchlist_id=w02-widened` (43 names, applied while the box was stopped).
+1. **Verify the widened capture on Tuesday 2026-09-08**, covering the first session,
+   which is **Monday 2026-09-07** (`calendar/deadlines.yaml: verify-widened-watchlist-capture`).
+   The first session under `watchlist_id=w02-widened` — **47 names**, applied while the
+   box was stopped. (An earlier revision of this line read "Monday 2026-09-08"; 09-08 is
+   a Tuesday. The session is Monday 09-07, the check is the day after.)
    `scripts/collector_healthcheck.py` catches a zero-record session but **not partial
    degradation**, so also re-run the [plan 12 §5d](./12-data-gap-backlog-and-demand-driven-capture.md)
    sequence-gap analysis and compare the 7 survivors against the 2026-09-04 baseline
    (RATU −1.1 % … TPIA 20.6 %). Those losses are upstream, so they should be roughly
-   unchanged; if they worsen materially the collector *is* saturating at 43 symbols on
+   unchanged; if they worsen materially the collector *is* saturating at 47 symbols on
    a t4g.nano and the box needs resizing. Rollback:
    `git checkout infra/terraform.tfvars && cd infra && tofu apply`.
 

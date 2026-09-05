@@ -14,7 +14,7 @@ cost_center = "market-data"
 # Changing this list requires an SSM parameter update + collector restart.
 # Changing the SET should also change watchlist_id so old/new S3 segments don't mix.
 # Current live set as of 2026-09-05 (roadmap W0.2, rationale in
-# docs/plans/12-data-gap-backlog-and-demand-driven-capture.md 5c): 43 names in three
+# docs/plans/12-data-gap-backlog-and-demand-driven-capture.md 5c): 47 names in four
 # layers — the 7 plan-10 survivors kept unconditionally so their history extends rather
 # than forks, + the 30-name screener slice (plan 09 / ADR-0010), + a 10-name RANDOM
 # CONTROL slice (random.Random(20260620) over the unselected remainder of the funding
@@ -22,14 +22,21 @@ cost_center = "market-data"
 # and the screener slice by a liquidity rule, so a forward result on either alone cannot
 # separate a real edge from the selection process that picked the names.
 #
+# The fourth layer (BNBR, VKTR, TINS, SSIA) was added the same day, before the 43-name
+# set had captured anything, which is why watchlist_id did NOT change. They are the
+# plan-10 cells that clear the cost gate and are FDR-accepted but blocked on
+# `impact_not_priced`, and they had no tick capture — so plan 13's daily impact model
+# could only price them with a bucket coefficient fit on unrelated large caps. BNBR
+# especially: sub-Rp-100, ~170 bps friction hurdle, largest blocked cell in the grid.
+#
 # NOTE: terraform.tfvars itself is gitignored, so this example is the only record in git
 # of what the live watchlist is. Keep it in step with the real file.
 watchlist = [
   "AALI", "ADRO", "AMMN", "ANTM", "ARCI", "ASII", "BBCA", "BBNI", "BBRI", "BMRI",
-  "BREN", "BRMS", "BRPT", "BSDE", "BULL", "BUMI", "BUVA", "CUAN", "DEWA", "EMTK",
-  "ENRG", "GGRM", "HRTA", "HRUM", "INCO", "INDF", "INET", "ITMG", "KIJA", "LSIP",
-  "MBMA", "MDKA", "MEDC", "MPMX", "PTRO", "RAJA", "RATU", "SMGR", "TLKM", "TOBA",
-  "TPIA", "UNTR", "WIFI",
+  "BNBR", "BREN", "BRMS", "BRPT", "BSDE", "BULL", "BUMI", "BUVA", "CUAN", "DEWA",
+  "EMTK", "ENRG", "GGRM", "HRTA", "HRUM", "INCO", "INDF", "INET", "ITMG", "KIJA",
+  "LSIP", "MBMA", "MDKA", "MEDC", "MPMX", "PTRO", "RAJA", "RATU", "SMGR", "SSIA",
+  "TINS", "TLKM", "TOBA", "TPIA", "UNTR", "VKTR", "WIFI",
 ]
 watchlist_id = "w02-widened"
 
