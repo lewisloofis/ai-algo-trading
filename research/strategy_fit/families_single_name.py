@@ -333,7 +333,11 @@ def run_single_name_family(
     -------
     dict
         Keys: status, skip_reason, hit_rate, eff_n, gross_edge_bps,
-              net_edge_bps, p_value.  Suitable for constructing CellResult.
+              net_edge_bps, p_value, per_trade_sigma_bps.  Suitable for
+              constructing CellResult.  per_trade_sigma_bps (plan-10 W2.1)
+              mirrors families_intraday.py: the sample std of the long-only
+              signed_returns array that produced gross_edge_bps, None on
+              every non-"tested" path and when fewer than 2 observations.
     """
     try:
         signal_df = signal_fn(df, hold=horizon_trading_days)
@@ -347,6 +351,7 @@ def run_single_name_family(
             "gross_edge_bps": None,
             "net_edge_bps": None,
             "p_value": None,
+            "per_trade_sigma_bps": None,
         }
 
     if len(signal_df) == 0:
@@ -358,6 +363,7 @@ def run_single_name_family(
             "gross_edge_bps": None,
             "net_edge_bps": None,
             "p_value": None,
+            "per_trade_sigma_bps": None,
         }
 
     deoverlapped = deoverlap_daily(signal_df, hold=horizon_trading_days)
@@ -372,6 +378,7 @@ def run_single_name_family(
             "gross_edge_bps": None,
             "net_edge_bps": None,
             "p_value": None,
+            "per_trade_sigma_bps": None,
         }
 
     fwd = deoverlapped["forward_return"].to_numpy(dtype=float)
@@ -387,6 +394,17 @@ def run_single_name_family(
     # net_edge_bps is NOT pre-computed here: the runner computes true
     # net-after-full-cost as (gross - hurdle) to avoid double-counting the
     # friction floor.  The key is preserved in the dict for API stability.
+
+    # per_trade_sigma_bps (plan-10 W2.1, mirrors families_intraday.py): the
+    # sample std of THIS SAME long-only-filtered signed_returns array — the
+    # actual per-trade dispersion, never a proxy (e.g. unconditional daily
+    # close-to-close vol). Guarded on len(signed_returns), NOT on eff_n:
+    # _compute_hit_rate's mask additionally requires |forward_return| > 0,
+    # which valid_mask above does not, so len(signed_returns) can differ from
+    # eff_n — sigma must be measured on the array it actually describes.
+    per_trade_sigma_bps = (
+        float(np.std(signed_returns, ddof=1) * 1e4) if len(signed_returns) > 1 else None
+    )
 
     # p-value: one-sample bootstrap that mean(signed_returns) > 0. After the
     # long-only filter, signal is always +1, so bootstrap_hit_rate_pvalue's
@@ -408,4 +426,5 @@ def run_single_name_family(
         "gross_edge_bps": gross_edge_bps,
         "net_edge_bps": None,
         "p_value": p_value,
+        "per_trade_sigma_bps": per_trade_sigma_bps,
     }

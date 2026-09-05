@@ -14,11 +14,15 @@ import pandas as pd
 import pytest
 
 from strategy_fit.impact import (
+    _DEGENERATE_IMPACT_BPS,
     POSITION_NOTIONAL_IDR,
     SQRT_IMPACT_COEFF,
     compute_adv_notional_idr,
+    compute_adv_notional_idr_from_daily_bars,
     compute_daily_vol_bps,
+    compute_daily_vol_bps_from_daily_bars,
     compute_impact_bps,
+    compute_impact_bps_from_daily_df,
 )
 
 # ---------------------------------------------------------------------------
@@ -371,3 +375,163 @@ class TestUseCalibratedFlag:
         calibrated = compute_impact_bps(100.0, 1e12, use_calibrated=True, symbol="PTRO")
         expected = 2.0 * 0.25 * 100.0 * np.sqrt(min(POSITION_NOTIONAL_IDR / 1e12, 1.0))
         assert calibrated == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# Daily-bar impact pricing (plan 13)
+# ---------------------------------------------------------------------------
+
+def _make_daily_df(
+    dates: list[str],
+    closes: list[float],
+    volumes: list[float] | None = None,
+    values: list[float] | None = None,
+) -> pd.DataFrame:
+    """Build a minimal daily-bar DataFrame, matching daily_history's schema."""
+    data = {"date": dates, "close": closes}
+    data["volume"] = volumes if volumes is not None else [1000.0] * len(dates)
+    if values is not None:
+        data["value"] = values
+    return pd.DataFrame(data)
+
+
+class TestComputeDailyVolBpsFromDailyBars:
+    def test_matches_hand_computed_value_and_sorts_by_date(self) -> None:
+        """Rows are deliberately out of date order; function must sort before diffing."""
+        df = _make_daily_df(
+            dates=["2025-01-08", "2025-01-06", "2025-01-07", "2025-01-09"],
+            closes=[121.0, 100.0, 110.0, 108.9],
+        )
+        vol_bps = compute_daily_vol_bps_from_daily_bars(df)
+
+        # Ascending by date: 100.0, 110.0, 121.0, 108.9 — hand-computed expectation.
+        ordered_closes = np.array([100.0, 110.0, 121.0, 108.9])
+        expected_log_rets = np.diff(np.log(ordered_closes))
+        expected_vol_bps = float(np.std(expected_log_rets, ddof=1)) * 1e4
+        assert vol_bps == pytest.approx(expected_vol_bps)
+
+    def test_fewer_than_two_rows_returns_degenerate(self) -> None:
+        from strategy_fit.impact import _DEGENERATE_VOL_BPS
+        single_row = _make_daily_df(dates=["2025-01-06"], closes=[100.0])
+        assert compute_daily_vol_bps_from_daily_bars(single_row) == _DEGENERATE_VOL_BPS
+
+        empty = _make_daily_df(dates=[], closes=[])
+        assert compute_daily_vol_bps_from_daily_bars(empty) == _DEGENERATE_VOL_BPS
+
+
+class TestComputeAdvNotionalIdrFromDailyBars:
+    def test_prefers_value_column_over_close_times_volume(self) -> None:
+        """`value` and close*volume are constructed to differ so the test discriminates."""
+        df = _make_daily_df(
+            dates=["2025-01-06", "2025-01-07", "2025-01-08"],
+            closes=[1000.0, 1000.0, 1000.0],
+            volumes=[1000.0, 1000.0, 1000.0],  # close*volume = 1_000_000 every day
+            values=[5_000_000.0, 6_000_000.0, 7_000_000.0],  # deliberately different
+        )
+        adv = compute_adv_notional_idr_from_daily_bars(df)
+        assert adv == pytest.approx(6_000_000.0)  # median of `value`
+        assert adv != pytest.approx(1_000_000.0)  # not the close*volume fallback
+
+    def test_falls_back_to_close_times_volume_when_value_absent(self) -> None:
+        df = _make_daily_df(
+            dates=["2025-01-06", "2025-01-07", "2025-01-08"],
+            closes=[1000.0, 2000.0, 1500.0],
+            volumes=[1000.0, 500.0, 800.0],
+        )
+        adv = compute_adv_notional_idr_from_daily_bars(df)
+        expected_median = float(np.median([1000.0 * 1000.0, 2000.0 * 500.0, 1500.0 * 800.0]))
+        assert adv == pytest.approx(expected_median)
+
+    def test_empty_frame_returns_zero_and_impact_is_degenerate(self) -> None:
+        from strategy_fit.impact import _DEGENERATE_IMPACT_BPS
+        empty = _make_daily_df(dates=[], closes=[])
+        adv = compute_adv_notional_idr_from_daily_bars(empty)
+        assert adv == 0.0
+        impact = compute_impact_bps(daily_vol_bps=100.0, adv_notional_idr=adv)
+        assert impact == _DEGENERATE_IMPACT_BPS
+
+
+class TestComputeImpactBpsFromDailyDf:
+    _DATES = ["2025-01-06", "2025-01-07", "2025-01-08", "2025-01-09"]
+    _CLOSES = [1000.0, 1010.0, 990.0, 1005.0]
+
+    def test_participation_clamps_at_one_for_huge_position(self) -> None:
+        df = _make_daily_df(dates=self._DATES, closes=self._CLOSES)
+        vol_bps = compute_daily_vol_bps_from_daily_bars(df)
+        impact = compute_impact_bps_from_daily_df(df, position_notional_idr=1e15)
+        expected = 2.0 * SQRT_IMPACT_COEFF * vol_bps  # sqrt(participation=1.0) == 1.0
+        assert impact == pytest.approx(expected)
+
+    def test_use_calibrated_unknown_symbol_falls_through_to_global_default(self) -> None:
+        """BNBR is absent from impact_coeffs.json's per_name — must resolve to
+        global_default (1.0), reproducing the uncalibrated SQRT_IMPACT_COEFF path."""
+        df = _make_daily_df(dates=self._DATES, closes=self._CLOSES)
+        uncalibrated = compute_impact_bps_from_daily_df(df, use_calibrated=False)
+        calibrated_unknown = compute_impact_bps_from_daily_df(df, use_calibrated=True, symbol="BNBR")
+        assert calibrated_unknown == pytest.approx(uncalibrated)
+
+    def test_use_calibrated_known_symbol_gives_smaller_impact(self) -> None:
+        """PTRO is `confirmed` in impact_coeffs.json with coeff < 1.0."""
+        df = _make_daily_df(dates=self._DATES, closes=self._CLOSES)
+        uncalibrated = compute_impact_bps_from_daily_df(df, use_calibrated=False)
+        calibrated_ptro = compute_impact_bps_from_daily_df(df, use_calibrated=True, symbol="PTRO")
+        assert calibrated_ptro < uncalibrated
+
+    def test_new_functions_do_not_mutate_input_dataframe(self) -> None:
+        df = _make_daily_df(
+            dates=["2025-01-08", "2025-01-06", "2025-01-07"],
+            closes=[121.0, 100.0, 110.0],
+            values=[5_000_000.0, 4_000_000.0, 4_500_000.0],
+        )
+        original = df.copy(deep=True)
+
+        compute_daily_vol_bps_from_daily_bars(df)
+        compute_adv_notional_idr_from_daily_bars(df)
+        compute_impact_bps_from_daily_df(df)
+
+        pd.testing.assert_frame_equal(df, original)
+
+    # -- Zero-turnover days (orchestrator fix, plan 13) ---------------------
+
+    def test_zero_turnover_days_are_kept_in_the_median(self) -> None:
+        """A no-trade day is real evidence about capacity and must lower ADV.
+
+        Filtering zeros out would raise ADV, lower participation, and
+        UNDERSTATE impact — worst on exactly the thin penny names where the
+        impact charge decides the cell.  Median over [0, 0, 10M, 10M, 10M]
+        is 10M; over the positive-only subset it is also 10M, so the
+        discriminating case needs enough zeros to move the median.
+        """
+        df = _make_daily_df(
+            dates=[f"2025-01-{d:02d}" for d in range(6, 11)],
+            closes=[100.0, 100.0, 100.0, 100.0, 100.0],
+            values=[0.0, 0.0, 0.0, 10_000_000.0, 10_000_000.0],
+        )
+        adv = compute_adv_notional_idr_from_daily_bars(df)
+        # Median of [0, 0, 0, 10M, 10M] = 0.0 — the name is untradeable on
+        # most days.  Positive-only filtering would have returned 10M.
+        assert adv == pytest.approx(0.0)
+
+    def test_all_zero_turnover_lands_on_degenerate_impact(self) -> None:
+        """A name that never trades has no capacity: ADV 0 → degenerate penalty."""
+        df = _make_daily_df(
+            dates=["2025-01-06", "2025-01-07", "2025-01-08"],
+            closes=[100.0, 101.0, 102.0],
+            volumes=[0.0, 0.0, 0.0],
+            values=[0.0, 0.0, 0.0],
+        )
+        # `value` is all-zero so it carries no turnover information and the
+        # close x volume fallback runs — which is also all-zero here.
+        assert compute_adv_notional_idr_from_daily_bars(df) == pytest.approx(0.0)
+        assert compute_impact_bps_from_daily_df(df) == pytest.approx(_DEGENERATE_IMPACT_BPS)
+
+    def test_value_column_of_all_zeros_falls_back_to_close_x_volume(self) -> None:
+        """`value` with no positive entry carries no turnover information."""
+        df = _make_daily_df(
+            dates=["2025-01-06", "2025-01-07", "2025-01-08"],
+            closes=[100.0, 100.0, 100.0],
+            values=[0.0, 0.0, 0.0],
+        )
+        df["volume"] = [1_000.0, 1_000.0, 1_000.0]
+        # Falls back to median(close x volume) = 100 * 1000 = 100_000.
+        assert compute_adv_notional_idr_from_daily_bars(df) == pytest.approx(100_000.0)

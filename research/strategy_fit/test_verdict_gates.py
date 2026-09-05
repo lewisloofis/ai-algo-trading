@@ -25,6 +25,8 @@ from strategy_fit.report import (
     VERDICT_INCONCLUSIVE,
     VERDICT_NO_GO,
     VERDICT_PASS,
+    _clears_oos_power_gate,
+    _is_pass_eligible,
     compute_verdict,
     emit_strategy_portfolio,
 )
@@ -202,3 +204,74 @@ class TestCombinedRealisticBugScenario:
         """NO-GO must still be reachable — new gates don't mask a total failure."""
         cells = [_cell(passes_cost_gate=False, net_edge_bps=-10.0)]
         assert compute_verdict(cells) == VERDICT_NO_GO
+
+
+class TestOosPersistenceIsBlocking:
+    """plan 13: a MEASURED non-persistent OOS verdict must block PASS.
+
+    Regression for a real defect caught on the first plan-13 live run.  The
+    OOS power gate only asks whether the OOS sample is BIG ENOUGH; it never
+    asked what the sample SAID.  Three cells (BREN, RATU, WIFI) cleared the
+    floor with 49-60 out-of-sample observations, reported NEGATIVE OOS edges
+    of -87.9 / -53.9 / -21.9 bps, and were still counted as survivors toward
+    a PASS verdict — the same in-sample-only edge that killed intraday ORB,
+    reproduced by the gate built to prevent it.
+    """
+
+    def test_negative_oos_edge_above_floor_blocks_pass(self):
+        """The exact BREN shape: plenty of OOS data, edge did not survive it."""
+        c = _cell(
+            shape=SHAPE_SINGLE_NAME,
+            family_name="daily_momentum",
+            horizon_trading_days=2,
+            oos_eff_n=49,
+            oos_edge_bps=-87.9,
+            oos_persistent=False,
+        )
+        assert _clears_oos_power_gate(c) is True, (
+            "precondition: 49 observations clears the hard floor — this cell "
+            "fails on the VERDICT, not on sample size"
+        )
+        assert _is_pass_eligible(c) is False
+
+    def test_positive_oos_edge_above_floor_allows_pass(self):
+        """The PTRO shape: edge survived out-of-sample."""
+        c = _cell(
+            shape=SHAPE_SINGLE_NAME,
+            family_name="daily_momentum",
+            horizon_trading_days=2,
+            oos_eff_n=53,
+            oos_edge_bps=209.5,
+            oos_persistent=True,
+        )
+        assert _is_pass_eligible(c) is True
+
+    def test_underpowered_but_persistent_still_allows_pass(self):
+        """UNDERPOWERED is an honest annotation, not a disqualification."""
+        c = _cell(
+            shape=SHAPE_SINGLE_NAME,
+            oos_eff_n=67,
+            oos_edge_bps=106.7,
+            oos_persistent=True,
+            oos_underpowered=True,
+        )
+        assert _is_pass_eligible(c) is True
+
+    def test_oos_persistent_none_does_not_block(self):
+        """None = no split applies to this shape; the impact gate handles those."""
+        c = _cell(oos_eff_n=None, oos_persistent=None)
+        assert _is_pass_eligible(c) is True
+
+    def test_verdict_downgrades_to_inconclusive_when_only_non_persistent_cells(self):
+        """A grid whose only cost-gate passers failed OOS is INCONCLUSIVE, not PASS."""
+        cells = [
+            _cell(
+                shape=SHAPE_SINGLE_NAME,
+                symbol=sym,
+                oos_eff_n=n,
+                oos_edge_bps=edge,
+                oos_persistent=False,
+            )
+            for sym, n, edge in (("BREN", 49, -87.9), ("RATU", 60, -53.9), ("WIFI", 59, -21.9))
+        ]
+        assert compute_verdict(cells) == VERDICT_INCONCLUSIVE

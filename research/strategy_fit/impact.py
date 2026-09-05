@@ -1,5 +1,6 @@
 """
-strategy_fit/impact.py — Square-root market-impact (slippage) model for intraday cells.
+strategy_fit/impact.py — Square-root market-impact (slippage) model for intraday
+and daily single-name cells.
 
 Implements a round-trip Almgren-style square-root impact law:
 
@@ -8,12 +9,21 @@ Implements a round-trip Almgren-style square-root impact law:
 where:
     participation_rate = position_notional_idr / adv_notional_idr  (clamped to [0, 1])
 
-Scope: intraday same-day cells only (hold=0).  Daily / event / cross-sectional /
-pairs cells retain impact=0 for now — plan-13 will extend impact to other shapes.
+Scope (plan-13): intraday same-day cells (hold=0) AND daily single_name_time_series
+cells are now priced.  Event / cross-sectional / pairs cells still retain impact=0
+for now — a future plan will extend impact to those shapes.  The core formula
+below is identical for both scopes; only how ``daily_vol_bps`` and
+``adv_notional_idr`` are *estimated* differs (see
+``compute_daily_vol_bps_from_daily_bars`` / ``compute_adv_notional_idr_from_daily_bars``
+below) — a daily-signal basket is still entered atomically in one day and exited
+atomically in one day (ADR-0011), so it crosses the book exactly twice, same as
+an intraday round trip. Holding the position between those two days is not an
+execution and is not repriced.
 
 Provenance (plan-10 W2.1): CellResult.impact_priced records whether *this*
-module actually ran for a given cell.  Only strategy_fit/run_strategy_fit.py's
-_run_intraday_cell sets impact_priced=True — every other shape leaves it False
+module actually ran for a given cell.  strategy_fit/run_strategy_fit.py's
+_run_intraday_cell sets impact_priced=True, and _run_single_name_cell will also
+set it once wired for daily cells (plan-13) — every other shape leaves it False
 (the default), and strategy_fit/report.py treats impact_priced=True as a hard
 prerequisite for PASS.  Do not infer "impact priced" from modelled_impact_bps
 being non-None/non-zero alone; a genuinely-priced 0.0 (e.g. near-zero
@@ -86,6 +96,20 @@ _DEGENERATE_VOL_BPS: float = 10_000.0
 # ---------------------------------------------------------------------------
 # Calibrated coefficients (plan 15)
 # ---------------------------------------------------------------------------
+
+DAILY_COEFF_IS_BORROWED_NOTE: str = (
+    "impact_coeffs.json's per_name coefficients (BREN, BRPT, ENRG, PTRO, RAJA, "
+    "RATU, TPIA) were calibrated by plan 15 from TICK fills on INTRADAY "
+    "executions only. Applying them to daily single_name_time_series cells "
+    "(plan 13) assumes execution impact for a daily-signal basket is the same "
+    "as for an intraday one — that is an ASSUMPTION, not a measurement; no "
+    "daily-cell fills have been used to calibrate anything here. Any symbol "
+    "absent from per_name (e.g. a name outside the plan-15 tick-fill sample) "
+    "falls through get_impact_coeff() to global_default = 1.0, the "
+    "conservative high-friction end of the Almgren range — see "
+    "impact_coeffs.json."
+)
+"""Honest caveat: daily-cell impact borrows intraday-calibrated coefficients (plan 13)."""
 
 _COEFFS_PATH: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "impact_coeffs.json")
 
@@ -333,6 +357,183 @@ def compute_impact_bps_from_df(
     """
     vol_bps = compute_daily_vol_bps(intraday_df)
     adv = compute_adv_notional_idr(intraday_df)
+    return compute_impact_bps(
+        daily_vol_bps=vol_bps,
+        adv_notional_idr=adv,
+        position_notional_idr=position_notional_idr,
+        use_calibrated=use_calibrated,
+        symbol=symbol,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers: daily vol and ADV from a DAILY-bar DataFrame (plan 13)
+# ---------------------------------------------------------------------------
+
+def compute_daily_vol_bps_from_daily_bars(daily_df: pd.DataFrame) -> float:
+    """
+    Estimate daily close-to-close return volatility in basis points from
+    bars that are ALREADY one-row-per-day.
+
+    Same contract as ``compute_daily_vol_bps``, minus the ``groupby("date")``:
+    daily-family bars (e.g. from ``ScreenerDataSource.daily_history``) are
+    already one row per trading day, so grouping would be a no-op at best and
+    silently wrong if a symbol ever has duplicate dates at worst.
+
+    Sorts by ``date`` ascending, coerces ``close`` to numeric, and computes
+    the sample standard deviation of log(close[t] / close[t-1]) × 1e4.
+
+    Degenerate cases:
+    - Fewer than 2 rows → returns ``_DEGENERATE_VOL_BPS`` (large penalty).
+    - All closes NaN / no finite log returns → returns ``_DEGENERATE_VOL_BPS``.
+    - Zero-vol series (std = 0) → returns 0.0 (no impact from zero vol).
+
+    Parameters
+    ----------
+    daily_df : pd.DataFrame
+        Daily bar DataFrame with ``date`` and ``close`` columns.
+
+    Returns
+    -------
+    float
+        Daily close-to-close return stdev in basis points (≥ 0).
+    """
+    if daily_df is None or len(daily_df) == 0:
+        return _DEGENERATE_VOL_BPS
+
+    df = daily_df.sort_values("date")
+    closes = pd.to_numeric(df["close"], errors="coerce").dropna().to_numpy(dtype=float)
+
+    if len(closes) < 2:
+        logger.debug(
+            "compute_daily_vol_bps_from_daily_bars: only %d row(s), returning degenerate",
+            len(closes),
+        )
+        return _DEGENERATE_VOL_BPS
+
+    log_rets = np.diff(np.log(closes))
+
+    # Guard against NaN / Inf in log returns (e.g. zero close).
+    valid = log_rets[np.isfinite(log_rets)]
+    if len(valid) < 1:
+        return _DEGENERATE_VOL_BPS
+
+    vol = float(np.std(valid, ddof=1)) * 1e4  # convert to bps
+    return max(0.0, vol)
+
+
+def compute_adv_notional_idr_from_daily_bars(daily_df: pd.DataFrame) -> float:
+    """
+    Estimate average daily turnover (ADV) in IDR from bars that are already
+    one-row-per-day.
+
+    Prefers the ``value`` column when present — chartbit's own daily traded
+    IDR turnover, which is more accurate than a close×volume reconstruction
+    (it reflects actual traded value across the session rather than a single
+    closing print times the day's share volume).  Falls back to
+    median(close × volume) when ``value`` is absent or has no positive entry
+    at all (i.e. it carries no usable turnover information).
+
+    The median itself is taken over every finite, non-negative day — zero-
+    turnover days are KEPT, not filtered.  See ``_median_turnover`` for why
+    that is the conservative choice.
+
+    Degenerate cases:
+    - Empty DataFrame, all-NaN, or no finite turnover anywhere (in either
+      ``value`` or the close×volume fallback) → returns 0.0.  The caller's
+      ``compute_impact_bps`` treats ``adv <= 0`` as degenerate and returns
+      ``_DEGENERATE_IMPACT_BPS``.  An all-zero-turnover name therefore also
+      lands on the degenerate penalty, which is correct: it has no capacity.
+
+    Parameters
+    ----------
+    daily_df : pd.DataFrame
+        Daily bar DataFrame with ``close`` and ``volume`` columns, and
+        optionally a pre-computed ``value`` (daily IDR turnover) column.
+
+    Returns
+    -------
+    float
+        Median daily turnover in IDR (≥ 0).
+    """
+    if daily_df is None or len(daily_df) == 0:
+        return 0.0
+
+    df = daily_df.copy()
+
+    if "value" in df.columns:
+        value = pd.to_numeric(df["value"], errors="coerce")
+        if bool((value > 0).any()):
+            logger.debug("compute_adv_notional_idr_from_daily_bars: using value column")
+            return _median_turnover(value)
+
+    logger.debug("compute_adv_notional_idr_from_daily_bars: using close x volume fallback")
+    turnover = pd.to_numeric(df["close"], errors="coerce") * pd.to_numeric(df["volume"], errors="coerce")
+    return _median_turnover(turnover)
+
+
+def _median_turnover(turnover: pd.Series) -> float:
+    """
+    Median of a daily-turnover series over every finite, NON-NEGATIVE entry.
+
+    Zero-turnover days (suspensions, no-trade days on a thin name) are kept in
+    the median rather than filtered out.  This is deliberate and it is the
+    conservative choice: a day on which the name did not trade is a day the
+    basket could not have been executed, so it is real evidence about capacity.
+    Dropping zeros would raise the ADV estimate, lower
+    ``participation = position_notional / adv``, and therefore *understate*
+    impact — and it would do so most on exactly the thin, frequently-untraded
+    penny names where the impact charge decides the cell (plan 13).
+
+    Only NaN / non-finite entries are excluded, because those are missing
+    measurements rather than observed non-trading.  Returns 0.0 when nothing
+    finite remains, which the caller treats as degenerate.
+    """
+    finite = turnover[np.isfinite(turnover) & (turnover >= 0)]
+    if len(finite) == 0:
+        return 0.0
+    return max(0.0, float(np.median(finite.to_numpy(dtype=float))))
+
+
+def compute_impact_bps_from_daily_df(
+    daily_df: pd.DataFrame,
+    position_notional_idr: float = POSITION_NOTIONAL_IDR,
+    *,
+    use_calibrated: bool = False,
+    symbol: str | None = None,
+) -> float:
+    """
+    Convenience wrapper: compute round-trip impact from a DAILY-bar DataFrame.
+
+    Chains ``compute_daily_vol_bps_from_daily_bars`` →
+    ``compute_adv_notional_idr_from_daily_bars`` → ``compute_impact_bps``.
+    Suitable for direct use in ``_run_single_name_cell`` (plan 13).
+
+    The underlying formula is unchanged from the intraday path: the
+    square-root law prices ONE execution (entry leg + exit leg, the ``2 *``
+    factor), and under ADR-0011 a daily-signal basket is entered atomically
+    in one day and exited atomically in one day — exactly like the intraday
+    same-day case.  Holding the position across the days in between is not
+    an execution and does not get repriced.  What differs from the intraday
+    path is only how ``daily_vol_bps`` and ``adv_notional_idr`` are
+    *estimated*, because daily-family bars are already one row per day and
+    the intraday helpers' ``groupby("date")`` would be wrong (a no-op at
+    best) applied to them.
+
+    Parameters
+    ----------
+    daily_df : pd.DataFrame
+        Daily bar DataFrame.
+    position_notional_idr : float
+        Order notional (default: ``POSITION_NOTIONAL_IDR``).
+
+    Returns
+    -------
+    float
+        Round-trip impact in basis points (≥ 0).
+    """
+    vol_bps = compute_daily_vol_bps_from_daily_bars(daily_df)
+    adv = compute_adv_notional_idr_from_daily_bars(daily_df)
     return compute_impact_bps(
         daily_vol_bps=vol_bps,
         adv_notional_idr=adv,

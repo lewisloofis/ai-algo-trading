@@ -33,7 +33,7 @@ import datetime
 import os
 from typing import Sequence
 
-from strategy_fit.harness import CellResult, SHAPE_INTRADAY_SAME_DAY
+from strategy_fit.harness import CellResult
 from strategy_fit.intraday_walk_forward import MIN_OOS_EFF_N
 
 # ---------------------------------------------------------------------------
@@ -47,18 +47,33 @@ VERDICT_NO_GO = "NO-GO"
 
 def _clears_oos_power_gate(c: CellResult) -> bool:
     """
-    True when the cell's OOS effective-N clears the hard floor (W2.1), or the
-    measurement does not apply to this shape at all.
+    True when the cell's OOS effective-N clears the hard floor (W2.1), or no
+    OOS split applies to this shape at all.
 
-    oos_eff_n is None for shapes with no intraday OOS split (single_name_
-    time_series, event_driven, cross_sectional, pairs) — the gate does not
-    apply there; nothing was ever measured, so there is nothing to fail.
-    oos_eff_n is a real (possibly zero) integer for intraday_same_day cells —
-    those must clear MIN_OOS_EFF_N, the hard not-zero floor, to be eligible
-    for PASS.  Below the floor → INCONCLUSIVE at best, never PASS.
+    Three distinct states, and conflating the last two is a hole:
+
+    1. **Split ran, produced an N.**  oos_eff_n is a real (possibly zero)
+       integer — it must clear MIN_OOS_EFF_N to be PASS-eligible.  Below the
+       floor → INCONCLUSIVE at best, never PASS.
+    2. **Split was attempted and failed outright** (empty frame, a slice that
+       raised, fewer than two rows).  oos_eff_n is None *and*
+       oos_split_skip_reason explains why.  This must FAIL the gate: the cell
+       was supposed to be validated out-of-sample and was not.  Returning
+       True here would let precisely the unvalidated cells through, which is
+       the failure mode the gate exists to prevent.
+    3. **No split applies to this shape** (event_driven, cross_sectional,
+       pairs — no OOS machinery exists for them).  Both fields are None; the
+       gate does not apply, nothing was measured, so there is nothing to
+       fail.  Those shapes are excluded from PASS by the impact_priced gate
+       instead.
+
+    As of plan 13 both per-symbol shapes run a split: intraday_same_day via
+    intraday_walk_forward, single_name_time_series via daily_walk_forward.
     """
     if c.oos_eff_n is None:
-        return True
+        # State 2 vs state 3: a populated skip_reason means a split was
+        # attempted for this cell and did not produce a usable OOS sample.
+        return c.oos_split_skip_reason is None
     return c.oos_eff_n >= MIN_OOS_EFF_N
 
 
@@ -66,7 +81,24 @@ def _is_pass_eligible(c: CellResult) -> bool:
     """
     True iff *c* satisfies every hard prerequisite for contributing to a PASS
     verdict: cost gate, BH-FDR acceptance, positive net edge, impact priced
-    (not assumed 0.0), and sufficient OOS power (see module docstring, W2.1).
+    (not assumed 0.0), sufficient OOS power, and a NON-FALSE out-of-sample
+    persistence verdict (see module docstring, W2.1 and plan 13).
+
+    On ``oos_persistent is not False`` — the last condition, added in plan 13
+    after it fired on real data.  ``_clears_oos_power_gate`` only asks whether
+    the OOS sample is BIG ENOUGH; it never asks what the OOS sample SAID.  A
+    cell could therefore clear the floor with 50-60 observations, report a
+    measured NEGATIVE out-of-sample edge, and still be counted a survivor —
+    which is precisely the in-sample-only edge that killed the intraday ORB
+    family, reproduced by the very gate built to catch it.  Three of the six
+    survivors in the first plan-13 live run were exactly this (BREN -87.9,
+    RATU -53.9, WIFI -21.9 bps OOS).
+
+    ``is not False`` rather than ``is True`` is deliberate: None means no OOS
+    split applies to this shape (event_driven and the long_short_infeasible
+    shapes), which the impact_priced gate already excludes and which this gate
+    must not double-judge.  False means a split ran and the edge did not
+    survive it — that blocks.
     """
     return (
         c.passes_cost_gate is True
@@ -74,6 +106,7 @@ def _is_pass_eligible(c: CellResult) -> bool:
         and (c.net_edge_bps or 0) > 0
         and c.impact_priced is True
         and _clears_oos_power_gate(c)
+        and c.oos_persistent is not False
     )
 
 
@@ -254,20 +287,36 @@ def emit_strategy_portfolio(
             "----------------|-----------|----------------|----------------------|"
         )
         for c in sorted(survivors, key=lambda x: (x.symbol, x.family_name)):
-            is_intraday = c.shape == SHAPE_INTRADAY_SAME_DAY
             # W2.1: read impact_priced, not shape — a genuinely-priced 0.0
             # impact must not look the same as "impact never priced" (the
             # latter can no longer reach this table at all, since it fails
             # _is_pass_eligible, but the explicit flag is the correct signal
             # regardless of that invariant).
             impact_str = _fmt_float(c.modelled_impact_bps, 1) if c.impact_priced else "not priced"
-            oos_edge_str = _fmt_float(c.oos_edge_bps, 1) if is_intraday else "—"
-            oos_n_str = str(c.oos_eff_n) if is_intraday and c.oos_eff_n is not None else "—"
-            if is_intraday:
+            # plan 13: BOTH per-symbol shapes now run an OOS split (intraday via
+            # intraday_walk_forward, daily via daily_walk_forward), so the OOS
+            # columns can no longer be keyed on shape == intraday.  Key them on
+            # whether a split was actually run for this cell: an attempted split
+            # populates oos_eff_n, or oos_split_skip_reason when it failed.
+            # Shapes with no split machinery at all (event_driven, and the
+            # long_short_infeasible cross_sectional / pairs) still read "n/a".
+            has_oos = c.oos_eff_n is not None or c.oos_split_skip_reason is not None
+            oos_edge_str = _fmt_float(c.oos_edge_bps, 1) if has_oos else "—"
+            oos_n_str = str(c.oos_eff_n) if c.oos_eff_n is not None else "—"
+            if has_oos:
                 if c.oos_persistent is True:
                     oos_persist_str = "YES ⚠ (UNDERPOWERED)" if c.oos_underpowered else "YES"
                 elif c.oos_persistent is False:
-                    oos_persist_str = "NO ⚠ (thin-N)"
+                    # Say WHY it failed.  A blanket "thin-N" is wrong and was
+                    # actively misleading on the first plan-13 live run, where
+                    # cells with 49-60 OOS observations failed on a measured
+                    # NEGATIVE out-of-sample edge, not on sample size.
+                    if c.oos_edge_bps is not None and c.oos_edge_bps <= 0:
+                        oos_persist_str = f"NO ⚠ (OOS edge {c.oos_edge_bps:+.1f})"
+                    elif c.oos_eff_n is not None and c.oos_eff_n < MIN_OOS_EFF_N:
+                        oos_persist_str = f"NO ⚠ (thin-N: {c.oos_eff_n})"
+                    else:
+                        oos_persist_str = "NO ⚠"
                 else:
                     oos_persist_str = "—"
             else:
@@ -385,21 +434,32 @@ def emit_strategy_portfolio(
     lines.append("- **Effective-N:** single_name per-symbol de-overlap; event_driven pooled across universe.")
     lines.append("- **Walk-forward:** fit=120 rows, test=40 rows, roll by test_window. Decay = majority of windows below Sharpe=0 AND hit_rate=0.5.")
     lines.append(
-        "- **Impact model (intraday):** Square-root Almgren law (round-trip): "
+        "- **Impact model (intraday + daily single-name, plan 13):** Square-root Almgren law (round-trip): "
         "2 × SQRT_IMPACT_COEFF(1.0) × daily_vol_bps × sqrt(participation_rate), "
         "where participation = POSITION_NOTIONAL_IDR(30M IDR) / ADV. "
         "Charged at both entry and exit; one-tick spread already in min_edge_to_clear_bps (no double-count). "
-        "Daily / event / cross-sectional / pairs cells never price impact (`impact_priced=False`) — "
-        "plan-13 will extend the model to those shapes. "
+        "Daily single-name cells are priced from daily bars (plan 13), using the SAME formula: the "
+        "square-root law prices ONE execution and the 2x factor is the entry leg plus the exit leg, so "
+        "a 2-day hold does not double impact — only how daily_vol_bps and ADV are ESTIMATED differs. "
+        "Event / cross-sectional / pairs cells still never price impact (`impact_priced=False`). "
+        "**Coefficients are BORROWED for daily cells:** impact_coeffs.json was calibrated (plan 15) from "
+        "tick fills on INTRADAY executions for 7 large-caps; names outside that sample fall through to "
+        "global_default=1.0, the conservative high-friction end. See impact.DAILY_COEFF_IS_BORROWED_NOTE. "
         "**W2.1: impact_priced=True is a hard prerequisite for PASS** — a cell whose impact was "
         "never priced is excluded from Surviving Strategies, not passed with an assumed 0.0 "
         "(see Cost-Gate Passers / Coverage Table for the `impact_not_priced` reason). "
         "See strategy_fit/impact.py."
     )
     lines.append(
-        "- **Intraday OOS persistence and power (W2.1):** Single 60/40 chronological IS/OOS split "
-        "on trading dates. is_persistent=True iff OOS edge > 0 AND OOS eff_n ≥ MIN_OOS_EFF_N=10 — "
-        "MIN_OOS_EFF_N is a hard, not-zero floor, not a power calculation. "
+        "- **OOS persistence and power (W2.1; extended to daily cells in plan 13):** Single 60/40 "
+        "chronological IS/OOS split — on trading dates for intraday cells, on raw daily bars (split "
+        "BEFORE the signal is computed, so no lookback or forward-return window can straddle the "
+        "boundary) for daily single-name cells. is_persistent=True iff OOS edge > 0 AND OOS eff_n ≥ "
+        "MIN_OOS_EFF_N=10 — MIN_OOS_EFF_N is a hard, not-zero floor, not a power calculation. "
+        "**A False persistence verdict is now BLOCKING for PASS (plan 13).** Previously the floor was "
+        "checked but the verdict itself was only annotated, so a cell with 50+ OOS observations and a "
+        "measured NEGATIVE out-of-sample edge could still be reported as a survivor — the exact "
+        "in-sample-only failure that killed the intraday ORB family. "
         "**Below this floor a cell is excluded from PASS** (INCONCLUSIVE at best), shown as "
         "`oos_underfloor` in Cost-Gate Passers / Coverage Table. "
         "Separately, `oos_required_eff_n` (lib.stats.required_effective_n: N ≥ (z·σ/edge)², z=2) "

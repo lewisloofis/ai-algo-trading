@@ -34,6 +34,7 @@ from strategy_fit.harness import (
     StrategyFamily,
 )
 from strategy_fit.financing import best_feasible_hurdle_bps
+from strategy_fit.impact import compute_impact_bps_from_daily_df
 from strategy_fit.run_strategy_fit import (
     MODELLED_IMPACT_BPS,
     _run_single_name_cell,
@@ -48,14 +49,23 @@ from strategy_fit.run_strategy_fit import (
 # Helpers — known cost-stack values
 # ---------------------------------------------------------------------------
 
-def _floor_plus_financing(floor_bps: float, hold: int) -> tuple[float, float]:
-    """Return (hurdle, financing_bps) for the best (cheapest) feasible entry day."""
+def _floor_plus_financing(
+    floor_bps: float,
+    hold: int,
+    impact_bps: float = MODELLED_IMPACT_BPS,
+) -> tuple[float, float]:
+    """Return (hurdle, financing_bps) for the best (cheapest) feasible entry day.
+
+    ``impact_bps`` defaults to MODELLED_IMPACT_BPS (0.0), still correct for the
+    shapes that do not price impact.  Single-name daily cells DO price it as of
+    plan 13, so those callers pass the same per-symbol charge the runner used.
+    """
     hurdle, _dow = best_feasible_hurdle_bps(
         min_edge_to_clear_bps=floor_bps,
-        modelled_impact_bps=MODELLED_IMPACT_BPS,
+        modelled_impact_bps=impact_bps,
         hold_trading_days=hold,
     )
-    financing = hurdle - floor_bps - MODELLED_IMPACT_BPS
+    financing = hurdle - floor_bps - impact_bps
     return hurdle, financing
 
 
@@ -167,8 +177,17 @@ class TestSingleNameCostGateSingleCount:
     def test_net_edge_equals_gross_minus_full_hurdle_hold1(self):
         """net_edge_bps must be gross - full_hurdle (floor counted once), hold=1."""
         floor = 50.0
-        hurdle, _ = _floor_plus_financing(floor, hold=1)
+        # plan 13: single_name cells now price market impact, so the
+        # expected hurdle must include the same per-symbol charge the
+        # runner applied.  The invariant under test is unchanged - the
+        # friction floor is still counted exactly once - but the cost
+        # stack it sits in now carries an impact term.  Passing 0.0 here
+        # would be a stale expectation, not a double-count.
+        impact = compute_impact_bps_from_daily_df(_make_strong_signal_df(n=250, seed=42))
+        hurdle, _ = _floor_plus_financing(floor, hold=1, impact_bps=impact)
         cell = self._run_cell(hold=1, floor_bps=floor)
+        assert cell.impact_priced is True, "plan 13: daily cells must be impact-priced"
+        assert cell.modelled_impact_bps == pytest.approx(impact)
         if cell.status != "tested":
             pytest.skip(f"Cell not tested: {cell.skip_reason}")
         assert cell.gross_edge_bps is not None
@@ -183,8 +202,17 @@ class TestSingleNameCostGateSingleCount:
     def test_net_edge_equals_gross_minus_full_hurdle_hold2(self):
         """net_edge_bps must be gross - full_hurdle (floor counted once), hold=2."""
         floor = 50.0
-        hurdle, _ = _floor_plus_financing(floor, hold=2)
+        # plan 13: single_name cells now price market impact, so the
+        # expected hurdle must include the same per-symbol charge the
+        # runner applied.  The invariant under test is unchanged - the
+        # friction floor is still counted exactly once - but the cost
+        # stack it sits in now carries an impact term.  Passing 0.0 here
+        # would be a stale expectation, not a double-count.
+        impact = compute_impact_bps_from_daily_df(_make_strong_signal_df(n=250, seed=42))
+        hurdle, _ = _floor_plus_financing(floor, hold=2, impact_bps=impact)
         cell = self._run_cell(hold=2, floor_bps=floor)
+        assert cell.impact_priced is True, "plan 13: daily cells must be impact-priced"
+        assert cell.modelled_impact_bps == pytest.approx(impact)
         if cell.status != "tested":
             pytest.skip(f"Cell not tested: {cell.skip_reason}")
         assert cell.gross_edge_bps is not None

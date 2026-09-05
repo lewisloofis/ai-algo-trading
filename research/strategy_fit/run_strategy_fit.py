@@ -66,10 +66,14 @@ from strategy_fit.walk_forward import (
     DEFAULT_TEST_WINDOW,
     DEFAULT_MIN_WINDOWS,
 )
-from strategy_fit.impact import compute_impact_bps_from_df
+from strategy_fit.impact import compute_impact_bps_from_df, compute_impact_bps_from_daily_df
 from strategy_fit.intraday_walk_forward import (
     walk_forward_intraday,
     IntradayWalkForwardResult,
+)
+from strategy_fit.daily_walk_forward import (
+    walk_forward_daily,
+    DailyWalkForwardResult,
 )
 from strategy_fit.report import emit_strategy_portfolio
 from lib.market_calendar import CALENDAR as _CALENDAR
@@ -104,9 +108,13 @@ logger = logging.getLogger(__name__)
 #  financing.best_feasible_hurdle_bps, which sweeps every weekday.)
 FDR_ALPHA: float = 0.10             # Benjamini-Hochberg FDR level
 MODELLED_IMPACT_BPS: float = 0.0
-# Impact for daily / event / cross-sectional / pairs cells: still 0 (plan-13
-# will extend).  Intraday cells now compute per-symbol impact from the actual
-# intraday DataFrame via strategy_fit.impact.compute_impact_bps_from_df.
+# Impact for event / cross-sectional / pairs cells: still 0, and those cells
+# therefore still leave impact_priced=False and cannot reach PASS.  Both
+# per-symbol shapes now price impact from their own bars:
+#   intraday → impact.compute_impact_bps_from_df       (1-min bars)
+#   daily    → impact.compute_impact_bps_from_daily_df (daily bars, plan 13)
+# Note cross_sectional and pairs are separately long_short_infeasible, so the
+# only shape left genuinely awaiting an impact model is event_driven (pooled).
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OUTDIR = os.path.join(SCRIPT_DIR, "..", "out")
@@ -188,9 +196,35 @@ def _run_single_name_cell(
     df: pd.DataFrame,
     family: StrategyFamily,
     min_edge_to_clear_bps: float,
+    use_calibrated: bool = False,
 ) -> CellResult:
-    """Run one (symbol, single_name_family) cell end-to-end."""
-    # 1. Horizon ceiling check.
+    """Run one (symbol, single_name_family) cell end-to-end.
+
+    Market impact (plan 13)
+    -----------------------
+    Daily cells are now priced by strategy_fit.impact, exactly as intraday
+    cells are, and impact_priced=True is set on every path that actually ran
+    the model.  Before plan 13 this shape used the global MODELLED_IMPACT_BPS
+    =0 and left impact_priced=False, which is why 17 FDR-accepted daily cells
+    were blocked as `impact_not_priced` rather than judged: an assumed 0.0
+    impact is not a measurement, and W2.1 made that distinction blocking.
+
+    The formula is identical to the intraday path — the square-root law
+    prices ONE execution, and the ``2 *`` factor is the entry leg plus the
+    exit leg.  A 2-day hold does not double impact; holding is not executing.
+    Only the estimation of daily_vol_bps / adv_notional_idr differs, because
+    these bars are already one row per day.
+
+    The coefficient is borrowed, and that is a real caveat rather than a
+    detail: impact_coeffs.json was calibrated by plan 15 from tick fills on
+    INTRADAY executions for seven large-cap names.  Symbols outside that
+    sample fall through to global_default=1.0, the conservative
+    high-friction end.  See impact.DAILY_COEFF_IS_BORROWED_NOTE.
+    """
+    # 1. Horizon ceiling check.  Deliberately BEFORE impact is priced: a
+    # cell beyond the ADR-0011 horizon ceiling is capital-blocked and can
+    # never be a candidate, so pricing it would be wasted work — and leaving
+    # impact_priced=False on it is honest, nothing was measured.
     rejection = reject_horizon_exceeded(family)
     if rejection:
         return CellResult(
@@ -204,7 +238,39 @@ def _run_single_name_cell(
 
     signal_fn = SINGLE_NAME_SIGNAL_FNS[family.name]
 
-    # 2. Walk-forward persistence check.
+    # 2. Per-symbol market impact (plan 13; replaces MODELLED_IMPACT_BPS=0).
+    # Computed here, before any early return below, so that every cell which
+    # reached this point reports a genuinely-priced impact — including cells
+    # that go on to be decayed or insufficient_n.  This mirrors
+    # _run_intraday_cell, where impact_priced=True is likewise unconditional
+    # past this point.
+    daily_impact_bps = compute_impact_bps_from_daily_df(
+        df, use_calibrated=use_calibrated, symbol=symbol
+    )
+    logger.debug(
+        "daily impact for %s/%s: %.1f bps (calibrated=%s)",
+        symbol, family.name, daily_impact_bps, use_calibrated,
+    )
+
+    # 3. Out-of-sample persistence split (plan 13).
+    # walk_forward_cell below is a rolling DECAY metric: every window it scores
+    # is drawn from the same chronological range the name was selected on, so
+    # it cannot answer "does this edge survive outside its selection window".
+    # That question is what killed the intraday ORB family, and until now no
+    # daily cell had ever been asked it.  walk_forward_daily answers it with a
+    # single chronological IS/OOS split.  The two are complementary and both
+    # run: decay kills persistently-bad cells, the split catches in-sample-only
+    # edges.
+    wf_daily: DailyWalkForwardResult = walk_forward_daily(
+        df=df,
+        signal_fn=signal_fn,
+        symbol=symbol,
+        min_edge_to_clear_bps=min_edge_to_clear_bps,
+        family_name=family.name,
+        horizon_trading_days=family.horizon_trading_days,
+    )
+
+    # 3b. Rolling decay check (distinct from the OOS split above).
     wf: WalkForwardResult = walk_forward_cell(
         df=df,
         signal_fn=signal_fn,
@@ -226,9 +292,13 @@ def _run_single_name_cell(
             skip_reason=f"decayed: mean_sharpe={wf.mean_sharpe:.3f}, mean_hr={wf.mean_hit_rate:.3f}",
             decay_status=decay_status,
             decay_metric=wf.mean_sharpe,
+            modelled_impact_bps=daily_impact_bps,
+            impact_priced=True,
+            oos_eff_n=wf_daily.oos_eff_n,
+            oos_split_skip_reason=wf_daily.skip_reason,
         )
 
-    # 3. Signal-level backtest metrics.
+    # 4. Signal-level backtest metrics.
     result = run_single_name_family(
         df=df,
         signal_fn=signal_fn,
@@ -250,16 +320,20 @@ def _run_single_name_cell(
             eff_n=result.get("eff_n"),
             decay_status=decay_status,
             decay_metric=wf.mean_sharpe,
+            modelled_impact_bps=daily_impact_bps,
+            impact_priced=True,
+            oos_eff_n=wf_daily.oos_eff_n,
+            oos_split_skip_reason=wf_daily.skip_reason,
         )
 
-    # 4. Cost gate at best-feasible entry_dow (cheapest financing day).
+    # 5. Cost gate at best-feasible entry_dow (cheapest financing day).
     # Gate on GROSS edge vs the full cost stack (floor + impact + financing).
     # The family's net_edge_bps already subtracted the friction floor, so we
     # must NOT use it for the gate — that would count the floor twice.
     # net_after_cost = gross - hurdle: > 0 for survivors, ≤ 0 for rejections.
     hurdle, entry_dow = best_feasible_hurdle_bps(
         min_edge_to_clear_bps=min_edge_to_clear_bps,
-        modelled_impact_bps=MODELLED_IMPACT_BPS,
+        modelled_impact_bps=daily_impact_bps,
         hold_trading_days=family.horizon_trading_days,
     )
     gross_edge = result["gross_edge_bps"] or 0.0
@@ -282,6 +356,17 @@ def _run_single_name_cell(
         passes_cost_gate=cost_pass,
         min_edge_hurdle_bps=hurdle,
         best_entry_dow=entry_dow,
+        modelled_impact_bps=daily_impact_bps,
+        impact_priced=True,
+        oos_edge_bps=wf_daily.oos_edge_bps,
+        oos_hit_rate=wf_daily.oos_hit_rate,
+        oos_eff_n=wf_daily.oos_eff_n,
+        oos_decay_ratio=wf_daily.decay_ratio,
+        oos_persistent=wf_daily.is_persistent,
+        oos_sigma_bps=wf_daily.oos_sigma_bps,
+        oos_required_eff_n=wf_daily.required_oos_eff_n,
+        oos_underpowered=wf_daily.oos_underpowered,
+        oos_split_skip_reason=wf_daily.skip_reason,
     )
 
 
@@ -614,7 +699,10 @@ def run_grid(
     use_calibrated : bool
         When True, resolve per-name impact coefficients from impact_coeffs.json
         (plan-15 calibrated values) instead of the assumed SQRT_IMPACT_COEFF=1.0.
-        Affects intraday cells only. Default False preserves pre-plan-15 behaviour.
+        Affects intraday AND daily single-name cells (plan 13; the daily
+        shape borrows intraday-calibrated coefficients — see
+        impact.DAILY_COEFF_IS_BORROWED_NOTE). Default False preserves
+        pre-plan-15 behaviour.
 
     Returns
     -------
@@ -674,6 +762,7 @@ def run_grid(
                     df=df,
                     family=family,
                     min_edge_to_clear_bps=min_edge_map.get(symbol, ROUND_TRIP_BPS),
+                    use_calibrated=use_calibrated,
                 )
                 all_cells.append(cell)
 
@@ -943,7 +1032,8 @@ def main(argv: list[str] | None = None) -> None:
             "impact_coeffs.json instead of the assumed SQRT_IMPACT_COEFF=1.0.  "
             "Requires confirmed coefficients to exist in impact_coeffs.json; "
             "names without confirmed coefficients fall back to bucket then "
-            "global default.  Affects intraday cells only.  Default: off."
+            "global default.  Affects intraday AND daily single-name cells "
+            "(plan 13).  Default: off."
         ),
     )
     args = parser.parse_args(argv)
