@@ -13,6 +13,13 @@ volume_breakout_signal  — volume-spike filtered by price direction
 
 All families target ≤2 trading-day holds (the ADR-0011 deployable band).
 
+Long-only
+---------
+run_single_name_family skips signal <= 0 rows rather than sign-flipping them
+into a synthetic long return — IDX retail accounts cannot short-sell. See
+strategy_fit/long_only.py for the shared helper and rationale (this is the
+same constraint families_intraday.py:run_orb_family established in c62eba8).
+
 Bootstrap p-value
 -----------------
 bootstrap_hit_rate_pvalue(signals, fwd_returns, observed_hr, n_boot, seed)
@@ -31,6 +38,7 @@ import numpy as np
 import pandas as pd
 
 from strategy_fit.harness import deoverlap_daily
+from strategy_fit.long_only import long_only_mask
 
 try:
     from backtest.backtest import FEE as _FEE
@@ -38,6 +46,11 @@ try:
 except ImportError:
     # Fallback: matches the FEE dict values exactly.
     ROUND_TRIP_BPS = 40.0
+
+try:
+    from backtest.backtest import bootstrap_pvalue
+except ImportError:
+    bootstrap_pvalue = None  # see run_single_name_family: falls back to bootstrap_hit_rate_pvalue
 
 from lib.stats import MIN_EFF_N
 
@@ -255,11 +268,17 @@ def _compute_hit_rate(deoverlapped_df: pd.DataFrame) -> tuple[float, int]:
     """
     Compute hit rate from a de-overlapped DataFrame.
 
-    Returns (hit_rate, eff_n).  hit_rate = fraction where sign(signal)==sign(fwd_return).
+    Long-only: only signal > 0 rows are tradeable on an IDX retail account
+    (see strategy_fit/long_only.py). signal <= 0 rows would require shorting
+    to act on and are excluded here — not sign-flipped, and not counted
+    toward eff_n. hit_rate is therefore simply the fraction of long trades
+    with a positive forward return.
+
+    Returns (hit_rate, eff_n).
     """
     sig = deoverlapped_df["signal"].to_numpy(dtype=float)
     fwd = deoverlapped_df["forward_return"].to_numpy(dtype=float)
-    valid = np.isfinite(sig) & np.isfinite(fwd) & (np.abs(fwd) > 0)
+    valid = np.isfinite(sig) & np.isfinite(fwd) & (np.abs(fwd) > 0) & long_only_mask(sig)
     sig_v = sig[valid]
     fwd_v = fwd[valid]
     eff_n = int(valid.sum())
@@ -287,8 +306,12 @@ def run_single_name_family(
     Steps:
     1. Apply signal_fn to produce signal and forward_return columns.
     2. De-overlap observations (keep rows ≥ horizon_trading_days apart).
-    3. Check MIN_EFF_N threshold.
-    4. Compute hit_rate, gross_edge_bps, net_edge_bps, p_value.
+    3. Long-only filter: keep only signal > 0 rows (see strategy_fit/long_only.py) —
+       signal <= 0 would require shorting, which IDX retail accounts cannot do
+       (same constraint as families_intraday.py:run_orb_family, commit c62eba8).
+       A filtered-out row does not count toward eff_n.
+    4. Check MIN_EFF_N threshold (on the long-only-filtered count).
+    5. Compute hit_rate, gross_edge_bps, net_edge_bps, p_value.
 
     Parameters
     ----------
@@ -353,17 +376,29 @@ def run_single_name_family(
 
     fwd = deoverlapped["forward_return"].to_numpy(dtype=float)
     sig_vals = deoverlapped["signal"].to_numpy(dtype=float)
-    valid_mask = np.isfinite(sig_vals) & np.isfinite(fwd)
-    # Edge = mean(sign(signal) × forward_return): captures directional trade P&L.
-    # A strategy trades in the signal direction; expected P&L per trade = this.
-    signed_returns = np.sign(sig_vals[valid_mask]) * fwd[valid_mask]
+    # Long-only (strategy_fit/long_only.py): keep only signal > 0. signal <= 0
+    # would require shorting to act on and is excluded — not sign-flipped, and
+    # not counted toward eff_n (matches _compute_hit_rate's filter above).
+    # After this filter sign(sig_vals) is always +1, so the realized per-trade
+    # return is just forward_return — no sign multiplication needed.
+    valid_mask = np.isfinite(sig_vals) & np.isfinite(fwd) & long_only_mask(sig_vals)
+    signed_returns = fwd[valid_mask]
     gross_edge_bps = float(np.nanmean(signed_returns) * 1e4)
     # net_edge_bps is NOT pre-computed here: the runner computes true
     # net-after-full-cost as (gross - hurdle) to avoid double-counting the
     # friction floor.  The key is preserved in the dict for API stability.
 
-    sig = deoverlapped["signal"].to_numpy(dtype=float)
-    p_value = bootstrap_hit_rate_pvalue(sig, fwd, hit_rate)
+    # p-value: one-sample bootstrap that mean(signed_returns) > 0. After the
+    # long-only filter, signal is always +1, so bootstrap_hit_rate_pvalue's
+    # sign-permutation test degenerates (permuting an all-positive array can
+    # never change its sign pattern, so every permutation draw reproduces the
+    # same hit rate) — use the realized-return one-sample test instead, the
+    # same test families_intraday.py's long-only families use.
+    if bootstrap_pvalue is not None:
+        p_value, _pct5_bps = bootstrap_pvalue(signed_returns * 1e4)
+    else:  # pragma: no cover - only hit if backtest.backtest is unavailable
+        sig = deoverlapped["signal"].to_numpy(dtype=float)
+        p_value = bootstrap_hit_rate_pvalue(sig, fwd, hit_rate)
 
     return {
         "status": "tested",

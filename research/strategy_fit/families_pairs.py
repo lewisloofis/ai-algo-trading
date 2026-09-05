@@ -45,6 +45,18 @@ Cost-stack floor
 ----------------
 For pairs strategies: sum of both legs' min_edge_to_clear_bps.
 Each leg is a separate order; both incur the full structural friction.
+
+Long-only infeasibility
+-----------------------
+A pairs / cointegration trade is *inherently* long/short (long the cheap
+leg, short the rich leg) — there is no long-only version of it that
+preserves what the strategy tests, unlike the directional families in
+families_intraday.py / families_single_name.py / families_event.py (see
+strategy_fit/long_only.py). IDX retail accounts cannot short-sell, so this
+family is always reported as STATUS_LONG_SHORT_INFEASIBLE once a pair clears
+cointegration and MIN_PAIR_OBS, regardless of how strong the observed hit
+rate is — it must be excluded and labelled, never silently scored as if it
+were deployable.
 """
 
 from __future__ import annotations
@@ -57,6 +69,7 @@ import pandas as pd
 from statsmodels.tsa.stattools import coint, adfuller
 
 from strategy_fit.families_single_name import ROUND_TRIP_BPS, bootstrap_hit_rate_pvalue
+from strategy_fit.long_only import long_short_infeasible_result
 
 try:
     from lib.stats import MIN_EFF_N
@@ -272,6 +285,12 @@ def run_pairs_family(
     dict
         Keys: status, skip_reason, eff_n, hit_rate, gross_edge_bps,
               net_edge_bps, p_value.
+
+        status is never "tested": a pairs trade requires a short leg (long
+        the cheap leg, short the rich leg), which IDX retail accounts cannot
+        execute. Once a pair clears cointegration and MIN_PAIR_OBS (data
+        sufficiency is still checked and reported normally), the family is
+        reported as STATUS_LONG_SHORT_INFEASIBLE — see strategy_fit/long_only.py.
     """
     if len(hist_dict) < 2:
         return {
@@ -367,7 +386,7 @@ def run_pairs_family(
     logger.info(
         "pairs: best pair=%s, eff_n=%d, hit_rate=%.3f, gross_edge=%.1f bps, "
         "half_life=%.1f days, p=%.3f. "
-        "%d cointegrated pairs found.",
+        "%d cointegrated pairs found. long_short_infeasible (requires a short leg).",
         best_result["pair"],
         eff_n,
         best_result["hit_rate"],
@@ -377,12 +396,17 @@ def run_pairs_family(
         n_cointegrated,
     )
 
-    return {
-        "status": "tested",
-        "skip_reason": None,
-        "eff_n": eff_n,
-        "hit_rate": best_result["hit_rate"],
-        "gross_edge_bps": best_result["gross_edge_bps"],
-        "net_edge_bps": None,
-        "p_value": best_result["p_value"],
-    }
+    # Pairs trading is structurally long/short (long the cheap leg, short the
+    # rich leg) — it cannot be made long-only without changing what the
+    # strategy tests (strategy_fit/long_only.py). The cointegration/hit-rate
+    # stats computed above are diagnostic only (logged, and summarized in
+    # skip_reason for a human reading the report); they are never returned as
+    # a scored, tradeable result.
+    return long_short_infeasible_result(
+        reason_detail=(
+            f"Best pair {best_result['pair']} passed cointegration "
+            f"(eff_n={eff_n}, hit_rate={best_result['hit_rate']:.3f}, "
+            f"gross_edge={best_result['gross_edge_bps']:.1f}bps) but"
+        ),
+        eff_n=eff_n,
+    )

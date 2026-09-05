@@ -6,6 +6,13 @@ Families
 run_orb_family                     — Opening-Range Breakout (30-min window)
 run_intraday_momentum_family       — Morning-to-afternoon momentum
 run_intraday_mean_reversion_family — VWAP overextension reversion
+
+Long-only
+---------
+Every family here skips short-signal (or flat) observations rather than
+sign-flipping them — IDX retail accounts cannot short-sell. See
+strategy_fit/long_only.py for the shared helper and rationale (this module's
+run_orb_family, commit c62eba8, is the original template for the pattern).
 """
 from __future__ import annotations
 
@@ -17,6 +24,7 @@ import pandas as pd
 
 from backtest.backtest import bootstrap_pvalue
 from lib.stats import MIN_EFF_N
+from strategy_fit.long_only import is_long_signal
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +63,26 @@ def _insufficient_n_result(skip_reason: str) -> dict[str, Any]:
         "eff_n": None,
         "p_value": None,
         "net_edge_bps": None,
+        "per_trade_sigma_bps": None,
     }
 
 
 def _compute_family_metrics(
     signed_returns: np.ndarray,
 ) -> dict[str, Any]:
-    """Compute gross_edge_bps, hit_rate, eff_n, p_value from signed returns array."""
+    """Compute gross_edge_bps, hit_rate, eff_n, p_value, per_trade_sigma_bps
+    from signed returns array.
+
+    per_trade_sigma_bps (plan-10 W2.1) is the sample standard deviation of
+    THIS SAME signed_returns array — the actual per-trade dispersion, not a
+    proxy (e.g. unconditional daily close-to-close vol).  A proxy over- or
+    under-states the true per-trade sigma depending on how exposed the family
+    actually is to full-day variance (e.g. ORB only enters after the opening
+    range forms, so it sees less than the full day's variance) — this is why
+    lib.stats.required_effective_n must be fed the real thing.  None when
+    fewer than 2 observations (sample std is undefined) — callers must treat
+    that as "sigma unavailable", never silently substitute a default.
+    """
     eff_n = len(signed_returns)
     if eff_n < MIN_EFF_N:
         return _insufficient_n_result(f"eff_n={eff_n} < MIN_EFF_N={MIN_EFF_N}")
@@ -69,6 +90,7 @@ def _compute_family_metrics(
     gross_edge_bps = float(np.mean(signed_returns) * 1e4)
     # hit_rate: fraction where signed_return > 0
     hit_rate = float(np.mean(signed_returns > 0))
+    per_trade_sigma_bps = float(np.std(signed_returns, ddof=1) * 1e4) if eff_n > 1 else None
 
     # One-sample bootstrap p-value: signed_returns is the realized per-trade PnL
     # (direction × magnitude), one trade per day and iid across days, so an iid
@@ -85,6 +107,7 @@ def _compute_family_metrics(
         "eff_n": eff_n,
         "p_value": p_value,
         "net_edge_bps": None,
+        "per_trade_sigma_bps": per_trade_sigma_bps,
     }
 
 
@@ -162,7 +185,11 @@ def run_intraday_momentum_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
 
     signal = sign(close_at_MIDDAY_HOUR - open_of_day)
     forward_return = close_of_day / close_at_MIDDAY_HOUR - 1
-    signed_return = signal × forward_return
+    Long if signal > 0 (morning up-move, bet on continuation).
+    Long-only: signal <= 0 (morning down-move) is skipped — it would require
+    shorting to act on, and IDX retail accounts cannot short-sell (same
+    constraint as run_orb_family, commit c62eba8). A skipped day is NOT
+    counted toward eff_n.
 
     Parameters
     ----------
@@ -201,11 +228,11 @@ def run_intraday_momentum_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
             continue
 
         signal = float(np.sign(close_at_midday - open_of_day))
-        if signal == 0:
-            continue
+        if not is_long_signal(signal):
+            continue  # short/flat morning move — not tradeable long-only on IDX retail
 
         forward_return = close_of_day / close_at_midday - 1.0
-        signed_returns.append(signal * forward_return)
+        signed_returns.append(forward_return)  # signal is always +1 here after the filter
 
     if len(signed_returns) < MIN_EFF_N:
         return _insufficient_n_result(
@@ -220,9 +247,13 @@ def run_intraday_mean_reversion_family(intraday_df: pd.DataFrame) -> dict[str, A
     Intraday VWAP mean reversion.
 
     VWAP_am = volume-weighted average price of bars 09:00–11:00.
-    signal = -(close_at_11 / vwap_am - 1): price above VWAP → expect downward reversion.
+    signal = -(close_at_11 / vwap_am - 1): price above VWAP → expect downward reversion;
+    price below VWAP → signal > 0 → expect upward reversion (long entry).
     forward_return = close_of_day / close_at_11 - 1.
-    signed_return = signal × forward_return.
+    Long-only: signal <= 0 (price at/above VWAP, betting on a downward
+    reversion) is skipped — it would require shorting to act on, and IDX
+    retail accounts cannot short-sell (same constraint as run_orb_family,
+    commit c62eba8). A skipped day is NOT counted toward eff_n.
 
     Parameters
     ----------
@@ -267,12 +298,14 @@ def run_intraday_mean_reversion_family(intraday_df: pd.DataFrame) -> dict[str, A
 
         # signal: negative of deviation (above VWAP → short signal)
         signal = -(close_at_11 / vwap_am - 1.0)
+        if not is_long_signal(signal):
+            continue  # price at/above VWAP — not tradeable long-only on IDX retail
 
         # close_of_day: last bar
         close_of_day = float(day.iloc[-1]["close"])
         forward_return = close_of_day / close_at_11 - 1.0
 
-        signed_returns.append(signal * forward_return)
+        signed_returns.append(forward_return)  # signal is always +1 here after the filter
 
     if len(signed_returns) < MIN_EFF_N:
         return _insufficient_n_result(

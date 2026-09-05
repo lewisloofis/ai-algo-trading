@@ -18,6 +18,15 @@ Each detector:
     3. Is pooled across universe names
 
 The pooled runner then checks effective-N and computes pooled hit rate.
+
+Long-only
+---------
+Every detector's signal is a direction: positive gap, up-day volume spike, or
+net foreign buying all test "continuation in this direction". Only signal > 0
+events are tradeable on an IDX retail account (see strategy_fit/long_only.py)
+— a negative-signal event would require shorting to act on and is excluded
+from the pooled set, not sign-flipped, and not counted toward eff_n (same
+constraint families_intraday.py:run_orb_family established in c62eba8).
 """
 
 from __future__ import annotations
@@ -33,11 +42,17 @@ from strategy_fit.families_single_name import (
     N_BOOTSTRAP_FAMILIES,
     bootstrap_hit_rate_pvalue,
 )
+from strategy_fit.long_only import long_only_mask
 
 try:
     from lib.stats import MIN_EFF_N
 except ImportError:
     MIN_EFF_N = 30  # fallback
+
+try:
+    from backtest.backtest import bootstrap_pvalue
+except ImportError:
+    bootstrap_pvalue = None  # see run_event_family: falls back to bootstrap_hit_rate_pvalue
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +84,8 @@ def _detect_gap_events(
     gap = (open_t - close_{t-1}) / close_{t-1}.
 
     Signal = sign of gap (positive gap → signal=+1 tests continuation).
+    Long-only: run_event_family keeps only signal > 0 (up-gap) events — a
+    down-gap continuation bet would require shorting.
 
     Returns DataFrame with columns: date, symbol, signal, forward_return.
     """
@@ -97,6 +114,8 @@ def _detect_volume_spike_events(
 
     An event triggers when volume z-score > z_threshold.
     Signal = price direction on the spike day (sign of close - open).
+    Long-only: run_event_family keeps only signal > 0 (up-day spike) events —
+    a down-day-continuation bet would require shorting.
 
     Returns DataFrame with columns: date, symbol, signal, forward_return.
     """
@@ -136,6 +155,8 @@ def _detect_foreign_flow_spike_events(
     Returns empty DataFrame if ``net_foreign`` column is absent.
     Signal = sign of net_foreign on the spike day.
     Spike criterion: |net_foreign z-score| > z_threshold over a trailing window.
+    Long-only: run_event_family keeps only signal > 0 (net foreign buying)
+    events — a net-selling continuation bet would require shorting.
     """
     if "net_foreign" not in df.columns:
         return pd.DataFrame(columns=["date", "symbol", "signal", "forward_return"])
@@ -261,7 +282,10 @@ def run_event_family(
 
     sig = pooled["signal"].to_numpy(dtype=float)
     fwd = pooled["forward_return"].to_numpy(dtype=float)
-    valid = np.isfinite(sig) & np.isfinite(fwd) & (np.abs(fwd) > 0)
+    # Long-only (strategy_fit/long_only.py): keep only signal > 0 events.
+    # signal <= 0 would require shorting to act on and is excluded here — not
+    # sign-flipped, and not counted toward eff_n.
+    valid = np.isfinite(sig) & np.isfinite(fwd) & (np.abs(fwd) > 0) & long_only_mask(sig)
     sig_v = sig[valid]
     fwd_v = fwd[valid]
     eff_n_valid = int(valid.sum())
@@ -269,7 +293,7 @@ def run_event_family(
     if eff_n_valid == 0:
         return {
             "status": "insufficient_n",
-            "skip_reason": "No valid signal/return pairs after NaN filter",
+            "skip_reason": "No valid long-side (signal > 0) events after NaN filter",
             "hit_rate": None,
             "eff_n": 0,
             "gross_edge_bps": None,
@@ -277,12 +301,24 @@ def run_event_family(
             "p_value": None,
         }
 
-    hit_rate = float(np.mean(np.sign(sig_v) == np.sign(fwd_v)))
+    # After the long-only filter, sign(sig_v) is always +1, so hit_rate is
+    # simply the fraction of long events with a positive forward return, and
+    # gross_edge_bps is just mean(fwd_v) — no sign multiplication needed.
+    hit_rate = float(np.mean(fwd_v > 0))
     gross_edge_bps = float(np.nanmean(fwd_v) * 1e4)
     # net_edge_bps is NOT pre-computed here: the runner computes true
     # net-after-full-cost as (gross - hurdle) to avoid double-counting the
     # friction floor.  The key is preserved in the dict for API stability.
-    p_value = bootstrap_hit_rate_pvalue(sig_v, fwd_v, hit_rate)
+
+    # p-value: one-sample bootstrap that mean(fwd_v) > 0. bootstrap_hit_rate_pvalue's
+    # sign-permutation test degenerates once sig_v is all-positive (permuting
+    # an all-positive array can never change its sign pattern) — use the
+    # realized-return one-sample test instead, same as run_single_name_family
+    # and families_intraday.py's long-only families.
+    if bootstrap_pvalue is not None:
+        p_value, _pct5_bps = bootstrap_pvalue(fwd_v * 1e4)
+    else:  # pragma: no cover - only hit if backtest.backtest is unavailable
+        p_value = bootstrap_hit_rate_pvalue(sig_v, fwd_v, hit_rate)
 
     return {
         "status": "tested",

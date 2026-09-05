@@ -32,6 +32,17 @@ Metrics computed
   Positive ICIR indicates a persistent cross-sectional signal.
 - eff_n: number of cross-sectional periods (days) where ≥ MIN_SYMBOLS_PER_PERIOD
   names have valid data.
+
+Long-only infeasibility
+-----------------------
+A cross-sectional decile-spread strategy is *inherently* long/short (long the
+top-ranked names, short the bottom-ranked names) — there is no long-only
+version of it that preserves what the strategy tests, unlike the directional
+families in families_intraday.py / families_single_name.py / families_event.py
+(see strategy_fit/long_only.py). IDX retail accounts cannot short-sell, so
+this family is always reported as STATUS_LONG_SHORT_INFEASIBLE regardless of
+how strong the computed IC/ICIR is — it must be excluded and labelled, never
+silently scored as if it were deployable.
 """
 
 from __future__ import annotations
@@ -43,6 +54,7 @@ import pandas as pd
 from scipy import stats as sps
 
 from strategy_fit.families_single_name import N_BOOTSTRAP_FAMILIES, bootstrap_hit_rate_pvalue
+from strategy_fit.long_only import long_short_infeasible_result
 
 try:
     from lib.stats import MIN_EFF_N
@@ -149,6 +161,12 @@ def run_cross_sectional_family(
     dict
         Keys: status, skip_reason, eff_n, ic, ic_tstat, icir, p_value,
               hit_rate, gross_edge_bps, net_edge_bps.
+
+        status is never "tested": this family requires a short leg (long the
+        top decile, short the bottom decile), which IDX retail accounts
+        cannot execute. Once eff_n and IC are computed (data-sufficiency is
+        still checked and reported normally), the family is reported as
+        STATUS_LONG_SHORT_INFEASIBLE — see strategy_fit/long_only.py.
     """
     ic_df = _compute_daily_ic(hist_dict, horizon_trading_days)
 
@@ -208,19 +226,24 @@ def run_cross_sectional_family(
     p_value = float(np.mean(null_mean_ics >= mean_ic))
 
     logger.info(
-        "cross_sectional: eff_n=%d, mean_IC=%.4f, ICIR=%.3f, IC_tstat=%.2f, p=%.3f",
+        "cross_sectional: eff_n=%d, mean_IC=%.4f, ICIR=%.3f, IC_tstat=%.2f, p=%.3f "
+        "— long_short_infeasible (decile spread requires a short leg)",
         eff_n, mean_ic, icir, ic_tstat, p_value,
     )
 
-    return {
-        "status": "tested",
-        "skip_reason": None,
-        "eff_n": eff_n,
-        "ic": mean_ic,
-        "ic_tstat": ic_tstat,
-        "icir": icir,
-        "p_value": p_value,
-        "hit_rate": hit_rate,
-        "gross_edge_bps": gross_edge_bps,
-        "net_edge_bps": None,
-    }
+    # Cross-sectional decile spread is structurally long/short (buy top decile,
+    # short bottom decile) — it cannot be made long-only without changing what
+    # the strategy tests (strategy_fit/long_only.py). The IC/ICIR/p_value
+    # computed above are diagnostic only (logged, and summarized in
+    # skip_reason for a human reading the report); they are never returned as
+    # a scored, tradeable result.
+    return long_short_infeasible_result(
+        reason_detail=(
+            f"Cross-sectional IC computed (eff_n={eff_n}, mean_IC={mean_ic:.4f}, "
+            f"ICIR={icir:.3f}, p={p_value:.3f}) but"
+        ),
+        eff_n=eff_n,
+        ic=None,
+        ic_tstat=None,
+        icir=None,
+    )

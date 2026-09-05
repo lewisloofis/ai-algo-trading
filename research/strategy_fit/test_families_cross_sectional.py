@@ -87,26 +87,47 @@ class TestRunCrossSectionalFamily:
         )
 
     def test_injected_signal_produces_positive_icir(self):
-        """Strong cross-sectional signal must produce positive ICIR."""
+        """Long-only regression: even a strong injected cross-sectional signal
+        must NEVER be reported as 'tested' — cross-sectional is a decile
+        long/short spread, which IDX retail accounts cannot execute (see
+        strategy_fit/long_only.py). It must always come back
+        long_short_infeasible, with the scored metrics (ic/ic_tstat/icir)
+        nulled out, regardless of how strong the underlying signal is.
+
+        Before this fix, a strong signal produced status='tested' with a
+        positive ICIR — i.e. the family was silently scored as if this
+        account could trade a long/short spread. That is the bug.
+        """
         from strategy_fit.families_cross_sectional import run_cross_sectional_family
+        from strategy_fit.long_only import STATUS_LONG_SHORT_INFEASIBLE
         hist = _make_cross_sectional_hist(n_symbols=10, n_days=80, signal_strength=0.8)
         result = run_cross_sectional_family(hist_dict=hist, horizon_trading_days=1)
-        assert result["status"] == "tested", (
-            f"Expected status='tested', got {result['status']}: {result.get('skip_reason')}"
+        assert result["status"] == STATUS_LONG_SHORT_INFEASIBLE, (
+            f"Expected status='{STATUS_LONG_SHORT_INFEASIBLE}', got {result['status']}: "
+            f"{result.get('skip_reason')}"
         )
-        assert (result["icir"] or 0.0) > 0.0, (
-            f"Expected positive ICIR for injected signal, got {result['icir']}"
+        assert result["ic"] is None and result["ic_tstat"] is None and result["icir"] is None, (
+            "long_short_infeasible must null out the scored metrics, got "
+            f"ic={result['ic']} ic_tstat={result['ic_tstat']} icir={result['icir']}"
+        )
+        assert "short" in (result["skip_reason"] or "").lower(), (
+            "skip_reason must explain the short-leg infeasibility"
         )
 
     def test_injected_signal_reaches_min_eff_n(self):
-        """With 60+ independent cross-sectional periods, eff_n >= 30."""
+        """With 60+ independent cross-sectional periods, eff_n >= 30.
+
+        eff_n is a period count, not a scored P&L number, so it is preserved
+        even though the family is long_short_infeasible (never 'tested').
+        """
         from strategy_fit.families_cross_sectional import run_cross_sectional_family
+        from strategy_fit.long_only import STATUS_LONG_SHORT_INFEASIBLE
         hist = _make_cross_sectional_hist(n_symbols=8, n_days=60, signal_strength=0.7)
         result = run_cross_sectional_family(hist_dict=hist, horizon_trading_days=1)
-        if result["status"] == "tested":
-            assert (result["eff_n"] or 0) >= 30, (
-                f"Expected eff_n >= 30, got {result['eff_n']}"
-            )
+        assert result["status"] == STATUS_LONG_SHORT_INFEASIBLE
+        assert (result["eff_n"] or 0) >= 30, (
+            f"Expected eff_n >= 30, got {result['eff_n']}"
+        )
 
     def test_insufficient_symbols_returns_insufficient_n(self):
         """With fewer than 3 symbols, IC cannot be computed meaningfully."""

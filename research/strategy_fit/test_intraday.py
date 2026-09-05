@@ -124,13 +124,62 @@ def _make_momentum_edge_df(n_days: int = 40, ref_price: float = 1000.0) -> pd.Da
 
 
 def _make_vwap_edge_df(n_days: int = 40, ref_price: float = 1000.0) -> pd.DataFrame:
-    """Build intraday DataFrame with VWAP mean-reversion edge.
+    """Build intraday DataFrame with VWAP mean-reversion edge — LONG side.
 
-    AM bars: first 60 bars at ref_price (establishing VWAP ≈ ref_price),
-    then remaining AM bars at ref_price * 1.04 (pulls close_at_11 well above VWAP).
-    Signal = -(close_at_11 / vwap_am - 1) < 0 → negative signal means SHORT.
-    PM: price reverts back to ref_price → forward_return < 0.
-    signed_return = signal × forward_return = negative × negative = positive.
+    AM bars: first 60 bars at ref_price (establishing VWAP ≈ ref_price), then
+    remaining AM bars at ref_price * 0.96 (pulls close_at_11 well below VWAP).
+    Signal = -(close_at_11 / vwap_am - 1) > 0 → positive signal means LONG:
+    price is below VWAP, so the family bets on an upward bounce — the only
+    side tradeable on an IDX retail account (see run_intraday_mean_reversion_family
+    / strategy_fit/long_only.py).
+    PM: price reverts back up to ref_price → forward_return > 0.
+    signed_return = signal × forward_return = positive × positive = positive.
+    """
+    rows = []
+    date = pd.Timestamp("2025-01-06")
+    days_added = 0
+    while days_added < n_days:
+        if date.weekday() >= 5:
+            date += pd.Timedelta(days=1)
+            continue
+        bar_idx = 0
+        # AM: 09:00–11:59 (180 bars total)
+        for h in range(9, 12):
+            for m in range(60):
+                dt = date.replace(hour=h, minute=m)
+                # First 60 bars at ref_price → VWAP anchored near ref_price
+                # Remaining 120 bars at ref_price * 0.96 → close_at_11 << VWAP
+                close_val = ref_price if bar_idx < 60 else ref_price * 0.96
+                rows.append({"datetime": dt, "date": date.date(), "open": ref_price,
+                             "high": ref_price, "low": close_val * 0.995, "close": close_val,
+                             "volume": 1000, "value": close_val * 1000, "net_foreign": 0})
+                bar_idx += 1
+        # PM: price reverts back up to ref_price (mean reversion)
+        for h_m in range(13 * 60 + 30, 16 * 60 + 16):
+            h = h_m // 60
+            m = h_m % 60
+            dt = date.replace(hour=h, minute=m)
+            close_val = ref_price  # reverts to VWAP
+            rows.append({"datetime": dt, "date": date.date(), "open": ref_price * 0.96,
+                         "high": ref_price, "low": ref_price * 0.96, "close": close_val,
+                         "volume": 1000, "value": close_val * 1000, "net_foreign": 0})
+        days_added += 1
+        date += pd.Timedelta(days=1)
+    return pd.DataFrame(rows)
+
+
+def _make_vwap_short_signal_df(n_days: int = 40, ref_price: float = 1000.0) -> pd.DataFrame:
+    """Build intraday DataFrame where VWAP mean-reversion signal is SHORT every day.
+
+    AM bars: first 60 bars at ref_price (establishing VWAP ≈ ref_price), then
+    remaining AM bars at ref_price * 1.04 (pulls close_at_11 well above VWAP).
+    Signal = -(close_at_11 / vwap_am - 1) < 0 → negative signal means SHORT
+    (price is above VWAP, betting on a downward reversion). This is not
+    tradeable on an IDX retail account and must be skipped by
+    run_intraday_mean_reversion_family — see
+    TestIntradayFamilies.test_mean_reversion_short_signal_is_skipped, the
+    long-only regression counterpart of
+    TestOrbTradesMostDays.test_orb_down_breaks_are_never_traded.
     """
     rows = []
     date = pd.Timestamp("2025-01-06")
@@ -151,7 +200,7 @@ def _make_vwap_edge_df(n_days: int = 40, ref_price: float = 1000.0) -> pd.DataFr
                              "high": close_val * 1.005, "low": ref_price, "close": close_val,
                              "volume": 1000, "value": close_val * 1000, "net_foreign": 0})
                 bar_idx += 1
-        # PM: price reverts back to ref_price (mean reversion)
+        # PM: price reverts back down to ref_price (mean reversion)
         for h_m in range(13 * 60 + 30, 16 * 60 + 16):
             h = h_m // 60
             m = h_m % 60
@@ -268,7 +317,8 @@ class TestIntradayFamilies:
             assert abs(result["gross_edge_bps"]) < 5.0
 
     def test_mean_reversion_injected_edge_survivor(self):
-        """Injected VWAP overextension → positive gross_edge."""
+        """Injected VWAP overextension (long side: price below VWAP, bounces
+        up) → positive gross_edge."""
         from strategy_fit.families_intraday import run_intraday_mean_reversion_family
         from lib.stats import MIN_EFF_N
         df = _make_vwap_edge_df(n_days=40)
@@ -276,6 +326,29 @@ class TestIntradayFamilies:
         assert result["status"] == "tested", f"Got {result['status']}: {result.get('skip_reason')}"
         assert result["gross_edge_bps"] > 0, f"Expected positive gross edge, got {result['gross_edge_bps']}"
         assert result["eff_n"] >= MIN_EFF_N
+
+    def test_mean_reversion_short_signal_is_skipped(self):
+        """Long-only contract: when the VWAP mean-reversion signal is SHORT
+        every day (price consistently above VWAP), run_intraday_mean_reversion_family
+        must yield zero entries rather than silently trading them as synthetic
+        shorts.
+
+        This is the long-only regression counterpart of
+        TestOrbTradesMostDays.test_orb_down_breaks_are_never_traded (c62eba8).
+        Before this fix, this exact fixture produced status='tested' with a
+        POSITIVE gross_edge_bps, because signal (negative) × forward_return
+        (negative, price reverting down) was sign-flipped into a fake long
+        return — i.e. the family was silently scoring an un-tradeable short.
+        """
+        from strategy_fit.families_intraday import run_intraday_mean_reversion_family
+        from lib.stats import MIN_EFF_N
+        df = _make_vwap_short_signal_df(n_days=40)
+        result = run_intraday_mean_reversion_family(df)
+        assert result["status"] == "insufficient_n", (
+            f"Short-only VWAP signal must never be traded; got status={result['status']}"
+        )
+        assert result["eff_n"] is None
+        assert result["skip_reason"] == f"eff_n=0 < MIN_EFF_N={MIN_EFF_N}"
 
     def test_eff_n_meets_min_threshold(self):
         """Injected-edge fixture produces eff_n >= MIN_EFF_N=30."""

@@ -101,29 +101,43 @@ class TestRunPairsFamily:
         )
 
     def test_cointegrated_pair_is_detected(self):
-        """Strong cointegrated pair must be detected (status='tested' or
-        at minimum not 'cointegration_failed')."""
+        """Long-only regression: a pair trade requires a short leg (long the
+        cheap leg, short the rich leg), which IDX retail accounts cannot
+        execute (see strategy_fit/long_only.py). So a strongly cointegrated
+        pair must NEVER be reported as 'tested' — at best it is detected and
+        then marked long_short_infeasible; it may also legitimately be
+        insufficient_n if eff_n falls short. 'tested' is no longer a valid
+        outcome for this family under any data.
+
+        Before this fix, a strongly cointegrated pair produced status='tested'
+        with a scored gross_edge_bps — i.e. the family was silently scored as
+        if this account could trade a long/short pair. That is the bug.
+        """
         from strategy_fit.families_pairs import run_pairs_family
+        from strategy_fit.long_only import STATUS_LONG_SHORT_INFEASIBLE
         df_a, df_b = _make_cointegrated_pair(n=200, seed=42, half_life=5.0)
         hist = {"SYM_A": df_a, "SYM_B": df_b}
         result = run_pairs_family(hist_dict=hist, horizon_trading_days=1)
         # A cointegrated pair with 200 rows and half_life=5 should pass cointegration test.
-        assert result["status"] in ("tested", "insufficient_n"), (
-            f"Cointegrated pair should not be skipped for non-data reasons; "
-            f"got status={result['status']} skip_reason={result.get('skip_reason')}"
+        assert result["status"] in (STATUS_LONG_SHORT_INFEASIBLE, "insufficient_n"), (
+            f"Cointegrated pair should not be skipped for non-data reasons, and must "
+            f"never be 'tested'; got status={result['status']} "
+            f"skip_reason={result.get('skip_reason')}"
         )
 
     def test_noise_pair_does_not_pass_coint(self):
         """Two independent random walks must not produce a strong cointegration signal."""
         from strategy_fit.families_pairs import run_pairs_family
+        from strategy_fit.long_only import STATUS_LONG_SHORT_INFEASIBLE
         df_a, df_b = _make_noise_pair(n=200)
         hist = {"SYM_A": df_a, "SYM_B": df_b}
         result = run_pairs_family(hist_dict=hist, horizon_trading_days=1)
-        # Noise pairs either fail cointegration, or have low eff_n.
-        # We cannot guarantee p>0.05 on every seed, but the result must
-        # be one of the known non-survivor statuses.
+        # Noise pairs either fail cointegration, or have low eff_n. We cannot
+        # guarantee p>0.05 on every seed, but the result must be one of the
+        # known non-survivor statuses — 'tested' is never valid for this
+        # family (see test_cointegrated_pair_is_detected).
         assert result["status"] in (
-            "tested", "insufficient_n", "cointegration_not_found"
+            STATUS_LONG_SHORT_INFEASIBLE, "insufficient_n", "cointegration_not_found"
         ), f"Unexpected status for noise pair: {result['status']}"
 
     def test_candidate_set_cap_is_logged(self, caplog):
