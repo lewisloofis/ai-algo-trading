@@ -467,7 +467,23 @@ collector is not the bottleneck at 7 symbols.
 - **`sequence_number` is worth exposing.** `sbcap` has no gap analysis today; this
   was done with an ad-hoc pass over `sbcap export --format ndjson`. A
   `sbcap seqcheck` subcommand would make capture fidelity a routine check rather
-  than an investigation. **Open.**
+  than an investigation. ~~**Open.**~~
+
+  > ✔️ Done 2026-09-12 — `sbcap seqcheck` shipped
+  > (`collector/cmd/sbcap/seqcheck.go`). Reproduces every per-symbol number in the
+  > table above **exactly** from the same segments, including RATU's negative
+  > −168. `--busiest-minutes N` implements the discriminating test as a flag.
+  > Capture fidelity is now a one-command check rather than an investigation,
+  > which is what made §5f below cheap enough to actually run.
+  >
+  > **The table above has an arithmetic slip in its ALL row, found by the
+  > reimplementation.** The seven per-symbol `Unexplained` values sum to
+  > **42,352**, not the 42,520 printed. The difference is exactly 168 — RATU's
+  > −168 clamped to zero in the aggregate while its own row kept the negative.
+  > That is the one thing this section explicitly says not to do ("report it
+  > as-is, do not clamp"). Loss% is unaffected (16.08% vs 16.14%, both round to
+  > 16.1%) so no conclusion here changes, but `seqcheck` emits the
+  > internally-consistent unclamped figure and the two will differ by 168.
 
 **Caveats.** One session. The shared-space model is calibrated on a single symbol
 (RATU, -1.1% residual suggests it very slightly over-accounts, so absolute losses
@@ -475,6 +491,82 @@ may be ~1pp lower). The quiet-minute half of the discriminating test is thin —
 several symbols produce too few records per minute to form a span. And this does
 not distinguish exchange-side from feed-server-side conflation, only that both
 are outside the collector.
+
+## 5f. Widening 7 → 47 symbols did not degrade capture (2026-09-12)
+
+*§5c applied the W0.2 widening but flagged the capacity question as open:
+"this measurement shows we are not saturating **at 7 symbols on a t4g.nano**, and
+says nothing about 43." This closes it. The check was the one-off
+`verify-widened-watchlist-capture` deadline, due 2026-09-08 and run 4 days late.*
+
+**Method.** `sbcap seqcheck` (§5d) over all five `w02-widened` sessions, filtered
+to the original 7 survivors so the comparison holds the symbol set fixed and
+varies only the process load. Per-symbol loss %, against the 2026-09-04 baseline
+measured on the 7-name watchlist:
+
+| Symbol | base 09-04 | 09-07 | 09-08 | 09-09 | 09-10 | 09-11 | mean | Δ |
+|--------|-----------:|------:|------:|------:|------:|------:|-----:|--:|
+| RATU   | −1.1 | −2.1 |  0.4 |  1.3 |  1.0 |  7.6 |  1.6 | +2.7 |
+| BREN   |  8.5 | 13.2 |  7.7 | 11.9 |  6.3 |  8.3 |  9.5 | +1.0 |
+| PTRO   | 19.3 | 13.1 |  9.7 | 10.9 | 14.6 | 13.5 | 12.4 | **−6.9** |
+| TPIA   | 20.6 | 16.6 | 10.2 | 15.4 | 16.7 | 16.3 | 15.0 | **−5.6** |
+| BRPT   | 14.7 | 12.0 | 22.7 | 18.5 | 14.9 | 11.9 | 16.0 | +1.3 |
+| RAJA   | 18.6 | 17.3 | 12.5 | 18.0 | 14.0 | 17.7 | 15.9 | −2.7 |
+| ENRG   | 12.2 | 30.5 | 13.3 | 13.3 | 12.6 | 11.4 | 16.2 | +4.0 |
+| **ALL**| **16.1** | 15.3 | 12.0 | 14.7 | 13.7 | 13.5 | **13.8** | **−2.3** |
+
+**Verdict: the collector is not saturating at 47 symbols.** Aggregate loss
+*improved* 16.1% → 13.8%, and the two worst names at 7 symbols improved most
+(PTRO −6.9pp, TPIA −5.6pp). ENRG's +4.0 mean is one day — 30.5% on 09-07 against
+11.4–13.3% on the other four. No box resize; the `terraform.tfvars` rollback
+prepared in W0.2 is not needed.
+
+**This is the strongest evidence yet that §5d's conclusion is right.** §5d argued
+from *within* one session that loss tracks each symbol's own update rate rather
+than process load, using the quiet-symbol-in-busy-minute test. §5f varies the
+load directly — 6.7× the symbols, 1.4–1.8M records/day against ~260k — and the
+original seven do not degrade at all. A shared-contention mechanism could not
+produce that. The conflation is upstream, confirmed by an experiment rather than
+an inference.
+
+**Session integrity, all five days:** 47/47 symbols in every manifest, 9 hourly
+segments, full 01:31→09:25 UTC span (08:31–16:25 WIB), `truncated: no`,
+0 RECONNECT, 0 error records. `scan_segments()` reads 55 `plan10-survivors` +
+5 `w02-widened` sessions and `symbol_coverage()` unions them — PTRO and RATU
+resolve to 60 trading days across the id change, so the series did not fork.
+
+**Read the right aggregate.** Unfiltered over all 47 names the ALL row reads
+**17.1–18.1%**, *higher* than the 16.1% baseline — and that comparison is
+meaningless, because it changes the symbol set and the load at the same time. The
+40 added names include BBCA/BBRI/BMRI/ADRO/BUMI, among the most heavily traded on
+IDX, and they carry 40%+ loss in the busiest minutes. A population with more
+high-turnover names has a higher mean loss *by construction* under §5d's own
+mechanism. The saturation question requires holding the symbol set fixed, which
+is the 7-survivor column above:
+
+| date | ALL, 47 names | ALL, 7 survivors |
+|------|--------------:|-----------------:|
+| 09-07 | 18.1 | 15.3 |
+| 09-08 | 17.8 | 12.0 |
+| 09-09 | 17.6 | 14.7 |
+| 09-10 | 17.1 | 13.7 |
+| 09-11 | 17.3 | 13.5 |
+| *(09-04 baseline)* | — | *16.1* |
+
+**A caveat on the anchor.** RATU is the calibration symbol for the shared-space
+model — §5d's −1.1% residual is what licenses "observed book seqs + trades
+accounts for the full span". Across the five widened sessions RATU reads −2.1,
++0.4, +1.3, +1.0 and **+7.6**. The last is well outside the ±1pp band a single
+session implied. Either RATU genuinely lost frames on 09-11, or the model is
+looser than one day suggested and every absolute loss figure carries a wider
+error bar than §5d's "may be ~1pp lower". The *relative* comparison above is
+unaffected (same model, same symbols, before and after), but re-anchoring the
+calibration on several sessions is worth doing before any absolute figure is
+quoted as precise.
+
+**Caveat unchanged from §5c:** the jump was 7 → 47 in one step, never measured in
+between. A *good* result does not localise a threshold either — it says 47 is
+fine on a t4g.nano, not where the ceiling is.
 
 ## 5e. The two substrates disagree on corporate actions (2026-09-05)
 

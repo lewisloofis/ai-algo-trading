@@ -831,20 +831,35 @@ is dead** — the edge existed only in the window the names were selected on, an
 two substrates agree on that out-of-sample. Wave 3 is explicitly NOT unblocked; the
 gate it sits behind was not cleared, it was answered in the negative.*
 
-**The only dated item:**
+**✅ The only dated item is closed.**
 
-1. **Verify the widened capture on Tuesday 2026-09-08**, covering the first session,
-   which is **Monday 2026-09-07** (`calendar/deadlines.yaml: verify-widened-watchlist-capture`).
-   The first session under `watchlist_id=w02-widened` — **47 names**, applied while the
-   box was stopped. (An earlier revision of this line read "Monday 2026-09-08"; 09-08 is
-   a Tuesday. The session is Monday 09-07, the check is the day after.)
-   `scripts/collector_healthcheck.py` catches a zero-record session but **not partial
-   degradation**, so also re-run the [plan 12 §5d](./12-data-gap-backlog-and-demand-driven-capture.md)
-   sequence-gap analysis and compare the 7 survivors against the 2026-09-04 baseline
-   (RATU −1.1 % … TPIA 20.6 %). Those losses are upstream, so they should be roughly
-   unchanged; if they worsen materially the collector *is* saturating at 47 symbols on
-   a t4g.nano and the box needs resizing. Rollback:
-   `git checkout infra/terraform.tfvars && cd infra && tofu apply`.
+1. ~~**Verify the widened capture on Tuesday 2026-09-08**~~ — **done 2026-09-12**,
+   four days late. All five `w02-widened` sessions (2026-09-07 → 09-11) are clean:
+   47/47 symbols per manifest, 9 hourly segments, full 01:31→09:25 UTC span,
+   `truncated: no`, 0 RECONNECT, 0 errors, 1.4–1.8M records/day.
+
+   **The collector is not saturating at 47 symbols on a t4g.nano.** Per-symbol
+   frame loss for the original 7, against the 2026-09-04 baseline, *improved*:
+   aggregate 16.1% → 13.8%, with the two worst names at 7 symbols improving most
+   (PTRO 19.3 → 12.4, TPIA 20.6 → 15.0). ENRG's +4.0pp mean is a single day
+   (30.5% on 09-07 vs 11.4–13.3% on the other four). No box resize; the prepared
+   `terraform.tfvars` rollback is not needed. Full table in
+   [plan 12 §5f](./12-data-gap-backlog-and-demand-driven-capture.md).
+
+   This is also the **direct** confirmation of §5d's inference: that section argued
+   from within one session that loss tracks each symbol's own update rate rather
+   than process load. §5f varied the load 6.7× and the original seven did not
+   degrade. Shared contention cannot produce that.
+
+   The check was cheap because `sbcap seqcheck` now exists
+   (`collector/cmd/sbcap/seqcheck.go`) — plan 12 §5d had left it **Open** and the
+   analysis was an uncommitted ad-hoc pass, which is precisely why this deadline
+   slipped. It reproduces the published §5d table exactly, and in doing so found a
+   168-row arithmetic slip in that table's own ALL row.
+
+   No fork: `scan_segments()` reads 55 `plan10-survivors` + 5 `w02-widened`
+   sessions and `symbol_coverage()` unions them — PTRO and RATU resolve to **60**
+   trading days across the id change.
 
 **✅ DONE 2026-09-05 (evening) — plan 13's daily impact model is built and has run
 live. The 17 blocked cells are resolved; `impact_not_priced` no longer appears on any
@@ -909,6 +924,326 @@ treats them as deployable:
 - 2 of 3 are UNDERPOWERED: OOS n clears the hard floor but misses the power-derived
   required-N.
 
+
+### ⛔ BREADTH TEST 2026-09-12 — the daily families have no edge. Close the band.
+
+*The test the whole project has been missing: the same signal across the whole
+universe instead of the one name a backtest grid selected. 47 names, deep history
+from each name's own clean start (zero-volume < 5%/yr, floored at 2013),
+`open_{t+1}` entry, filter-then-de-overlap, impact on **trailing-2y** ADV.
+**85,245 trades.***
+
+| family | names | trades | mean edge vs null | median | t-stat | +ve | p(sign) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `daily_momentum` | 47 | 24,787 | **+0.1** | −4.6 | 0.01 | 18/47 | 0.96 |
+| `volume_breakout` | 47 | 30,088 | **+6.5** | +3.3 | 1.82 | 29/47 | 0.07 |
+| `mean_reversion` | 47 | 30,370 | **−9.8** | −7.2 | −2.01 | 17/47 | 0.98 |
+
+*Edge = the signal's own contribution over an always-long null, bps/trade.*
+
+**`daily_momentum` has no edge — it is zero to three significant figures.**
+Mean +0.1 bps, t = 0.01, and *fewer* than half the names positive. PTRO's +45.1 bps
+was one name out of 47. The spread of per-name outcomes is symmetric noise: BNBR
++170.0 against MBMA −177.5 at comparable sample sizes.
+
+**`mean_reversion` is significantly negative** (t = −2.01): buying 5-day
+underperformers has been actively anti-predictive on IDX at a 2-day horizon.
+
+**`volume_breakout` is the only one with a pulse — and it is irrelevant.**
++6.5 bps at p = 0.07. **The cheapest hurdle in the entire 47-name universe is
+77.8 bps** (UNTR, a Rp 26,300 stock where one tick is 9.5 bps); the universe mean
+is 125.1. A 6.5 bps signal is not 5% of the way to tradeable.
+
+**Only 2 of 47 names cleared their hurdle on gross, and 0 of 47 on signal.** The
+two (RATU, CUAN) are short-history names whose entire sample sits inside a recent
+run-up — the PTRO pattern again, not an exception to it.
+
+> **The hurdle is the finding, not the signals.** Mean 125.1 bps per 2-day
+> round-trip, and it is mostly structural: one tick of spread (9.5 bps on UNTR,
+> 105.3 on BNBR) + 40 bps fees + impact + 20 bps financing. No daily price-pattern
+> signal measured here produces double-digit bps. **The gap is an order of
+> magnitude, not a tuning problem.** This is the same wall plan 06 hit at the
+> tick scale and W2.3 hit at 819-of-836 cost-gated cells; it is now measured at
+> the daily scale on 85,245 trades.
+
+**Consequence: close the daily price-pattern band**, as plan 06 closed
+microstructure and Wave 2 closed intraday ORB. Do not re-tune thresholds, holds or
+lookbacks on these three families — the shortfall is ~10× and the sample is no
+longer thin enough to hide behind.
+
+**What is NOT closed.** This tested three *price-pattern* families at hold=2.
+Untouched: event-driven families with a named mechanism (index inclusion, forced
+flow, corporate actions) where the edge is structural rather than statistical; any
+horizon beyond 2 days (capital-blocked by ADR-0011, not evidence-blocked); and
+names outside this 47. The 10-name random control slice in `w02-widened` remains
+the only substrate no backtest has touched — it is the right place to test
+anything genuinely prospective.
+
+**Method note for every future run.** The always-long null belongs in
+`strategy_fit` as a blocking gate. Nothing in the harness currently asks *"does
+this beat holding the thing?"*, which is how a 30× move in one name was booked as
+alpha and carried three cells to PASS. It is one function, and it would have
+caught this in June.
+
+---
+
+### 🔴 VERDICT 2026-09-12 — the daily survivors do not survive a proper test
+
+*Run on the deep history described below (PTRO 2013→2026, ~3,300 bars), with a
+realistic `open_{t+1}` entry (D1), the corrected filter-then-de-overlap order
+(D2), a 60/40 chronological split, and the repo's own cost stack.*
+
+**PTRO `daily_momentum` h2 — the best cell this project has ever produced:**
+
+| | value |
+|---|---:|
+| OOS gross edge (C2 entry, corrected order, n=306) | **+119.4 bps** |
+| `min_edge_to_clear` (one-tick spread 41.9 + 40 bps fee) | 81.9 bps |
+| modelled impact — **corrected, see below** | 3.9–4.5 bps |
+| financing (ADR-0014, cheapest entry weekday, hold 2) | 20.0 bps |
+| **best-case hurdle** | **~110.2 bps** |
+| **net** | **+9.2 bps** |
+
+> **Corrected 2026-09-12.** This table first read impact 17.6 bps / hurdle
+> 119.5 / net **−0.1**. That impact was computed over the 2021→now OOS window,
+> and `compute_adv_notional_idr_from_daily_bars` takes the **median** turnover
+> across whatever window it is given. PTRO's liquidity changed by two orders of
+> magnitude over that span, so the median is not a description of the stock you
+> would trade today:
+>
+> | ADV window | median ADV | impact |
+> |---|---:|---:|
+> | 2013 → now | 2.1 B IDR | 33.6 bps |
+> | 2021-03 → now (used originally) | 10.8 B IDR | 17.6 bps |
+> | trailing 2y | 269.2 B IDR | 4.5 bps |
+> | trailing 1y | **371.7 B IDR** | **3.9 bps** |
+>
+> A 176× spread. Pricing a trade you would place *today* requires trailing ADV,
+> so the cell is **marginally positive (+9.2 bps), not breakeven**. This is a
+> general trap for any deep-history re-run: `impact.py`'s median-ADV logic is
+> correct for its stated near-term use and silently wrong over a decade for a
+> name whose liquidity profile moved. **Any grid re-run on deep history must
+> source ADV from a trailing window, not the full span.**
+
+**The correction does not change the verdict, and the reason is below: +9.2 bps
+of the cell's return is signal, and the rest is drift.**
+
+**And most of that gross is not edge — it is the stock going up.** The OOS window
+is 2021-03-08 → 2026-09-11, over which PTRO went **182 → 5,400, a 29.7×**. Against
+an always-long null (enter every de-overlapped 2-day slot regardless of signal,
+same window, same de-overlap):
+
+| | bps/trade | n |
+|---|---:|---:|
+| strategy (signal > 0) | +119.4 | 306 |
+| always-long null | +74.3 | 660 |
+| **edge over the null** | **+45.1** | |
+| p(random same-size subset ≥ strategy) | **0.060** | |
+
+**62% of the apparent edge is beta to a 30× move.** The signal's own contribution
+is +45.1 bps against the corrected ~110.2 bps hurdle — **−65.1 bps net** — and it
+is not distinguishable from randomly selecting the same number of 2-day windows at
+the 5% level. **This is the load-bearing number and the ADV correction does not
+touch its sign.** To bank the +9.2 bps you must forecast that PTRO keeps drifting
+up as it did while going 182 → 5,400; the signal alone never pays for the
+friction. The 2026-YTD row is the live test of that: strategy +32.0 bps against a
+~110 bps hurdle — **−78 bps** — in the year with one of the sample's better signal
+edges (+71.6 over null).
+
+**TINS `mean_reversion` h2 is unambiguously dead:** OOS +32.6 bps gross against the
+same class of hurdle; edge over the null **+7.5 bps at p = 0.336**. Independently,
+it is hit by both D1 (−13.9) and D2 (−36.1), and its impact charge still rests on a
+borrowed coefficient (5 sessions of ticks vs plan 15's `MIN_IMPACT_OBS`).
+
+**The in-sample half is the tell, and it points the same way.** For every cell the
+OOS half *beat* the IS half — PTRO momentum 31.7 → 120.4 bps under production
+semantics. That is backwards for an overfit strategy and is the signature of a
+chronological split whose second half contains a bull run. The 2013–2021 half,
+which is the regime-neutral one, earns **24–51 bps gross against a ~120 bps
+hurdle**: deeply negative.
+
+> **This is the same failure that killed ORB, in a new costume.** ORB died because
+> its edge lived only in the window its names were selected in. This cell's edge
+> lives only in the window its name went up 30×. In both cases the strategy was
+> being credited for something other than the signal.
+
+**Caveat on precision, not on direction.** `min_edge_to_clear_bps` here is
+reconstructed from the tick ladder against the OOS median close (478 → tick 2 →
+41.9 bps) rather than read from the plan-09 annotation, so the hurdle carries a
+few bps of uncertainty. The direction does not depend on it: no plausible floor
+turns a +45.1 bps null-adjusted edge into a pass, and the p = 0.060 is
+cost-independent.
+
+**Consequence for [plan 17](./17-execution-and-replay-parity-engine.md) §2 and
+Wave 4:** condition 1 (confirmed edge) is **not met**. There is nothing to paper
+trade. Building the forward paper-trade loop now would be building execution for
+an edge that does not exist — the precise mistake Wave 2 was created to prevent.
+
+**What this does NOT say.** The daily *band* is not dead — it has only now been
+tested with enough data to judge, and only on three cells. The deep history that
+made this verdict possible also makes the whole §4 catalog re-testable at ~5×
+the sample it has ever had, and the 47-name capture (including the 10-name random
+control slice, untouched by any backtest) is accruing the one substrate that can
+answer a genuinely prospective question. **Re-run the grid on the deep history
+before concluding anything broader.**
+
+---
+
+### 🔍 The daily band was never data-limited — 2.5 years used, ~14 usable years available (2026-09-12)
+
+**`research/data/daily/` now exists** (`screener/daily_store.py`, one parquet per
+symbol, 47 names, 17 MB) — the durable store whose absence §7 recorded as "the
+daily families have no on-disk store". Populating it live surfaced something the
+whole daily band has been evaluated without:
+
+| Symbol | rows | first bar | clean from |
+|--------|-----:|-----------|------------|
+| TINS | 6,228 | 2001-03-14 | 2001 |
+| PTRO | 5,758 | 2003-01-01 | **2013** |
+| RAJA | 4,944 | 2006-04-20 | — |
+| WIFI | 1,369 | 2020-12-30 | 2021 |
+| BREN |   694 | 2023-10-09 | 2023 |
+| RATU |   395 | 2025-01-08 | 2025 |
+
+**Every daily result to date rests on ~636 rows (2024-01-02 → present).** That was
+never the endpoint's limit — it is `screen_universe.DEFAULT_LOOKBACK_DAYS`, a
+client-side default. chartbit serves from listing date, or a 2003-01-01 floor,
+whichever is later.
+
+PTRO's usable history is **2013 → 2026, ~3,300 trading days**, not 636. Its 939
+zero-volume days are entirely pre-2013 (46% of 2003, 87% of 2011, then 0.0% every
+year from 2013 on) — it was a thin small-cap before its recent run. TINS is clean
+from 2001. BREN/RATU/WIFI are genuinely young and their short histories are real
+listing constraints, not a fetch artefact.
+
+**Why this matters more than any defect above.** Plan 13's out-of-sample split —
+the guard-rail that killed BREN, RATU and WIFI, and the one that made the three
+survivors credible — ran on **n = 48–67 observations**, with two of three cells
+reported UNDERPOWERED against the W2.1 power-derived floor. On ~3,300 rows, a
+60/40 split yields on the order of **300+ de-overlapped long-only observations
+out-of-sample** for PTRO. The question "does this edge persist out-of-sample" goes
+from underpowered to properly testable.
+
+**This is the second instance of the same error, and §7 already recorded the
+first:** the pre-plan-13 estimate that h2 daily cells would be untestable OOS came
+from assuming a 90-day cap that applies only to the *intraday* endpoint — "two
+independent estimates agreeing confirmed the arithmetic, not the shared bad
+premise; a cheap live probe settled it in seconds. **Probe the data before
+reasoning about its size.**" The same lesson, missed the same way: this session's
+own first probe passed `start='2024-01-01'` and concluded "636 rows" without ever
+asking what the endpoint would serve unbounded.
+
+**Caveats before anyone re-runs the grid on 14 years.** PTRO ran from a median
+close of 45 (2015) to 5,100 (2026) — a ~100× move. Any long-only momentum family
+will look extraordinary on that path, and walk-forward persistence, not
+full-sample edge, is the only meaningful read. Impact and ADV from 2013 cannot be
+used to price a 2026 trade; the plan-15 coefficients are calibrated on 2026 ticks
+and must stay scoped to recent data. And the deeper history is back-adjusted, so
+it is internally consistent but is not the price anyone could have transacted —
+the plan 12 §5e corporate-action warning applies across the full span.
+`daily_store` writes a `divergence_log.jsonl` on every re-pull for exactly this.
+
+---
+
+### ⚠️ Three harness defects found 2026-09-12 — the 3 survivors are NOT yet re-judged
+
+*All three sit in code paths production exercises and the test suite does not.
+None of them is a reason to doubt the ORB kill (that family is dead on two
+substrates). All three bear on the three daily survivors above, which are the
+only live candidates this project has.*
+
+**D1 — The daily families enter at a price that cannot be transacted.**
+`families_single_name.py` computes every signal from `close_t` and measures
+`forward_return = close_{t+hold} / close_t − 1`. Entry is therefore at the same
+closing price the signal is derived from — observable only after the session has
+closed. PTRO `daily_momentum`'s signal is literally `close_t/close_{t-1} − 1`, so
+the overnight gap is exactly where its payoff would be consumed. Measured on
+chartbit daily bars (636 rows, full-sample gross, long-only, hold=2), moving entry
+to `open_{t+1}` costs **PTRO momentum −19.8 bps, TINS −13.9 bps**, while PTRO
+`volume_breakout` *gains* +17.9. Controls behave correctly: BREN, already killed by
+the OOS split, degrades worst at −74.0. **Not a false-positive mechanism — a
+realism gap.**
+
+**D2 — De-overlap runs before the long-only filter.**
+`run_single_name_family:369` calls `deoverlap_daily` on the raw signal stream, and
+`long_only_mask` is applied afterward at `:281` and `:393`. The stride therefore
+burns slots on short/flat rows that are never traded. **Cannot inflate
+significance** — kept rows remain a subset of an arithmetic progression, so no
+false overlap and no lookahead. But it destabilises the *edge estimate*: filtering
+first then de-overlapping moves gross by **−116 to +28 bps** across five cells
+(PTRO momentum +28.1, PTRO volbreak +26.7, TINS −36.1, BREN −116.4, WIFI −63.5),
+while `eff_n` barely moves (−3 to +8). An initial synthetic fixture suggested an
+`eff_n` collapse; real data does not show one. `hold=1` is a de-overlap no-op, so
+**only h2 cells are affected — which is all three survivors.**
+
+**D3 — `MIN_EFF_N` gates the wrong population in the event family.** *(the only
+one that can manufacture a false positive)*
+`families_event.py:270` sets `eff_n = len(pooled)` on the raw **mixed-sign** pool
+and gates `MIN_EFF_N` on it at `:272`; `eff_n_valid` is computed at `:291` and only
+checked `== 0` at `:293`. The tested path then returns `"eff_n": eff_n_valid` — so
+the function gates one population and reports another. A cell can clear
+`MIN_EFF_N=30` on 29 short events + 1 long and ship as `status="tested"` with
+`eff_n=1`, carrying a bootstrap p-value computed on one observation.
+`run_strategy_fit.py:_run_event_cell` passes it through unchecked.
+**No current result is affected** — all six pooled event cells are cost-gated at
+**−53 to −88 bps against hurdles of 103–113** (W2.3, the 2026-09-05 run), so they
+died on economics, not on N. Latent, not live.
+
+> *Corrected 2026-09-12.* This blast-radius check was first made against
+> `research/out/strategy_portfolio.md`, which reads −74.5 to −95.0 — **a
+> 2026-06-29 artifact, 2.5 months stale**. See the `research/out/` warning below.
+> The verdict is unchanged either way; the figures were not.
+
+### ⚠️ `research/out/` is stale and actively misleading
+
+Every artifact in `research/out/` predates the plan-13 run:
+`strategy_portfolio.md` **2026-06-29**, `strategy_triage.md` 2026-06-27,
+`impact_sweep.md` 2026-06-20. The 2026-09-05 grid — the one that produced the
+three daily survivors, priced daily impact, and added the daily OOS split — **was
+never written to disk.** Its results exist only as prose in this roadmap and in
+[plan 13](./13-capital-allocation-and-capacity.md).
+
+`strategy_portfolio.md` therefore still shows `impact=0.0` on daily cells (the
+exact conflation W2.1 removed), pre-correction PTRO net-edge figures, and
+event-cell numbers that differ from the current run. It is the most authoritative
+*looking* file in the repo and it is wrong. It cost one incorrect figure in this
+very section before being caught.
+
+**Any re-run must persist its output**, and a stale-artifact check belongs in
+`calendar/check_deadlines.py` alongside the data-freshness section — the same
+class of failure as the chartbit store going dead for ten weeks without anyone
+noticing.
+
+**Test coverage is absent for all three.** `test_families_single_name.py:63`
+hardcodes `horizon_trading_days=1` and `test_daily_walk_forward.py`'s helper
+defaults to 1, while `run_strategy_fit.py:134` runs `SINGLE_NAME_HOLDS = [1, 2]`.
+`test_families_event.py`'s fixtures split events ~50/50 so both halves clear
+`MIN_EFF_N` independently. `families_intraday.py` was checked and is **clean** —
+`run_orb_family` appends only long-only-taken trades as it iterates, so its gate is
+already on the right population.
+
+**Consequence: the +43.5 / +11.7 / +4.6 bps figures in the table above are not
+currently trustworthy in either direction, and no downstream work should treat
+them as inputs until the cells are re-judged under a realistic entry (D1) and the
+corrected filter order (D2).** Rough direction from full-sample gross: PTRO
+`daily_momentum` survives both and may come out stronger; **TINS is hit by both
+against a +4.6 bps margin and is probably dead.** TINS is separately blocked —
+it joined tick capture 2026-09-07 and has only 5 sessions, far short of plan 15's
+`MIN_IMPACT_OBS`, so its 21.9 bps impact charge still rests on a borrowed
+coefficient.
+
+**Deferred, recorded so it is not re-derived:** `harness.effective_n_event_pooled`
+is imported at `families_event.py:39` and never called; `run_event_family`
+reimplements the same per-symbol-then-pool logic inline. The helper cannot be a
+drop-in — it returns only a count and discards the rows that `run_event_family`
+needs for `hit_rate`/`gross_edge_bps`/`p_value`. The fix that closes D1-for-events
+and D3 together is to add `deoverlap_and_pool_events(events_df, hold) -> DataFrame`,
+make `effective_n_event_pooled` a one-line wrapper over it, filter long-only
+per-symbol *before* de-overlap, and gate `MIN_EFF_N` on `len()` of what the helper
+returns — which is then definitionally the population the tested branch reports.
+Changes the helper's contract, so `test_harness.py`'s three tests move with it.
+
+---
 
 **Then, what is worth testing next?** Not more machinery. The factory now works — it is
 what produced both the kill and the block. Constraints that now bound any new

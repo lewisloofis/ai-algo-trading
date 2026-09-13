@@ -38,28 +38,3 @@ deadlines:
       with: python scripts/collector_healthcheck.py (artifact age must read ~0d).
       The two JSON copies must stay byte-identical - verify with shasum -a 256.
 
-  - id: verify-widened-watchlist-capture
-    due: "2026-09-08"
-    lead_days: 3
-    desc: >
-      ONE-OFF. Checked on Tue 2026-09-08, the day AFTER the first session, which is
-      Mon 2026-09-07 (a trading day; 09-08 is a Tuesday -- do not read "Monday" and
-      "09-08" as the same day). First session under watchlist_id=w02-widened
-      (47 names, applied 2026-09-05 while the box was stopped: 43 names at 14:0x,
-      then BNBR/VKTR/TINS/SSIA added the same day before any capture, which is why
-      watchlist_id did NOT change -- SSM watchlist v6). Confirm the widening did not
-      degrade capture. collector_healthcheck.py catches a ZERO-record session but NOT
-      partial degradation, so both checks are needed:
-      (1) python scripts/collector_healthcheck.py  -- expect exit 0, artifact ~3d.
-      (2) Re-run the plan-12 section 5d sequence-gap analysis on the first
-      w02-widened session and compare the 7 survivors against the 2026-09-04
-      baseline: RATU -1.1, BREN 8.5, ENRG 12.2, BRPT 14.7, RAJA 18.6, PTRO 19.3,
-      TPIA 20.6 percent. Those losses are UPSTREAM conflation, so they should be
-      roughly unchanged. If they worsen materially the collector IS saturating at
-      47 symbols on t4g.nano (0.5 GB, burstable) and the box needs resizing. Note the
-      jump is 7 -> 47 in one step, never measured in between, so a bad result does not
-      localise the threshold -- it only says 47 is too many.
-      Also confirm S3 now writes under raw/dt=<date>/w02-widened/ and that
-      research readers still union the old plan10-survivors prefix.
-      Rollback: git checkout infra/terraform.tfvars && cd infra && tofu apply
-
