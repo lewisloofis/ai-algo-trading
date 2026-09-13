@@ -49,7 +49,41 @@ from strategy_fit.harness import (
     SHAPE_SINGLE_NAME,
     CellResult,
 )
+from strategy_fit.capital_model import ACTIVE_CAPITAL_MODEL, CapitalModel
 from strategy_fit.intraday_walk_forward import MIN_OOS_EFF_N
+
+
+def render_capital_model_line(model: CapitalModel) -> str:
+    """
+    One report line describing the capital model a run **actually** used.
+
+    This was a fixed string naming ADR-0011's leveraged sleeve, emitted no
+    matter which model ran. Once ADR-0015 made ``OWNED_CASH`` the default,
+    every report asserted a 10 bps/cal-day financing charge and a ≤2-day
+    horizon ceiling that the run had not applied — a report misdescribing its
+    own cost model, in the direction that makes hurdles look higher than they
+    were. Results under the two models are not comparable, so this line is
+    derived from the active model rather than written down.
+    """
+    if model.funded_by_leverage:
+        return (
+            f"**Capital model:** `{model.name}` — ADR-0011 300M IDR T+2 leverage "
+            f"sleeve, {model.financing_bps_per_cal_day} bps/cal-day financing "
+            f"(ADR-0014 settlement clock), ≤{model.max_hold_trading_days} "
+            "trading-day horizon ceiling."
+        )
+    ceiling = (
+        "no horizon ceiling"
+        if model.max_hold_trading_days is None
+        else f"≤{model.max_hold_trading_days} trading-day horizon ceiling"
+    )
+    return (
+        f"**Capital model:** `{model.name}` — ADR-0015 owned capital, no "
+        f"financing charge ({model.financing_bps_per_cal_day} bps/cal-day), "
+        f"{ceiling}. Not comparable with `leveraged_sleeve` results."
+    )
+
+
 
 # ---------------------------------------------------------------------------
 # Verdict logic
@@ -355,11 +389,7 @@ def emit_strategy_portfolio(
         )
     lines.append("")
     lines.append(f"**Generated:** {generated_at}  ")
-    lines.append(
-        "**Capital model:** ADR-0011 — 300M IDR T+2 leverage sleeve, "
-        "10 bps/cal-day financing (ADR-0014 settlement clock), "
-        "≤2 trading-day horizon ceiling."
-    )
+    lines.append(render_capital_model_line(ACTIVE_CAPITAL_MODEL))
     lines.append("")
 
     # ---- Verdict ----

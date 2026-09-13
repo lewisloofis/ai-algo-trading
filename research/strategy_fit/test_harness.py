@@ -257,3 +257,58 @@ class TestShapeConstants:
     def test_shape_names(self):
         assert SHAPE_SINGLE_NAME == "single_name_time_series"
         assert SHAPE_EVENT_DRIVEN == "event_driven"
+
+
+# ---------------------------------------------------------------------------
+# Grid horizon coverage (ADR-0015 / plan 18 A-2.2)
+# ---------------------------------------------------------------------------
+
+class TestGridCoversTheLongHorizonBand:
+    """
+    ADR-0015 lifted the ≤2-trading-day ceiling by making ``OWNED_CASH`` the
+    default capital model, but the grid kept enumerating ``[1, 2]`` only — so
+    the long-horizon cells stopped being *blocked* and started simply not
+    existing.  The ceiling has to be absent from both places to be gone.
+    """
+
+    def test_single_name_holds_reach_the_long_band(self) -> None:
+        from strategy_fit.run_strategy_fit import SINGLE_NAME_HOLDS
+        assert {1, 2, 5, 20, 60} <= set(SINGLE_NAME_HOLDS)
+
+    def test_event_holds_reach_the_long_band(self) -> None:
+        from strategy_fit.run_strategy_fit import EVENT_HOLDS
+        assert {1, 2, 5, 20, 60} <= set(EVENT_HOLDS)
+
+    def test_no_grid_hold_is_rejected_by_the_active_capital_model(self) -> None:
+        """Every enumerated hold must be testable under the active model."""
+        from strategy_fit.harness import MAX_HOLD_TRADING_DAYS
+        from strategy_fit.run_strategy_fit import SINGLE_NAME_HOLDS
+        if MAX_HOLD_TRADING_DAYS is not None:
+            pytest.skip("a ceiling is active; long holds are legitimately blocked")
+        assert max(SINGLE_NAME_HOLDS) >= 60
+
+
+class TestEmptyUniverseAborts:
+    """
+    An empty universe must abort, never render a verdict.
+
+    On 2026-09-13 an expired ``SB_BEARER_TOKEN`` made both funding endpoints
+    return HTTP 401. ``screen_universe`` logged warnings, the intersection came
+    back empty, and the grid ran to completion over zero symbols and wrote a
+    confident ``Verdict: NO-GO`` report — over a good one. A credentials
+    failure must not be able to author a research result.
+    """
+
+    def test_run_grid_raises_on_empty_universe(self) -> None:
+        from strategy_fit.run_strategy_fit import EmptyUniverseError, run_grid
+
+        class _EmptySource:
+            def funding_universe(self) -> list[str]:
+                return []
+
+        with pytest.raises(EmptyUniverseError, match="zero symbols"):
+            run_grid(ds=_EmptySource())
+
+    def test_the_error_names_credentials_as_the_likely_cause(self) -> None:
+        from strategy_fit.run_strategy_fit import EmptyUniverseError
+        assert "SB_BEARER_TOKEN" in EmptyUniverseError.__doc__

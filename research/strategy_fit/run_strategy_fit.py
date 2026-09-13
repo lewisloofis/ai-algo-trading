@@ -7,7 +7,7 @@ Usage:
 Flow:
     1. Load universe from DataSource (fixture or live).
     2. For each symbol: load daily_history, compute structural friction floor.
-    3. Define strategy families grid (deployable band: ≤2 trading-day holds).
+    3. Define strategy families grid (holds 1, 2, 5, 20, 60 — ADR-0015).
     4. For each (symbol, family) cell:
          a. Reject if hold > MAX_HOLD_TRADING_DAYS (capital_blocked).
          b. Run walk_forward_cell → WalkForwardResult.
@@ -122,7 +122,23 @@ DEFAULT_OUTDIR = os.path.join(SCRIPT_DIR, "..", "out")
 HISTORY_START = "2024-01-01"
 HISTORY_END = "2026-12-31"
 
-# Strategy family catalogue — deployable band only (≤2 trading-day holds).
+# Strategy family catalogue.
+#
+# Holds span the short band (1, 2) and the long band (5, 20, 60) opened by
+# ADR-0015. The ≤2-day ceiling came from ADR-0011's T+2 leverage sleeve; owned
+# capital carries no tenor clock, so the harness no longer rejects a family on
+# horizon grounds. The ceiling had to be removed from BOTH places to be gone:
+# lifting it in the capital model alone left the long cells un-enumerated
+# rather than blocked, which reads as "not applicable" instead of "untested".
+#
+# 20 and 60 are where the long-only 12-1 monthly momentum tilt lives — the most
+# attack-resistant candidate this project has produced. Note that a long hold
+# spends effective-N fast: after de-overlap, a 60-day hold over the default
+# 2024-01-01..2026-12-31 window yields roughly a dozen independent trades per
+# name against MIN_EFF_N=30, so most long cells will report insufficient_n
+# until the history window is widened. That is a real finding, not a bug, and
+# widening the window trades it for survivorship exposure (ADR-0015, plan 18
+# A-3): the funding endpoints return currently-tradeable names by construction.
 # Families tagged data_blocked/deferred are tracked in the coverage table but
 # not run (plan-10 §4).
 SINGLE_NAME_SIGNAL_FNS: dict[str, "callable"] = {
@@ -131,10 +147,10 @@ SINGLE_NAME_SIGNAL_FNS: dict[str, "callable"] = {
     "volume_breakout": volume_breakout_signal,
 }
 
-SINGLE_NAME_HOLDS: list[int] = [1, 2]   # ≤2 trading-day horizon ceiling
+SINGLE_NAME_HOLDS: list[int] = [1, 2, 5, 20, 60]
 
 EVENT_FAMILY_NAMES: list[str] = list(EVENT_DETECTORS.keys())
-EVENT_HOLDS: list[int] = [1, 2]
+EVENT_HOLDS: list[int] = [1, 2, 5, 20, 60]
 
 # Intraday same-day families (hold=0).
 INTRADAY_FAMILIES: dict[str, "callable"] = {
@@ -593,7 +609,7 @@ def _run_intraday_cell(
 ) -> CellResult:
     """Run one (symbol, intraday_family) cell end-to-end.
 
-    No horizon check needed: hold=0 is always within MAX_HOLD_TRADING_DAYS=2.
+    No horizon check needed: hold=0 is within any capital model's ceiling.
 
     Two additional validations vs. the prior version:
 
@@ -687,6 +703,18 @@ def _run_intraday_cell(
 # Grid runner
 # ---------------------------------------------------------------------------
 
+class EmptyUniverseError(RuntimeError):
+    """
+    Raised when the funding universe resolves to zero symbols.
+
+    A credentials failure must not be able to author a research result. An
+    expired ``SB_BEARER_TOKEN`` makes both emitten endpoints return HTTP 401;
+    ``screen_universe`` degrades to an empty intersection rather than raising,
+    so without this guard the grid completes over zero cells and emits a
+    verdict indistinguishable from a real one.
+    """
+
+
 def run_grid(
     ds: "object",
     start: str = HISTORY_START,
@@ -716,6 +744,14 @@ def run_grid(
         All cell results (tested + skipped + blocked).
     """
     universe = ds.funding_universe()
+    if not universe:
+        raise EmptyUniverseError(
+            "funding universe resolved to zero symbols — refusing to render a "
+            "verdict. The usual cause is an expired SB_BEARER_TOKEN: "
+            "screen_universe logs HTTP 401 per endpoint, returns an empty "
+            "intersection, and the grid would otherwise run to completion over "
+            "nothing and write a NO-GO report over a good one."
+        )
     logger.info("Universe: %s", sorted(universe))
 
     # Log the calendar-aware expected trading-day span for this date window.
@@ -788,7 +824,7 @@ def run_grid(
             all_cells.append(cell)
 
     # --- Cross-sectional family ---
-    for hold in [1, 2]:
+    for hold in SINGLE_NAME_HOLDS:
         family = StrategyFamily(
             name="cross_sectional_momentum",
             shape=SHAPE_CROSS_SECTIONAL,
@@ -802,7 +838,7 @@ def run_grid(
         all_cells.append(cell)
 
     # --- Pairs / cointegration family ---
-    for hold in [1, 2]:
+    for hold in SINGLE_NAME_HOLDS:
         family = StrategyFamily(
             name="pairs_cointegration",
             shape=SHAPE_PAIRS,

@@ -549,3 +549,43 @@ class TestNullEdgeFieldsSurviveFdrReplace:
         assert updated[0].null_edge_bps is None
         assert updated[0].edge_over_null_bps is None
         assert updated[0].fdr_accepted is True
+
+
+# ---------------------------------------------------------------------------
+# Report header must describe the model that actually ran
+# ---------------------------------------------------------------------------
+
+class TestCapitalModelHeaderIsNotHardcoded:
+    """
+    The header was a fixed string naming ADR-0011's leveraged sleeve, printed
+    regardless of the active model.  After ADR-0015 made ``OWNED_CASH`` the
+    default, every report claimed a 10 bps/cal-day financing charge and a
+    ≤2-day ceiling that the run had not applied — misdescribing its own cost
+    model in the direction that makes hurdles look higher than they were.
+    """
+
+    @staticmethod
+    def _header(model) -> str:
+        from strategy_fit.report import render_capital_model_line
+        return render_capital_model_line(model)
+
+    def test_owned_cash_header_states_no_financing_and_no_ceiling(self) -> None:
+        from strategy_fit.capital_model import OWNED_CASH
+        line = self._header(OWNED_CASH)
+        assert "owned_cash" in line
+        assert "ADR-0015" in line
+        assert "no financing" in line.lower()
+        assert "no horizon ceiling" in line.lower()
+        assert "ADR-0011" not in line
+
+    def test_leveraged_sleeve_header_states_its_charge_and_ceiling(self) -> None:
+        from strategy_fit.capital_model import LEVERAGED_SLEEVE
+        line = self._header(LEVERAGED_SLEEVE)
+        assert "leveraged_sleeve" in line
+        assert "ADR-0011" in line
+        assert "10 bps" in line
+        assert "2 trading-day" in line
+
+    def test_the_two_models_never_render_the_same_line(self) -> None:
+        from strategy_fit.capital_model import LEVERAGED_SLEEVE, OWNED_CASH
+        assert self._header(OWNED_CASH) != self._header(LEVERAGED_SLEEVE)
