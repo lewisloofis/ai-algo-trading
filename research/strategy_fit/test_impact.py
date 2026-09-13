@@ -451,6 +451,12 @@ class TestComputeAdvNotionalIdrFromDailyBars:
         assert impact == _DEGENERATE_IMPACT_BPS
 
 
+def _load_calibrated_coeffs_for_test() -> dict:
+    """The real ``impact_coeffs.json`` payload, or ``{}`` when absent."""
+    from strategy_fit.impact import _load_calibrated_coeffs
+    return _load_calibrated_coeffs() or {}
+
+
 class TestComputeImpactBpsFromDailyDf:
     _DATES = ["2025-01-06", "2025-01-07", "2025-01-08", "2025-01-09"]
     _CLOSES = [1000.0, 1010.0, 990.0, 1005.0]
@@ -462,13 +468,43 @@ class TestComputeImpactBpsFromDailyDf:
         expected = 2.0 * SQRT_IMPACT_COEFF * vol_bps  # sqrt(participation=1.0) == 1.0
         assert impact == pytest.approx(expected)
 
-    def test_use_calibrated_unknown_symbol_falls_through_to_global_default(self) -> None:
-        """BNBR is absent from impact_coeffs.json's per_name — must resolve to
-        global_default (1.0), reproducing the uncalibrated SQRT_IMPACT_COEFF path."""
+    def test_use_calibrated_unknown_symbol_resolves_its_bucket(self) -> None:
+        """
+        A symbol absent from ``per_name`` resolves its bucket from its own ADV.
+
+        This test previously asserted the opposite — that an unknown symbol
+        reproduced the uncalibrated ``SQRT_IMPACT_COEFF`` path — which is exactly
+        the fallthrough plan 18 §4.3 identified as a defect: a measured bucket
+        could never reach the ~200 names outside the tick-capture sample, so they
+        were charged the assumed 1.0 regardless of what had been measured.
+
+        The assertion is directional rather than numeric because it reads the
+        real ``impact_coeffs.json``: any confirmed bucket is below the assumed
+        1.0, so calibrated impact must come in lower.
+        """
+        from strategy_fit.impact import _load_calibrated_coeffs, liquidity_bucket
         df = _make_daily_df(dates=self._DATES, closes=self._CLOSES)
+        coeffs = _load_calibrated_coeffs() or {}
+        assert "ZZZZ" not in coeffs.get("per_name", {}), "ZZZZ must stay a non-name"
+
+        adv = compute_adv_notional_idr_from_daily_bars(df)
+        bucket = coeffs.get("buckets", {}).get(liquidity_bucket(adv), {})
         uncalibrated = compute_impact_bps_from_daily_df(df, use_calibrated=False)
-        calibrated_unknown = compute_impact_bps_from_daily_df(df, use_calibrated=True, symbol="BNBR")
-        assert calibrated_unknown == pytest.approx(uncalibrated)
+        calibrated = compute_impact_bps_from_daily_df(df, use_calibrated=True, symbol="ZZZZ")
+
+        if bucket.get("confidence") == "confirmed" and bucket.get("coeff") is not None:
+            assert calibrated == pytest.approx(uncalibrated * bucket["coeff"] / SQRT_IMPACT_COEFF)
+            assert calibrated < uncalibrated
+        else:
+            assert calibrated == pytest.approx(uncalibrated)
+
+    def test_use_calibrated_without_adv_still_falls_through(self) -> None:
+        """The bucket path needs an ADV; without one the global default stands."""
+        from strategy_fit.impact import get_impact_coeff
+        coeffs = _load_calibrated_coeffs_for_test()
+        assert get_impact_coeff("ZZZZ") == pytest.approx(
+            float(coeffs.get("global_default", SQRT_IMPACT_COEFF))
+        )
 
     def test_use_calibrated_known_symbol_gives_smaller_impact(self) -> None:
         """PTRO is `confirmed` in impact_coeffs.json with coeff < 1.0."""
@@ -535,3 +571,83 @@ class TestComputeImpactBpsFromDailyDf:
         df["volume"] = [1_000.0, 1_000.0, 1_000.0]
         # Falls back to median(close x volume) = 100 * 1000 = 100_000.
         assert compute_adv_notional_idr_from_daily_bars(df) == pytest.approx(100_000.0)
+
+
+# ---------------------------------------------------------------------------
+# Bucket resolution for UNCAPTURED names (plan 18 §4.3 — Track C defect 2)
+# ---------------------------------------------------------------------------
+
+class TestUncapturedSymbolBucketResolution:
+    """
+    A symbol absent from ``per_name`` must still reach a liquidity bucket.
+
+    Before Track C, ``get_impact_coeff`` consulted ``buckets`` only for symbols
+    already present in ``per_name`` — so every name outside the 7 calibrated
+    ones went straight to ``global_default`` (1.0) no matter how well its bucket
+    was measured.  That is the conservative direction for capital and the wrong
+    direction for a verdict: it kills candidates by assumption rather than by
+    measurement.  See plan 18 §4.3.
+    """
+
+    @staticmethod
+    def _inject(monkeypatch, coeffs: dict | None) -> None:
+        import strategy_fit.impact as impact_mod
+        monkeypatch.setattr(impact_mod, "_CALIBRATED_COEFFS", coeffs, raising=False)
+        monkeypatch.setattr(impact_mod, "_COEFFS_LOADED", True, raising=False)
+
+    _COEFFS = {
+        "global_default": 1.0,
+        "buckets": {
+            "high_liq": {"coeff": 0.38, "confidence": "confirmed"},
+            "mid_liq": {"coeff": 0.55, "confidence": "confirmed"},
+            "low_liq": {"coeff": None, "confidence": "provisional"},
+        },
+        "per_name": {"PTRO": {"coeff": 0.32, "confidence": "confirmed", "bucket": "high_liq"}},
+    }
+
+    def test_uncaptured_name_resolves_bucket_from_its_own_adv(self, monkeypatch) -> None:
+        """BNBR-shaped case: absent from per_name, ADV Rp 68.7 B → mid_liq."""
+        from strategy_fit.impact import get_impact_coeff
+        self._inject(monkeypatch, self._COEFFS)
+        assert get_impact_coeff("BNBR", adv_notional_idr=68.7e9) == pytest.approx(0.55)
+
+    def test_uncaptured_name_with_high_adv_resolves_high_liq(self, monkeypatch) -> None:
+        from strategy_fit.impact import get_impact_coeff
+        self._inject(monkeypatch, self._COEFFS)
+        assert get_impact_coeff("BBCA", adv_notional_idr=1011e9) == pytest.approx(0.38)
+
+    def test_unconfirmed_bucket_still_falls_through_to_global(self, monkeypatch) -> None:
+        """A measured-but-provisional bucket must not be trusted."""
+        from strategy_fit.impact import get_impact_coeff
+        self._inject(monkeypatch, self._COEFFS)
+        assert get_impact_coeff("TINY", adv_notional_idr=1e9) == pytest.approx(1.0)
+
+    def test_without_adv_behaviour_is_unchanged(self, monkeypatch) -> None:
+        """Backward compatibility: no ADV supplied → global default, as before."""
+        from strategy_fit.impact import get_impact_coeff
+        self._inject(monkeypatch, self._COEFFS)
+        assert get_impact_coeff("BNBR") == pytest.approx(1.0)
+
+    def test_per_name_still_wins_over_adv_derived_bucket(self, monkeypatch) -> None:
+        """A confirmed per-name coeff is more specific and must take precedence."""
+        from strategy_fit.impact import get_impact_coeff
+        self._inject(monkeypatch, self._COEFFS)
+        assert get_impact_coeff("PTRO", adv_notional_idr=68.7e9) == pytest.approx(0.32)
+
+    def test_non_positive_adv_is_ignored(self, monkeypatch) -> None:
+        from strategy_fit.impact import get_impact_coeff
+        self._inject(monkeypatch, self._COEFFS)
+        assert get_impact_coeff("BNBR", adv_notional_idr=0.0) == pytest.approx(1.0)
+
+    def test_compute_impact_bps_passes_adv_through(self, monkeypatch) -> None:
+        """The resolver is useless unless the caller hands it the ADV it has."""
+        import numpy as np
+        from strategy_fit.impact import compute_impact_bps
+        self._inject(monkeypatch, self._COEFFS)
+        adv = 68.7e9
+        got = compute_impact_bps(
+            daily_vol_bps=200.0, adv_notional_idr=adv,
+            position_notional_idr=50e6, use_calibrated=True, symbol="BNBR",
+        )
+        expected = 2.0 * 0.55 * 200.0 * np.sqrt(50e6 / adv)
+        assert got == pytest.approx(expected)

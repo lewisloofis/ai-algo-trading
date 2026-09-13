@@ -103,13 +103,31 @@ DAILY_COEFF_IS_BORROWED_NOTE: str = (
     "executions only. Applying them to daily single_name_time_series cells "
     "(plan 13) assumes execution impact for a daily-signal basket is the same "
     "as for an intraday one — that is an ASSUMPTION, not a measurement; no "
-    "daily-cell fills have been used to calibrate anything here. Any symbol "
+    "daily-cell fills have been used to calibrate anything here. A symbol "
     "absent from per_name (e.g. a name outside the plan-15 tick-fill sample) "
-    "falls through get_impact_coeff() to global_default = 1.0, the "
-    "conservative high-friction end of the Almgren range — see "
+    "now resolves its LIQUIDITY BUCKET from its own ADV (plan 18 §4.3) and "
+    "uses that bucket's measured coefficient; it falls through to "
+    "global_default = 1.0 — the conservative high-friction end of the Almgren "
+    "range — only when that bucket is itself unconfirmed. See "
     "impact_coeffs.json."
 )
 """Honest caveat: daily-cell impact borrows intraday-calibrated coefficients (plan 13)."""
+
+HIGH_LIQ_ADV_IDR: float = 100e9
+"""ADV above which a name is ``high_liq`` (IDR)."""
+
+MID_LIQ_ADV_IDR: float = 20e9
+"""ADV at or above which a name is ``mid_liq`` (IDR); below it is ``low_liq``."""
+
+
+def liquidity_bucket(adv_notional_idr: float) -> str:
+    """Map an ADV in IDR to a liquidity bucket label."""
+    if adv_notional_idr > HIGH_LIQ_ADV_IDR:
+        return "high_liq"
+    if adv_notional_idr >= MID_LIQ_ADV_IDR:
+        return "mid_liq"
+    return "low_liq"
+
 
 _COEFFS_PATH: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "impact_coeffs.json")
 
@@ -137,7 +155,20 @@ def _load_calibrated_coeffs() -> dict | None:
     return _CALIBRATED_COEFFS
 
 
-def get_impact_coeff(symbol: str | None = None) -> float:
+def _confirmed_bucket_coeff(coeffs: dict, bucket_name: str | None) -> float | None:
+    """The bucket's coefficient when it exists and is ``confirmed``, else ``None``."""
+    if not bucket_name:
+        return None
+    bucket = coeffs.get("buckets", {}).get(bucket_name)
+    if bucket and bucket.get("confidence") == "confirmed" and bucket.get("coeff") is not None:
+        return float(bucket["coeff"])
+    return None
+
+
+def get_impact_coeff(
+    symbol: str | None = None,
+    adv_notional_idr: float | None = None,
+) -> float:
     """
     Resolve the square-root impact coefficient for *symbol*.
 
@@ -145,12 +176,21 @@ def get_impact_coeff(symbol: str | None = None) -> float:
     ``impact_coeffs.json``:
 
     1. Per-name coeff (when the name is confirmed and has a non-null coeff).
-    2. The name's liquidity-bucket coeff (when the bucket is confirmed).
-    3. The file's ``global_default``.
-    4. The module constant ``SQRT_IMPACT_COEFF`` (when the file is absent).
+    2. The bucket recorded against that name in ``per_name``.
+    3. The bucket implied by *adv_notional_idr*, when one is supplied.
+    4. The file's ``global_default``.
+    5. The module constant ``SQRT_IMPACT_COEFF`` (when the file is absent).
 
-    Passing ``symbol=None`` (or an unknown symbol) skips straight to the
-    global default, preserving the assumed-model behaviour.
+    Step 3 is the point of this resolver (plan 18 §4.3). ``per_name`` holds only
+    the handful of names with tick capture; every other name in the universe was
+    previously routed straight to ``global_default = 1.0``, so a measured bucket
+    coefficient could never reach the ~237 names that most needed it. 1.0 is the
+    conservative high-friction end of the Almgren range, which is the safe
+    direction for capital and the WRONG direction for a verdict — it kills
+    candidates by assumption rather than by measurement.
+
+    Passing ``symbol=None``, or an unknown symbol with no *adv_notional_idr*,
+    still lands on the global default, so existing callers are unaffected.
     """
     coeffs = _load_calibrated_coeffs()
     if coeffs is None:
@@ -164,10 +204,14 @@ def get_impact_coeff(symbol: str | None = None) -> float:
     if per_name is not None:
         if per_name.get("confidence") == "confirmed" and per_name.get("coeff") is not None:
             return float(per_name["coeff"])
-        bucket_name = per_name.get("bucket")
-        bucket = coeffs.get("buckets", {}).get(bucket_name) if bucket_name else None
-        if bucket and bucket.get("confidence") == "confirmed" and bucket.get("coeff") is not None:
-            return float(bucket["coeff"])
+        recorded = _confirmed_bucket_coeff(coeffs, per_name.get("bucket"))
+        if recorded is not None:
+            return recorded
+
+    if adv_notional_idr is not None and adv_notional_idr > 0.0:
+        derived = _confirmed_bucket_coeff(coeffs, liquidity_bucket(float(adv_notional_idr)))
+        if derived is not None:
+            return derived
 
     return global_default
 
@@ -325,7 +369,11 @@ def compute_impact_bps(
     participation_rate = min(position_notional_idr / adv_notional_idr, 1.0)
     participation_rate = max(participation_rate, 0.0)
 
-    coeff = get_impact_coeff(symbol) if use_calibrated else SQRT_IMPACT_COEFF
+    coeff = (
+        get_impact_coeff(symbol, adv_notional_idr=adv_notional_idr)
+        if use_calibrated
+        else SQRT_IMPACT_COEFF
+    )
     impact = 2.0 * coeff * daily_vol_bps * np.sqrt(participation_rate)
     return float(impact)
 

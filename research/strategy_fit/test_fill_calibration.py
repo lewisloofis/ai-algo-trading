@@ -341,3 +341,194 @@ def test_merge_coeffs_keeps_existing_bucket_when_fresh_empty() -> None:
     merged = merge_coeffs(existing, fresh)
     # existing higher-eff_N bucket retained
     assert merged["buckets"]["high_liq"]["eff_N"] == 561
+
+
+# ---------------------------------------------------------------------------
+# Trade-tape units (plan 18 §4.2 — Track C defect 1)
+# ---------------------------------------------------------------------------
+
+def _tape(vols: list[float], price: float, date: str = "2026-09-08") -> pd.DataFrame:
+    """A minimal one-day trade tape with the ``_wib_dt`` column the ADV helper needs."""
+    base = pd.Timestamp(f"{date} 09:00:00")
+    return pd.DataFrame(
+        {
+            "recv_ns": [1_000_000_000 * (i + 1) for i in range(len(vols))],
+            "price": [price] * len(vols),
+            "vol": vols,
+            "side": ["B"] * len(vols),
+            "_wib_dt": [base + pd.Timedelta(seconds=i) for i in range(len(vols))],
+        }
+    )
+
+
+class TestTradeTapeIsInShares:
+    """
+    ``vol`` on the running-trade tape is in SHARES, not lots.
+
+    Verified against real capture: BUMI 2026-06-18, 47,976 prints, sum(vol x
+    price) = Rp 415.09 B — the right order of magnitude against the screener's
+    Rp 668.96 B median.  Multiplying by 100 gives Rp 41,509 B, which exceeds
+    total IDX daily turnover across all names.  See plan 18 4.2.
+    """
+
+    def test_adv_is_sum_of_vol_times_price(self) -> None:
+        from strategy_fit.fill_calibration import _adv_from_trades
+        # 687,965,300 shares at Rp 100 = Rp 68.80 B — the real BNBR 2026-09-08 day.
+        adv = _adv_from_trades(_tape([687_965_300.0], price=100.0))
+        assert adv == pytest.approx(68.7965300e9)
+
+    def test_bnbr_shaped_day_is_mid_liq_not_high_liq(self) -> None:
+        """The bug's whole consequence: absolute thresholds mis-bucket every name."""
+        from strategy_fit.fill_calibration import _adv_from_trades
+        adv = _adv_from_trades(_tape([687_965_300.0], price=100.0))
+        assert liquidity_bucket(adv) == "mid_liq"
+
+    def test_adv_is_median_across_days(self) -> None:
+        from strategy_fit.fill_calibration import _adv_from_trades
+        tape = pd.concat(
+            [
+                _tape([10_000_000.0], price=1000.0, date="2026-09-07"),  # Rp 10 B
+                _tape([30_000_000.0], price=1000.0, date="2026-09-08"),  # Rp 30 B
+                _tape([50_000_000.0], price=1000.0, date="2026-09-09"),  # Rp 50 B
+            ],
+            ignore_index=True,
+        )
+        assert _adv_from_trades(tape) == pytest.approx(30e9)
+
+    def test_event_notional_is_not_scaled_by_lot_size(self) -> None:
+        """``event_notional_idr`` is reported, so it must be right, not merely cancel."""
+        start_ns = 1_000_000_000
+        feats = _features_for_impact(start_ns, 1000.0)
+        trades = pd.DataFrame(
+            {
+                "recv_ns": [start_ns + 10, start_ns + 20],
+                "price": [1000.0, 1000.0],
+                "vol": [100.0, 100.0],
+                "side": ["B", "B"],
+            }
+        )
+        events = detect_impact_events(trades, feats, 100.0, 1e9)
+        assert len(events) == 1
+        assert events[0].event_notional_idr == pytest.approx(200_000.0)
+
+    def test_participation_is_unchanged_by_the_fix(self) -> None:
+        """
+        Regression guard on the cancellation.
+
+        Before the fix both ``_adv_from_trades`` and ``detect_impact_events``
+        multiplied by 100, so ``participation = notional / adv`` was already
+        correct and the FITTED COEFFICIENT was never wrong — only the bucket
+        label was.  Removing the factor from one site alone would silently move
+        every fitted coefficient by sqrt(100).
+        """
+        from strategy_fit.fill_calibration import _adv_from_trades
+        start_ns = 1_000_000_000
+        feats = _features_for_impact(start_ns, 1000.0)
+        day_vols = [100.0, 100.0]
+        trades = pd.DataFrame(
+            {
+                "recv_ns": [start_ns + 10, start_ns + 20],
+                "price": [1000.0, 1000.0],
+                "vol": day_vols,
+                "side": ["B", "B"],
+            }
+        )
+        adv = _adv_from_trades(_tape(day_vols, price=1000.0))
+        events = detect_impact_events(trades, feats, 100.0, adv)
+        assert len(events) == 1
+        # The whole day is this one run, so participation is exactly 1.0.
+        assert events[0].participation_rate == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Volatility source (plan 18 §4.3a — Track C defect 3)
+# ---------------------------------------------------------------------------
+
+def _daily_bars(closes: list[float], start: str = "2026-06-01") -> pd.DataFrame:
+    dates = pd.bdate_range(start, periods=len(closes)).strftime("%Y-%m-%d")
+    return pd.DataFrame({"date": dates, "close": closes, "volume": [1_000] * len(closes)})
+
+
+class TestCalibrationVolatilitySource:
+    """
+    ``coeff`` must carry impact, not an estimator mismatch.
+
+    The fit is ``observed_impact_bps ~ 2 * coeff * daily_vol_bps *
+    sqrt(participation)``, so ``coeff`` is inversely proportional to the
+    volatility estimate.  The consumer (``compute_impact_bps_from_daily_df``,
+    used by the strategy grid) takes its volatility from
+    ``compute_daily_vol_bps_from_daily_bars`` over daily history.  Calibration
+    must therefore use the same estimator on the same kind of input, or every
+    coefficient is scaled by the ratio between two different estimators.
+
+    Before this change, calibration estimated volatility from the CAPTURE
+    PANEL, switching estimator at ``n_days >= 2``: one day used an intraday
+    realized proxy, five days used close-to-close over four returns.  On the
+    2026-09-07..11 panel that read PTRO at 79 bps on a week it realized
+    241-470 bps intraday every day, inflating its coefficient 3.9x.
+    """
+
+    def test_daily_bars_are_preferred_over_the_capture_panel(self) -> None:
+        from strategy_fit.fill_calibration import (
+            CALIBRATION_VOL_WINDOW_DAYS,
+            resolve_daily_vol_bps,
+        )
+        from strategy_fit.impact import compute_daily_vol_bps_from_daily_bars
+        bars = _daily_bars([100.0, 104.0, 99.0, 103.0, 98.0, 105.0] * 12)
+        vol, source = resolve_daily_vol_bps(features=None, daily_bars=bars, as_of="2026-12-31")
+        assert source == "daily_bars"
+        # Same estimator the consumer uses, over the capped trailing window.
+        expected = compute_daily_vol_bps_from_daily_bars(bars.tail(CALIBRATION_VOL_WINDOW_DAYS))
+        assert vol == pytest.approx(expected, rel=1e-9)
+
+    def test_window_is_capped_to_the_configured_lookback(self) -> None:
+        """A long history must not silently become a decade-wide median."""
+        from strategy_fit.fill_calibration import CALIBRATION_VOL_WINDOW_DAYS, resolve_daily_vol_bps
+        calm = [100.0, 100.5] * 400          # ancient, low vol
+        wild = [100.0, 130.0] * 40           # recent, high vol
+        bars = _daily_bars(calm + wild, start="2020-01-01")
+        vol, _ = resolve_daily_vol_bps(features=None, daily_bars=bars, as_of="2099-01-01")
+        tail_only, _ = resolve_daily_vol_bps(
+            features=None,
+            daily_bars=bars.tail(CALIBRATION_VOL_WINDOW_DAYS),
+            as_of="2099-01-01",
+        )
+        assert vol == pytest.approx(tail_only, rel=1e-9)
+
+    def test_bars_after_the_capture_date_are_excluded(self) -> None:
+        """No look-ahead: a calibration dated T cannot see T+1."""
+        from strategy_fit.fill_calibration import resolve_daily_vol_bps
+        quiet = _daily_bars([100.0, 100.1] * 40, start="2026-06-01")
+        future = _daily_bars([100.0, 200.0] * 40, start="2027-01-01")
+        bars = pd.concat([quiet, future], ignore_index=True)
+        vol_cut, _ = resolve_daily_vol_bps(features=None, daily_bars=bars, as_of="2026-09-11")
+        vol_all, _ = resolve_daily_vol_bps(features=None, daily_bars=bars, as_of="2099-01-01")
+        assert vol_cut < vol_all
+
+    def test_falls_back_to_intraday_proxy_without_daily_bars(self) -> None:
+        """Missing history must degrade loudly, not silently reintroduce defect 3."""
+        from strategy_fit.fill_calibration import resolve_daily_vol_bps
+        feats = _features_for_impact(1_000_000_000, 1000.0)
+        vol, source = resolve_daily_vol_bps(features=feats, daily_bars=None, as_of="2026-09-11")
+        assert source == "intraday_proxy"
+        assert vol >= 0.0
+
+    def test_close_to_close_over_the_capture_panel_is_never_used(self) -> None:
+        """
+        The specific defect: five capture days gave four returns, and a flat
+        week collapsed the estimate.  That path must be gone entirely.
+        """
+        from strategy_fit.fill_calibration import resolve_daily_vol_bps
+        feats = _features_for_impact(1_000_000_000, 1000.0)
+        bars = _daily_bars([100.0, 106.0, 97.0, 104.0] * 20)
+        _, source = resolve_daily_vol_bps(features=feats, daily_bars=bars, as_of="2026-12-31")
+        assert source == "daily_bars", "daily bars must win even when a capture panel is present"
+
+    def test_empty_or_unusable_bars_fall_back(self) -> None:
+        from strategy_fit.fill_calibration import resolve_daily_vol_bps
+        feats = _features_for_impact(1_000_000_000, 1000.0)
+        _, source = resolve_daily_vol_bps(
+            features=feats, daily_bars=pd.DataFrame(columns=["date", "close", "volume"]),
+            as_of="2026-09-11",
+        )
+        assert source == "intraday_proxy"

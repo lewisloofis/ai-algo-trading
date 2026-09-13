@@ -9,7 +9,7 @@ coefficients.
 Pipeline
 --------
 1. Load ``{SYMBOL}_features.csv`` (L5 book snapshots) and
-   ``{symbol}_trades_jun18.csv`` (trade tape) for each available symbol.
+   ``{symbol}_trades*.csv`` (trade tape) for each available symbol.
 2. Compute time-weighted spread_bps, depth_L1_lots, depth_L5_lots per name.
 3. Detect directional aggressor runs in the tape and measure realized temporary
    impact 30s after the run ends.
@@ -19,7 +19,11 @@ Pipeline
 
 Run::
 
-    cd research && python -m strategy_fit.fill_calibration --data-dir ../out_live
+    cd research && python -m strategy_fit.fill_calibration --data-dir out_live/ticks
+
+``--data-dir`` is resolved against the CURRENT WORKING DIRECTORY, not against
+this file, so from ``research/`` it is ``out`` / ``out_live/ticks`` — not
+``../out``, which resolves outside the repo and raises ``FileNotFoundError``.
 
 The harness runs cleanly even when every name has fewer than ``MIN_IMPACT_OBS``
 observations: such fits are emitted with ``confidence="provisional"`` and a
@@ -41,7 +45,14 @@ import pandas as pd
 
 from lib.loaders import clean, load_csv
 from lib.session import _crosses_lunch, filter_continuous_session
-from strategy_fit.impact import SQRT_IMPACT_COEFF, compute_daily_vol_bps
+from strategy_fit.impact import (
+    HIGH_LIQ_ADV_IDR,
+    MID_LIQ_ADV_IDR,
+    SQRT_IMPACT_COEFF,
+    compute_daily_vol_bps,
+    compute_daily_vol_bps_from_daily_bars,
+    liquidity_bucket,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,18 +69,53 @@ MIN_IMPACT_OBS: int = 20
 IMPACT_HORIZON_NS: int = 30 * 1_000_000_000
 """Temporary-impact measurement horizon: 30 seconds after the last run print."""
 
+CALIBRATION_VOL_WINDOW_DAYS: int = 60
+"""
+Trailing daily bars used to estimate ``daily_vol_bps`` at calibration time.
+
+Chosen deliberately, because window choice is not neutral here. The fit is
+``observed_impact_bps ~ 2 * coeff * daily_vol_bps * sqrt(participation)``, so
+``coeff`` is inversely proportional to this estimate — a window that misreads
+volatility by 4x misreads every coefficient by 4x (plan 18 §4.3a).
+
+60 trading days (~3 months) sits between two failure modes:
+
+- **Too short** — the capture panel itself is 5 days, giving 4 close-to-close
+  returns. That is what produced defect 3: PTRO read 79 bps on a week it
+  realized 241-470 bps intraday every day, because it happened to close where
+  it opened.
+- **Too long** — a multi-year median averages across regime changes. The same
+  trap is already recorded for ADV, where PTRO's modelled impact ranged
+  3.9 -> 33.6 bps purely by window choice (roadmap ADV window table).
+
+60 days is long enough to be a stable estimate and short enough to describe the
+regime the capture actually sampled. Anything that changes it changes every
+coefficient, so change it deliberately and re-run, never as a default tweak.
+"""
+
 RUN_DEPTH_FRACTION: float = 0.10
-"""A directional run qualifies once accumulated volume > 10% of median L1 depth."""
+"""A directional run qualifies once accumulated volume > 10% of median L1 depth.
+
+Book depth and tape volume come from the same feed and are in the same unit
+(shares), so this comparison is unit-consistent regardless of the unit itself.
+"""
 
 GLOBAL_DEFAULT_COEFF: float = SQRT_IMPACT_COEFF
 
-HIGH_LIQ_ADV_IDR: float = 100e9
-MID_LIQ_ADV_IDR: float = 20e9
-
 _BUCKETS: tuple[str, ...] = ("high_liq", "mid_liq", "low_liq")
 
-LOTS_PER_SHARE_UNIT: int = 100
-"""IDX lot size: trade ``vol`` (in lots) → shares via ×100 for notional."""
+# NOTE (plan 18 §4.2, fixed 2026-09-13). This module previously multiplied trade
+# notional by a LOTS_PER_SHARE_UNIT = 100 constant, on the premise that the
+# running-trade tape reports ``vol`` in lots. It does not — the tape is already
+# in SHARES. Verified on BUMI 2026-06-18 (47,976 prints): sum(vol × price) =
+# Rp 415.09 B, the right order of magnitude against the screener's Rp 668.96 B
+# median, where ×100 gives Rp 41,509 B — more than the whole exchange trades in
+# a day. The factor cancelled inside ``participation`` (it was applied to both
+# the event notional and the ADV), so no fitted coefficient was ever wrong; what
+# it broke was ``liquidity_bucket``, whose thresholds are ABSOLUTE. An effective
+# Rp 1 B cutoff filed every name as ``high_liq``, which is why ``mid_liq`` and
+# ``low_liq`` carried eff_N = 0. If you reintroduce a lot-size factor here, it
+# must go in both places or every coefficient moves by sqrt(100).
 
 
 @dataclass(frozen=True)
@@ -171,22 +217,22 @@ def _wib_at(features: pd.DataFrame, recv_ns: int) -> pd.Timestamp:
 def detect_impact_events(
     trades: pd.DataFrame,
     features: pd.DataFrame,
-    median_l1_lots: float,
+    median_l1_shares: float,
     adv_notional_idr: float,
 ) -> list[ImpactObs]:
     """
     Detect directional aggressor runs and measure their realized temporary impact.
 
     A run is a maximal sequence of same-side prints whose accumulated volume
-    exceeds ``RUN_DEPTH_FRACTION`` of *median_l1_lots*.  Impact is measured as
+    exceeds ``RUN_DEPTH_FRACTION`` of *median_l1_shares*.  Impact is measured as
     the absolute mid move from the run's first print to the book 30s after its
     last print.  Runs crossing the lunch break or lacking a forward snapshot are
     skipped; observations whose 30s window overlaps the prior one are dropped.
     """
-    if trades.empty or features.empty or median_l1_lots <= 0 or adv_notional_idr <= 0:
+    if trades.empty or features.empty or median_l1_shares <= 0 or adv_notional_idr <= 0:
         return []
 
-    threshold_lots = RUN_DEPTH_FRACTION * median_l1_lots
+    threshold_shares = RUN_DEPTH_FRACTION * median_l1_shares
     trades = trades.sort_values("recv_ns").reset_index(drop=True)
 
     observations: list[ImpactObs] = []
@@ -197,14 +243,14 @@ def detect_impact_events(
     while i < n:
         side = trades["side"].iloc[i]
         j = i
-        acc_lots = 0.0
+        acc_shares = 0.0
         while j < n and trades["side"].iloc[j] == side:
-            acc_lots += float(trades["vol"].iloc[j])
+            acc_shares += float(trades["vol"].iloc[j])
             j += 1
         run = trades.iloc[i:j]
         i = j
 
-        if acc_lots <= threshold_lots:
+        if acc_shares <= threshold_shares:
             continue
 
         start_ns = int(run["recv_ns"].iloc[0])
@@ -223,7 +269,7 @@ def detect_impact_events(
         if start_ns <= prev_window_end_ns:
             continue
 
-        notional = float((run["vol"] * run["price"]).sum()) * LOTS_PER_SHARE_UNIT
+        notional = float((run["vol"] * run["price"]).sum())
         participation = notional / adv_notional_idr
         impact_bps = abs(mid_after - mid_before) / mid_before * 1e4
 
@@ -282,14 +328,6 @@ def fit_sqrt_impact(
     return coeff, r2, eff_n
 
 
-def liquidity_bucket(adv_notional_idr: float) -> str:
-    if adv_notional_idr > HIGH_LIQ_ADV_IDR:
-        return "high_liq"
-    if adv_notional_idr >= MID_LIQ_ADV_IDR:
-        return "mid_liq"
-    return "low_liq"
-
-
 def _confidence(eff_n: int) -> str:
     return "confirmed" if eff_n >= MIN_IMPACT_OBS else "provisional"
 
@@ -312,6 +350,8 @@ class NameResult:
     r2: float
     eff_n: int
     observations: list[ImpactObs]
+    vol_source: str = "daily_bars"
+    """Which estimator produced ``daily_vol_bps`` — never mix the two silently."""
 
 
 def _adv_from_trades(trades: pd.DataFrame) -> float:
@@ -320,7 +360,7 @@ def _adv_from_trades(trades: pd.DataFrame) -> float:
         return 0.0
     df = trades.copy()
     df["_date"] = df["_wib_dt"].dt.date
-    df["_notional"] = df["vol"] * df["price"] * LOTS_PER_SHARE_UNIT
+    df["_notional"] = df["vol"] * df["price"]
     daily = df.groupby("_date")["_notional"].sum()
     return float(daily.median()) if len(daily) else 0.0
 
@@ -351,24 +391,65 @@ def _intraday_vol_bps(features: pd.DataFrame) -> float:
     return per_min * math.sqrt(CONTINUOUS_SESSION_MINUTES) * 1e4
 
 
-def _daily_vol_bps_from_features(features: pd.DataFrame) -> float:
+def resolve_daily_vol_bps(
+    features: pd.DataFrame | None,
+    daily_bars: pd.DataFrame | None,
+    as_of: str | None = None,
+) -> tuple[float, str]:
     """
-    Daily close-to-close vol when ≥2 capture days exist; otherwise a single-day
-    intraday realized-vol proxy scaled to a session-equivalent daily figure.
+    Resolve ``daily_vol_bps`` for a calibration fit, and say where it came from.
+
+    Returns ``(vol_bps, source)`` where *source* is ``"daily_bars"`` or
+    ``"intraday_proxy"``.
+
+    Preference order:
+
+    1. ``compute_daily_vol_bps_from_daily_bars`` over the trailing
+       ``CALIBRATION_VOL_WINDOW_DAYS`` bars at or before *as_of*.
+    2. The single-session intraday realized proxy, medianed across capture days.
+
+    **Why daily bars win.** This is the same estimator, on the same kind of
+    input, that the consumer uses: the strategy grid prices its hurdle through
+    ``compute_impact_bps_from_daily_df``, which takes volatility from
+    ``compute_daily_vol_bps_from_daily_bars``. Calibrating against a different
+    estimator silently multiplies every coefficient by the ratio between the
+    two, and that ratio has nothing to do with market impact.
+
+    **What this replaces.** The previous helper estimated volatility from the
+    capture panel and switched estimator on panel length — intraday proxy at one
+    day, close-to-close at two or more. The 2026-06-27 run was single-day and
+    the Track C panel is five days, so the two runs were never comparable, and
+    four close-to-close returns is a hopeless estimator besides (plan 18 §4.3a).
+
+    *as_of* caps the window so a calibration dated T never sees T+1.
     """
-    df = features.copy()
-    df["date"] = df["_wib_dt"].dt.date
-    df["close"] = df["mid"]
-    n_days = int(df["date"].nunique())
-    if n_days >= 2:
-        return compute_daily_vol_bps(df[["date", "close"]])
-    return _intraday_vol_bps(features)
+    if daily_bars is not None and len(daily_bars) > 0:
+        bars = daily_bars
+        if as_of is not None and "date" in bars.columns:
+            bars = bars[bars["date"].astype(str) <= str(as_of)]
+        bars = bars.tail(CALIBRATION_VOL_WINDOW_DAYS)
+        if len(bars) >= 2:
+            vol = compute_daily_vol_bps_from_daily_bars(bars)
+            if math.isfinite(vol) and vol > 0.0:
+                return float(vol), "daily_bars"
+
+    if features is None or features.empty:
+        return 0.0, "intraday_proxy"
+
+    per_day = [
+        _intraday_vol_bps(day_feats)
+        for _, day_feats in features.groupby(features["_wib_dt"].dt.date)
+    ]
+    per_day = [v for v in per_day if math.isfinite(v) and v > 0.0]
+    if not per_day:
+        return 0.0, "intraday_proxy"
+    return float(np.median(per_day)), "intraday_proxy"
 
 
 def _detect_impact_events_multiday(
     trades: pd.DataFrame,
     features: pd.DataFrame,
-    median_l1_lots: float,
+    median_l1_shares: float,
     adv_notional_idr: float,
 ) -> list[ImpactObs]:
     """
@@ -391,12 +472,17 @@ def _detect_impact_events_multiday(
         if day_trades.empty or day_feats.empty:
             continue
         pooled.extend(
-            detect_impact_events(day_trades, day_feats, median_l1_lots, adv_notional_idr)
+            detect_impact_events(day_trades, day_feats, median_l1_shares, adv_notional_idr)
         )
     return pooled
 
 
-def calibrate_symbol(symbol: str, features_raw: pd.DataFrame, trades: pd.DataFrame) -> NameResult:
+def calibrate_symbol(
+    symbol: str,
+    features_raw: pd.DataFrame,
+    trades: pd.DataFrame,
+    daily_bars: pd.DataFrame | None = None,
+) -> NameResult:
     features = filter_continuous_session(clean(compute_spread_depth(features_raw)))
     if not trades.empty:
         trades = filter_continuous_session(trades)
@@ -408,8 +494,16 @@ def calibrate_symbol(symbol: str, features_raw: pd.DataFrame, trades: pd.DataFra
     twm_l5 = time_weighted_median(features["depth_l5"].to_numpy(), features["recv_ns"].to_numpy())
 
     adv = _adv_from_trades(trades)
-    vol_bps = _daily_vol_bps_from_features(features)
     n_days = int(features["_wib_dt"].dt.date.nunique())
+    as_of = str(features["_wib_dt"].dt.date.max()) if n_days else None
+    vol_bps, vol_source = resolve_daily_vol_bps(features, daily_bars, as_of=as_of)
+    if vol_source != "daily_bars":
+        logger.warning(
+            "%s: no usable daily bars; volatility falls back to the intraday proxy. "
+            "Its coefficient is NOT on the same scale as the rest and must not be "
+            "pooled into a bucket without saying so (plan 18 §4.3a).",
+            symbol,
+        )
 
     events = _detect_impact_events_multiday(trades, features, twm_l1, adv)
     coeff, r2, eff_n = fit_sqrt_impact(events, vol_bps)
@@ -427,6 +521,7 @@ def calibrate_symbol(symbol: str, features_raw: pd.DataFrame, trades: pd.DataFra
         r2=r2,
         eff_n=eff_n,
         observations=events,
+        vol_source=vol_source,
     )
 
 
@@ -507,6 +602,11 @@ def build_coeffs(results: list[NameResult]) -> dict:
         "generated": _dt.date.today().isoformat(),
         "min_impact_obs": MIN_IMPACT_OBS,
         "global_default": GLOBAL_DEFAULT_COEFF,
+        # Provenance. A coefficient is only meaningful against the volatility
+        # estimator it was fitted with (plan 18 §4.3a); record it so a later
+        # reader can tell whether two runs are comparable at all.
+        "vol_window_days": CALIBRATION_VOL_WINDOW_DAYS,
+        "vol_estimator": "compute_daily_vol_bps_from_daily_bars",
         "buckets": _bucket_fits(results),
         "per_name": {
             r.symbol: {
@@ -514,6 +614,8 @@ def build_coeffs(results: list[NameResult]) -> dict:
                 "eff_N": r.eff_n,
                 "confidence": _confidence(r.eff_n),
                 "bucket": r.bucket,
+                "vol_bps": r.daily_vol_bps,
+                "vol_source": r.vol_source,
             }
             for r in results
         },
@@ -528,6 +630,18 @@ def merge_coeffs(existing: dict, fresh: dict) -> dict:
     the fresh fit when it has observations (higher ``eff_N``); otherwise the
     existing bucket entry is retained.  Top-level scalars come from *fresh*.
     """
+    if existing.get("vol_estimator") != fresh.get("vol_estimator") or existing.get(
+        "vol_window_days"
+    ) != fresh.get("vol_window_days"):
+        logger.warning(
+            "merge_coeffs: existing (%s/%s) and fresh (%s/%s) volatility provenance "
+            "differ. coeff is inversely proportional to the volatility estimate, so "
+            "merging across estimators pools numbers that are not on the same scale "
+            "(plan 18 §4.3a). Prefer a clean re-run over a merge.",
+            existing.get("vol_estimator"), existing.get("vol_window_days"),
+            fresh.get("vol_estimator"), fresh.get("vol_window_days"),
+        )
+
     merged = dict(fresh)
     merged["per_name"] = {**existing.get("per_name", {}), **fresh.get("per_name", {})}
 
@@ -547,6 +661,19 @@ def _render_report(results: list[NameResult], coeffs: dict, low_data: bool) -> s
     lines.append(f"Generated: {coeffs['generated']}")
     lines.append(f"Global default coeff: {coeffs['global_default']}")
     lines.append(f"Confirm threshold (MIN_IMPACT_OBS): {MIN_IMPACT_OBS}")
+    lines.append(
+        f"Volatility: `{coeffs.get('vol_estimator')}` over the trailing "
+        f"{coeffs.get('vol_window_days')} daily bars at or before the last capture date."
+    )
+    lines.append("")
+    lines.append(
+        "> `coeff` is inversely proportional to `daily_vol_bps`, so it is only "
+        "comparable against another run that used the SAME volatility estimator and "
+        "window. Runs before 2026-09-13 estimated volatility from the capture panel "
+        "instead, switching estimator at `n_days >= 2` — their coefficients are on a "
+        "different scale and must not be compared or pooled with these. See plan 18 "
+        "§4.3a."
+    )
     lines.append("")
     if low_data:
         lines.append(
@@ -559,16 +686,17 @@ def _render_report(results: list[NameResult], coeffs: dict, low_data: bool) -> s
     lines.append("## Per-name liquidity & impact")
     lines.append("")
     lines.append(
-        "| Symbol | Bucket | ADV (IDR) | Spread (bps) | Depth L1 (lots) | "
-        "Depth L5 (lots) | Daily vol (bps) | Days | Impact obs | Coeff | R² | Confidence |"
+        "| Symbol | Bucket | ADV (IDR) | Spread (bps) | Depth L1 (shares) | "
+        "Depth L5 (shares) | Daily vol (bps) | Vol source | Days | Impact obs | "
+        "Coeff | R² | Confidence |"
     )
-    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in results:
         coeff_s = "—" if r.coeff is None else f"{r.coeff:.4f}"
         lines.append(
             f"| {r.symbol} | {r.bucket} | {r.adv_notional_idr:,.0f} | "
             f"{r.spread_bps:.2f} | {r.depth_l1:,.0f} | {r.depth_l5:,.0f} | "
-            f"{r.daily_vol_bps:.2f} | {r.n_days} | {r.eff_n} | {coeff_s} | "
+            f"{r.daily_vol_bps:.2f} | {r.vol_source} | {r.n_days} | {r.eff_n} | {coeff_s} | "
             f"{r.r2:.3f} | {_confidence(r.eff_n)} |"
         )
     lines.append("")
@@ -643,7 +771,31 @@ def _render_report(results: list[NameResult], coeffs: dict, low_data: bool) -> s
     return "\n".join(lines)
 
 
-def run(data_dir: str, out_json: str, out_report: str, merge: bool = False) -> dict:
+DAILY_BARS_DIR: str = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "data", "daily"
+)
+"""Where ``run`` looks for ``{SYMBOL}.parquet`` daily history."""
+
+
+def _load_daily_bars(symbol: str, daily_dir: str) -> pd.DataFrame | None:
+    """Daily bars for *symbol*, or ``None`` when there is no history on disk."""
+    path = os.path.join(daily_dir, f"{symbol.upper()}.parquet")
+    if not os.path.exists(path):
+        return None
+    try:
+        return pd.read_parquet(path)
+    except (OSError, ValueError) as exc:
+        logger.warning("%s: daily bars unreadable (%s)", symbol, exc)
+        return None
+
+
+def run(
+    data_dir: str,
+    out_json: str,
+    out_report: str,
+    merge: bool = False,
+    daily_dir: str = DAILY_BARS_DIR,
+) -> dict:
     pairs = _discover_pairs(data_dir)
     if not pairs:
         raise FileNotFoundError(f"No *_features.csv found under {data_dir}")
@@ -658,12 +810,12 @@ def run(data_dir: str, out_json: str, out_report: str, merge: bool = False) -> d
         else:
             trades = pd.DataFrame()
             logger.warning("%s: no trade tape found; impact obs will be 0", sym)
-        res = calibrate_symbol(sym, features_raw, trades)
+        res = calibrate_symbol(sym, features_raw, trades, _load_daily_bars(sym, daily_dir))
         if res.n_days < MIN_CALIBRATION_DAYS:
             low_data = True
         logger.info(
-            "%s bucket=%s adv=%.3e vol_bps=%.2f obs=%d coeff=%s days=%d",
-            sym, res.bucket, res.adv_notional_idr, res.daily_vol_bps,
+            "%s bucket=%s adv=%.3e vol_bps=%.2f(%s) obs=%d coeff=%s days=%d",
+            sym, res.bucket, res.adv_notional_idr, res.daily_vol_bps, res.vol_source,
             res.eff_n, res.coeff, res.n_days,
         )
         results.append(res)
