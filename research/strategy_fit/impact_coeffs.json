@@ -1,68 +1,402 @@
 {
- "generated": "2026-09-05",
- "min_impact_obs": 20,
- "global_default": 1.0,
- "buckets": {
-  "high_liq": {
-   "coeff": 0.37683598192009904,
-   "eff_N": 40351,
-   "confidence": "confirmed"
+  "generated": "2026-09-13",
+  "min_impact_obs": 20,
+  "global_default": 1.0,
+  "vol_window_days": 60,
+  "vol_estimator": "compute_daily_vol_bps_from_daily_bars",
+  "buckets": {
+    "high_liq": {
+      "coeff": 0.34517156844238256,
+      "eff_N": 5703,
+      "confidence": "confirmed"
+    },
+    "mid_liq": {
+      "coeff": 0.3007022744182824,
+      "eff_N": 6843,
+      "confidence": "confirmed"
+    },
+    "low_liq": {
+      "coeff": 0.2925559826975938,
+      "eff_N": 1799,
+      "confidence": "confirmed"
+    }
   },
-  "mid_liq": {
-   "coeff": null,
-   "eff_N": 0,
-   "confidence": "provisional"
-  },
-  "low_liq": {
-   "coeff": null,
-   "eff_N": 0,
-   "confidence": "provisional"
+  "per_name": {
+    "AALI": {
+      "coeff": 0.36530716521503126,
+      "eff_N": 166,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 168.08382038804228,
+      "vol_source": "daily_bars"
+    },
+    "ADRO": {
+      "coeff": 0.27092580891510726,
+      "eff_N": 274,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 194.69296561593058,
+      "vol_source": "daily_bars"
+    },
+    "AMMN": {
+      "coeff": 0.4431301345387427,
+      "eff_N": 742,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 343.73861860043064,
+      "vol_source": "daily_bars"
+    },
+    "ANTM": {
+      "coeff": 0.4418951523320765,
+      "eff_N": 362,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 248.0271224041673,
+      "vol_source": "daily_bars"
+    },
+    "ARCI": {
+      "coeff": 0.2326427193419516,
+      "eff_N": 232,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 360.12247219993463,
+      "vol_source": "daily_bars"
+    },
+    "ASII": {
+      "coeff": 0.23721805481153543,
+      "eff_N": 188,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 196.7270147648862,
+      "vol_source": "daily_bars"
+    },
+    "BBCA": {
+      "coeff": 0.4622714179949381,
+      "eff_N": 107,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 200.08191022306804,
+      "vol_source": "daily_bars"
+    },
+    "BBNI": {
+      "coeff": 0.2653929338085774,
+      "eff_N": 97,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 189.37696855023208,
+      "vol_source": "daily_bars"
+    },
+    "BBRI": {
+      "coeff": 0.3825906936914227,
+      "eff_N": 186,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 177.82756880418614,
+      "vol_source": "daily_bars"
+    },
+    "BMRI": {
+      "coeff": 0.2133936559272702,
+      "eff_N": 309,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 181.3519115900234,
+      "vol_source": "daily_bars"
+    },
+    "BNBR": {
+      "coeff": 0.21817613401627498,
+      "eff_N": 28,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 562.8757311783336,
+      "vol_source": "daily_bars"
+    },
+    "BREN": {
+      "coeff": 0.1848776690702218,
+      "eff_N": 174,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 336.4573054500126,
+      "vol_source": "daily_bars"
+    },
+    "BRMS": {
+      "coeff": 0.3364000537523472,
+      "eff_N": 123,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 414.8416608325043,
+      "vol_source": "daily_bars"
+    },
+    "BRPT": {
+      "coeff": 0.20186768350580428,
+      "eff_N": 280,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 398.9281949319231,
+      "vol_source": "daily_bars"
+    },
+    "BSDE": {
+      "coeff": 0.24297381308336685,
+      "eff_N": 113,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 254.9108700063406,
+      "vol_source": "daily_bars"
+    },
+    "BULL": {
+      "coeff": 0.255942561132714,
+      "eff_N": 233,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 482.71144119623415,
+      "vol_source": "daily_bars"
+    },
+    "BUMI": {
+      "coeff": 0.7038506225766095,
+      "eff_N": 50,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 383.77655856301726,
+      "vol_source": "daily_bars"
+    },
+    "BUVA": {
+      "coeff": 0.2959335936794248,
+      "eff_N": 197,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 500.483256707136,
+      "vol_source": "daily_bars"
+    },
+    "CUAN": {
+      "coeff": 0.3358083189759326,
+      "eff_N": 380,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 522.0562560135395,
+      "vol_source": "daily_bars"
+    },
+    "DEWA": {
+      "coeff": 0.2960523991399733,
+      "eff_N": 206,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 434.18626196585006,
+      "vol_source": "daily_bars"
+    },
+    "EMTK": {
+      "coeff": 0.31605621771007414,
+      "eff_N": 87,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 250.69790411711398,
+      "vol_source": "daily_bars"
+    },
+    "ENRG": {
+      "coeff": 0.4560555722554578,
+      "eff_N": 632,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 481.4111327253249,
+      "vol_source": "daily_bars"
+    },
+    "GGRM": {
+      "coeff": 0.14665283272255772,
+      "eff_N": 383,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 264.2980914454473,
+      "vol_source": "daily_bars"
+    },
+    "HRTA": {
+      "coeff": 0.2762970524202984,
+      "eff_N": 182,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 309.8458440283207,
+      "vol_source": "daily_bars"
+    },
+    "HRUM": {
+      "coeff": 0.3977546955430362,
+      "eff_N": 273,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 283.21023398956964,
+      "vol_source": "daily_bars"
+    },
+    "INCO": {
+      "coeff": 0.24346613395184916,
+      "eff_N": 700,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 296.14972008840186,
+      "vol_source": "daily_bars"
+    },
+    "INDF": {
+      "coeff": 0.441503585969487,
+      "eff_N": 314,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 134.88308662016647,
+      "vol_source": "daily_bars"
+    },
+    "INET": {
+      "coeff": 0.4227706759061351,
+      "eff_N": 455,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 537.88464880553,
+      "vol_source": "daily_bars"
+    },
+    "ITMG": {
+      "coeff": 0.5449158244286182,
+      "eff_N": 470,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 99.35784874044623,
+      "vol_source": "daily_bars"
+    },
+    "KIJA": {
+      "coeff": 0.3281418307702285,
+      "eff_N": 264,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 650.0727780768376,
+      "vol_source": "daily_bars"
+    },
+    "LSIP": {
+      "coeff": 0.4601443113844816,
+      "eff_N": 366,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 206.93188980145752,
+      "vol_source": "daily_bars"
+    },
+    "MBMA": {
+      "coeff": 0.38644519464735166,
+      "eff_N": 79,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 389.42673103656915,
+      "vol_source": "daily_bars"
+    },
+    "MDKA": {
+      "coeff": 0.3368879835416809,
+      "eff_N": 547,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 314.2321955600483,
+      "vol_source": "daily_bars"
+    },
+    "MEDC": {
+      "coeff": 0.44680977163013735,
+      "eff_N": 494,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 275.9613809167035,
+      "vol_source": "daily_bars"
+    },
+    "MPMX": {
+      "coeff": 0.40964481137678543,
+      "eff_N": 52,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 83.63274973957981,
+      "vol_source": "daily_bars"
+    },
+    "PTRO": {
+      "coeff": 0.33722692588886005,
+      "eff_N": 453,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 358.780628300777,
+      "vol_source": "daily_bars"
+    },
+    "RAJA": {
+      "coeff": 0.297720124055191,
+      "eff_N": 176,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 385.33349998676505,
+      "vol_source": "daily_bars"
+    },
+    "RATU": {
+      "coeff": 0.38822967596670893,
+      "eff_N": 670,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 416.69588361687016,
+      "vol_source": "daily_bars"
+    },
+    "SMGR": {
+      "coeff": 0.30387802575426615,
+      "eff_N": 452,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 330.7331180650915,
+      "vol_source": "daily_bars"
+    },
+    "SSIA": {
+      "coeff": 0.20428171911768808,
+      "eff_N": 242,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 302.4760294505963,
+      "vol_source": "daily_bars"
+    },
+    "TINS": {
+      "coeff": 0.4280755675572679,
+      "eff_N": 772,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 304.12889563147263,
+      "vol_source": "daily_bars"
+    },
+    "TLKM": {
+      "coeff": 0.3694403094205709,
+      "eff_N": 116,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 204.5324453812682,
+      "vol_source": "daily_bars"
+    },
+    "TOBA": {
+      "coeff": 0.28818613379068253,
+      "eff_N": 177,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 394.08028482523235,
+      "vol_source": "daily_bars"
+    },
+    "TPIA": {
+      "coeff": 0.20304121413737947,
+      "eff_N": 292,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 391.49616759697193,
+      "vol_source": "daily_bars"
+    },
+    "UNTR": {
+      "coeff": 0.3092713219553998,
+      "eff_N": 665,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 203.50858070119187,
+      "vol_source": "daily_bars"
+    },
+    "VKTR": {
+      "coeff": 0.22702775165050143,
+      "eff_N": 344,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 664.3583485097926,
+      "vol_source": "daily_bars"
+    },
+    "WIFI": {
+      "coeff": 0.32420713094429326,
+      "eff_N": 241,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 342.2155276517503,
+      "vol_source": "daily_bars"
+    }
   }
- },
- "per_name": {
-  "BREN": {
-   "coeff": 0.41685940955641954,
-   "eff_N": 6465,
-   "confidence": "confirmed",
-   "bucket": "high_liq"
-  },
-  "BRPT": {
-   "coeff": 0.4093217033737668,
-   "eff_N": 6647,
-   "confidence": "confirmed",
-   "bucket": "high_liq"
-  },
-  "ENRG": {
-   "coeff": 0.3695820118367511,
-   "eff_N": 6940,
-   "confidence": "confirmed",
-   "bucket": "high_liq"
-  },
-  "PTRO": {
-   "coeff": 0.39325230256558164,
-   "eff_N": 7414,
-   "confidence": "confirmed",
-   "bucket": "high_liq"
-  },
-  "RAJA": {
-   "coeff": null,
-   "eff_N": 2504,
-   "confidence": "provisional",
-   "bucket": "high_liq",
-   "excluded_reason": "Fit was 0.0603, outside the sane [0.2, 2.0] direction-check band. Cause: an unadjusted 1:5.26 corporate action on 2026-07-16 present in the raw capture and back-adjusted away in chartbit, which inflated close-to-close daily vol to 2340 bps against a true intraday ~380 bps and so deflated the coefficient ~5x. Nulled to provisional so impact.py falls back to the high_liq bucket. See docs/plans/12-data-gap-backlog-and-demand-driven-capture.md 5e."
-  },
-  "RATU": {
-   "coeff": 0.2975409841726776,
-   "eff_N": 4719,
-   "confidence": "confirmed",
-   "bucket": "high_liq"
-  },
-  "TPIA": {
-   "coeff": 0.4709628351457842,
-   "eff_N": 5662,
-   "confidence": "confirmed",
-   "bucket": "high_liq"
-  }
- },
- "notes": "Refit 2026-09-05 (roadmap W2.2) on 58 captured days, up from the original 5. Bucket effective-N 6602 -> 40351. Six of seven names rose vs the 5-day fit (TPIA 1.51x, RATU 1.50x, BRPT 1.36x), confirming plan 15's warning that a thin vol estimate deflates the coefficient. RAJA is excluded, see per_name.RAJA."
 }

@@ -1,0 +1,68 @@
+{
+ "generated": "2026-09-05",
+ "min_impact_obs": 20,
+ "global_default": 1.0,
+ "buckets": {
+  "high_liq": {
+   "coeff": 0.37683598192009904,
+   "eff_N": 40351,
+   "confidence": "confirmed"
+  },
+  "mid_liq": {
+   "coeff": null,
+   "eff_N": 0,
+   "confidence": "provisional"
+  },
+  "low_liq": {
+   "coeff": null,
+   "eff_N": 0,
+   "confidence": "provisional"
+  }
+ },
+ "per_name": {
+  "BREN": {
+   "coeff": 0.41685940955641954,
+   "eff_N": 6465,
+   "confidence": "confirmed",
+   "bucket": "high_liq"
+  },
+  "BRPT": {
+   "coeff": 0.4093217033737668,
+   "eff_N": 6647,
+   "confidence": "confirmed",
+   "bucket": "high_liq"
+  },
+  "ENRG": {
+   "coeff": 0.3695820118367511,
+   "eff_N": 6940,
+   "confidence": "confirmed",
+   "bucket": "high_liq"
+  },
+  "PTRO": {
+   "coeff": 0.39325230256558164,
+   "eff_N": 7414,
+   "confidence": "confirmed",
+   "bucket": "high_liq"
+  },
+  "RAJA": {
+   "coeff": null,
+   "eff_N": 2504,
+   "confidence": "provisional",
+   "bucket": "high_liq",
+   "excluded_reason": "Fit was 0.0603, outside the sane [0.2, 2.0] direction-check band. Cause: an unadjusted 1:5.26 corporate action on 2026-07-16 present in the raw capture and back-adjusted away in chartbit, which inflated close-to-close daily vol to 2340 bps against a true intraday ~380 bps and so deflated the coefficient ~5x. Nulled to provisional so impact.py falls back to the high_liq bucket. See docs/plans/12-data-gap-backlog-and-demand-driven-capture.md 5e."
+  },
+  "RATU": {
+   "coeff": 0.2975409841726776,
+   "eff_N": 4719,
+   "confidence": "confirmed",
+   "bucket": "high_liq"
+  },
+  "TPIA": {
+   "coeff": 0.4709628351457842,
+   "eff_N": 5662,
+   "confidence": "confirmed",
+   "bucket": "high_liq"
+  }
+ },
+ "notes": "Refit 2026-09-05 (roadmap W2.2) on 58 captured days, up from the original 5. Bucket effective-N 6602 -> 40351. Six of seven names rose vs the 5-day fit (TPIA 1.51x, RATU 1.50x, BRPT 1.36x), confirming plan 15's warning that a thin vol estimate deflates the coefficient. RAJA is excluded, see per_name.RAJA."
+}
