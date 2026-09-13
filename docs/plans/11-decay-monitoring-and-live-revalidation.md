@@ -1,7 +1,17 @@
 # Decay Monitoring & Live Revalidation — Alpha Kill-Switch and Global Off-Switch
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-09-05
+> **Status:** 📝 Draft · ⛔ Blocked → 🔓 **unblocked early by ADR-0016** · **Owner:** @lewis · **Updated:** 2026-09-13
 > **Related:** [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [08-alpha-factory-workflows.md](./08-alpha-factory-workflows.md) (Workflow B/C, regime refutation) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) (pillar 3 regime/off-switch, pillar 4.2 post-trade store, pillar 5 decay/kill) · [Plans index](./README.md)
+
+> ## 🔓 UNBLOCKED EARLY 2026-09-13
+>
+> This plan was hard-blocked on "live trading + post-trade store", which was itself gated
+> behind a confirmed edge. Under [ADR-0016](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md)
+> that gate is gone: [plan 18](./18-alpha-and-infrastructure-split.md) **B1** (position &
+> PnL reconciliation) and **B6** (realized-cost measurement) put real rows in the
+> post-trade store from calibration flow, with no edge required. The decay loop and global
+> off-switch can now be built and exercised as plan 18 **B8**. Kill-criteria *thresholds*
+> still need a strategy to calibrate against; the machinery does not.
 
 > ⛔ **BLOCKED — cannot run before live trading exists (pillar 4.2).** This plan
 > monitors *live* PnL against backtest expectations. There is no live PnL yet;

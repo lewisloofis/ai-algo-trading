@@ -3,6 +3,20 @@
 > **Status:** 🟡 Partially delivered — the **daily impact model shipped 2026-09-05** (see §Impact-model delivery below); basket construction, capacity caps, duty-cycle scheduling and drawdown guardrails remain unbuilt · **Owner:** @lewis · **Updated:** 2026-09-05
 > **Related:** [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [09-universe-screener.md](./09-universe-screener.md) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [08-alpha-factory-workflows.md](./08-alpha-factory-workflows.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) (§2–3) · [Plans index](./README.md)
 
+> ## ⚠️ PREMISE SUPERSEDED 2026-09-13
+>
+> This plan sizes a **leverage sleeve** with a T+2/T+4 tenor clock, and derives from it a
+> one-borrow-per-duty-cycle allocator and a hard ~40–50% calendar-time utilisation ceiling.
+> [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md) made leverage optional
+> and owned cash the default: owned cash has **no tenor clock**, so the duty-cycle ceiling
+> and the single-atomic-basket constraint are void under it. The day-of-week financing
+> scheduling (ADR-0014) applies only when `LEVERAGED_SLEEVE` is active.
+>
+> Under [plan 18](./18-alpha-and-infrastructure-split.md): what survives becomes **Track A's
+> sizing step**, emitting `target_portfolio.json` (§3.1). The per-name **C\*** capacity caps
+> move to **Track B**, because they depend on *measured* impact (B6), not the modelled
+> coefficient they were originally derived from. Body preserved unedited.
+
 > **What this is.** The layer that decides *how much to deploy and when*, given
 > the 300M leverage facility's hard mechanics. Plan 10 decides which `(name,
 > strategy)` cells have edge after the full cost stack (fees + financing); this

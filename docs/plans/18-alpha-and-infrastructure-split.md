@@ -1,0 +1,716 @@
+# Alpha / Infrastructure Split — Two Tracks, One Seam
+
+> **Status:** ✅ Approved · **Owner:** @lewis · **Updated:** 2026-09-13
+> **Related:** [ADR-0016: alpha and infrastructure are separate tracks](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md) · [ADR-0015: leverage is optional](../adr/0015-leverage-optional-horizon-ceiling-lifted.md) · [ADR-0013: one Strategy interface](../adr/0013-one-strategy-interface-and-collector-public-packages.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [13-capital-allocation-and-capacity.md](./13-capital-allocation-and-capacity.md) · [15-measured-fill-and-impact-calibration.md](./15-measured-fill-and-impact-calibration.md) · [16-strategy-triage-and-prioritization.md](./16-strategy-triage-and-prioritization.md) · [17-execution-and-replay-parity-engine.md](./17-execution-and-replay-parity-engine.md) · [Plans index](./README.md)
+
+> **What this is.** The re-cut of roadmap Waves 3–5 into two independently
+> schedulable tracks — **Track A (alpha research)** and **Track B (trading
+> infrastructure)** — joined by a single contract, `target_portfolio.json`,
+> preceded by **Track C (§4)**, the offline cost calibration that gates how both
+> are interpreted.
+> It implements [ADR-0016](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md)
+> and supersedes the strict wave ordering in [plan 00 §6](./00-roadmap-research-to-live.md)
+> from Wave 3 onward. §7 reconciles every prior plan against the split; nothing
+> is left implicitly re-scoped.
+
+---
+
+## 1. Why now — the loop had no exit
+
+The research loop did not stall for lack of effort. It stalled because its exit
+condition was unreachable.
+
+Every verdict this project has produced compares a measured gross edge against a
+**modelled** hurdle: `min_edge_to_clear + modelled_impact + financing`. The
+impact term comes from `SQRT_IMPACT_COEFF`. In
+`research/strategy_fit/impact_coeffs.json`, `high_liq` is genuinely measured
+(0.377, `eff_N=40,351`, 7 captured names) — but `mid_liq` and `low_liq` are
+`null` and fall through to `global_default: 1.0`, a hand-picked constant. So for
+most of the universe the ruler that killed every candidate has never been
+checked against a real fill.
+
+Checking the *fill* half of that ruler — queue position, fill rate, adverse
+selection, rejects — needs realized fills. Realized fills need live orders. Live
+orders were gated, by [plan 17 §2](./17-execution-and-replay-parity-engine.md),
+behind a confirmed edge. **That is a cycle**, and it is why each wave re-entered
+Wave 2.
+
+> **Correction, 2026-09-13, after this plan's first draft.** The cycle is real
+> but narrower than this section originally claimed. The *impact* half of the
+> ruler needs no live order at all: impact is the price response to aggressive
+> flow, and the captured tape records other people's aggressive flow in full. The
+> pipeline to fit it already exists and has run twice. It left `mid_liq` and
+> `low_liq` empty because of two defects, not because the measurement is
+> impossible. **§4 (Track C)** is that work, and it now runs ahead of both tracks.
+
+The scale of what the loop actually covered is the other half of the diagnosis.
+The plan-10 coverage table holds **1,389 cells**:
+
+| Shape | Cells | Share |
+|---|---:|---:|
+| `single_name_time_series` | 1,034 | 74.4% |
+| `intraday_same_day` | 345 | 24.8% |
+| `event_driven` | 6 | 0.4% |
+| `pairs` | 2 | 0.1% |
+| `cross_sectional` | 2 | 0.1% |
+
+**99.3% of all work went into one shape family inside the ≤2-day band** — the
+band where the 2026-09-12 breadth test (85,245 trades) measured a mean
+round-trip hurdle of **125.1 bps** and concluded *"the gap is an order of
+magnitude, not a tuning problem."* The catalog was never broadly searched. It
+was deeply drilled in one place, and that place is structurally unwinnable at a
+retail cost stack.
+
+Infrastructure, meanwhile, is required by **every** alpha outcome. Nothing about
+position reconciliation, pre-trade risk, or an order state machine depends on
+which signal wins. Sequencing it behind an unresolved research question bought
+nothing and cost the calibration.
+
+## 2. The split
+
+```
+TRACK A — alpha research                 TRACK B — trading infrastructure
+research/ · Python                       strategy/ · Go · ops
+────────────────────────────             ──────────────────────────────
+universe → signal → sizing               target diff → orders → fills
+                    │                                   │
+                    ▼                                   ▼
+            target_portfolio.json ──────────>  positions · PnL · post-trade store
+                    ▲                                   │
+                    │                                   ▼
+            impact_coeffs.json  <───────────── measured realized cost
+```
+
+**Track A** owns: what to hold and how much. It never models an order.
+**Track B** owns: getting there safely and measuring what it cost. It never
+models a signal.
+
+The two feedback edges are the point of the whole design: Track A pushes target
+weights down; Track B pushes measured costs back up. Today the upward edge does
+not exist, which is why Track A cannot finish.
+
+**Neither track blocks the other.** Track B is developed against a *null
+portfolio* (§3.3) and needs no alpha to reach its exit criterion.
+
+## 3. The seam — `target_portfolio.json`
+
+### 3.1 Contract
+
+```json
+{
+  "schema_version": 1,
+  "as_of": "2026-09-13T09:00:00+07:00",
+  "strategy_id": "calibration | momo_12_1_monthly | ...",
+  "capital_model": "owned_cash | leveraged_sleeve",
+  "base_notional_idr": 50000000,
+  "targets": [
+    {"symbol": "BBCA", "weight": 0.25},
+    {"symbol": "TLKM", "weight": 0.25}
+  ],
+  "constraints": {
+    "max_participation_rate": 0.05,
+    "complete_by": "2026-09-13T15:00:00+07:00",
+    "board": "RG"
+  }
+}
+```
+
+- `weight` is a fraction of `base_notional_idr`. Weights sum to ≤ 1.0. Long-only
+  for now; a negative weight is a schema error until short support is built
+  (§11).
+- `capital_model` records which [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md)
+  model produced the targets, because results under the two are not comparable.
+- `strategy_id` is the post-trade store's partition key. `calibration` is
+  **reserved** (ADR-0016 §6) and is never reported as strategy performance.
+
+### 3.2 Why this seam and not the signal
+
+A signal seam would force Track B to own sizing, netting and constraint logic
+that belongs with the research that produced it, and it makes a null input
+awkward to express. Target portfolio is the standard portfolio-construction /
+execution boundary: both sides stay independently testable, and the file is a
+plain artifact that can be hand-written, diffed, and replayed.
+
+### 3.3 The null portfolio
+
+Track B's development input is a deliberately zero-alpha target portfolio —
+equal-weight across 5 liquid names, rebalanced on a fixed schedule. Its expected
+alpha is zero by construction, so **every basis point of deviation from arrival
+price is attributable to execution**, which is exactly the quantity being
+measured.
+
+This is why the null portfolio, not the best available strategy, is the primary
+calibration instrument: trading a real candidate conflates "was there alpha" with
+"was the execution good", and we already cannot answer the first question.
+
+## 4. Track C — measure the ruler first
+
+**Track C gates both other tracks and is not parallel to them.** It is the
+prerequisite neither A nor B can be trusted without, and unlike either it needs
+no new capital, no live order, and no new capture. Everything it consumes is
+already on disk.
+
+### 4.1 What already exists
+
+| Artifact | State |
+|---|---|
+| `research/strategy_fit/fill_calibration.py` | 25 KB, tested, working pipeline |
+| `research/strategy_fit/impact.py` | plumbed into every hurdle via `get_impact_coeff` |
+| `research/strategy_fit/impact_coeffs.json` | generated 2026-09-05; `high_liq` = 0.377 at `eff_N=40,351` |
+| `research/out/fill_calibration_report.md` | generated 2026-06-27, `eff_N=6,602` |
+| `segments/dt=2026-09-07 … 2026-09-11` | **5 sessions × 47 names, ~367 MB, never processed** |
+
+The buckets are empty because of the two defects below, not because the data is
+missing.
+
+### 4.2 Defect 1 — `_adv_from_trades` multiplies by lots
+
+```python
+df["_notional"] = df["vol"] * df["price"] * LOTS_PER_SHARE_UNIT   # ×100 — wrong
+```
+
+The trade tape's `vol` is already in **shares**, not lots. Verified on BUMI
+2026-06-18 (47,976 prints): `vol × price` = **Rp 415.09 B**, the right order of
+magnitude against the screener's Rp 668.96 B median; `× 100` gives Rp 41,509 B.
+
+The fitted coefficient is **unaffected** — in `detect_impact_events` the same
+factor appears in the numerator of `participation`, so it cancels. What breaks is
+`liquidity_bucket`, whose thresholds are absolute: `HIGH_LIQ_ADV_IDR = 100e9`
+becomes an effective Rp 1 B cutoff, so **every name files `high_liq`**. That is
+why `mid_liq` and `low_liq` carry `eff_N = 0`. ANTM's `low_liq` is a different
+path — empty trades, `_adv_from_trades` returns `0.0`.
+
+### 4.3 Defect 2 — an uncaptured name never reaches a bucket
+
+`get_impact_coeff` resolves `per_name` first and consults `buckets` only for a
+symbol **already in `per_name`**. Any symbol absent from it — every name outside
+the 7 calibrated ones — returns `global_default = 1.0` directly. So fixing
+defect 1 alone buys nothing for the universe: the buckets would be correct and
+still unreachable.
+
+`infra/terraform.tfvars` recorded this correctly on 2026-09-05 as *conservative,
+not unsafe*: 1.0 is the high-friction end of the Almgren range, so uncalibrated
+names are over-charged. That is the safe direction for capital and the **wrong**
+direction for a verdict — it kills candidates by assumption.
+
+### 4.3a Defect 3 — the volatility estimator flips on panel length *(found during C3)*
+
+This one was not known when §4 was written. It was found by C3's own
+cross-check and it is the defect that matters most.
+
+`_daily_vol_bps_from_features` switches estimator on sample length:
+
+```python
+if n_days >= 2:
+    return compute_daily_vol_bps(df[["date", "close"]])   # close-to-close
+return _intraday_vol_bps(features)                        # intraday realized proxy
+```
+
+The 2026-06-27 calibration ran at `days=1` per name, so it used the **intraday
+proxy**. The Track C panel is 5 days, so it uses **close-to-close over 4
+returns**. Since the fit is
+`observed_impact_bps ≈ 2 · coeff · daily_vol_bps · sqrt(participation)`, the
+coefficient is inversely proportional to the volatility estimate — so changing
+estimator rescales every coefficient without any change in measured impact.
+
+Measured on the same names, same week:
+
+| Name | close-to-close (4 returns) | intraday proxy, per day | ratio | coeff moved |
+|---|---:|---|---:|---:|
+| PTRO | 79.39 bps | 335, 275, 241, 470, 359 | 4.2× | 0.393 → 1.524 (3.9×) |
+| BRPT | 63.70 bps | 192, 159, 213, 237, 203 | 3.2× | 0.409 → 1.264 (3.1×) |
+| BREN | 67.71 bps | 176, 91, 135, 198, 174 | 2.6× | 0.417 → 0.919 (2.2×) |
+| ENRG | 379.29 bps | 324, 442, 307, 455, 465 | 1.2× | 0.370 → 0.579 (1.6×) |
+
+The coefficient inflation tracks the volatility ratio almost exactly, and ENRG —
+the one name whose two estimates agree — is the one name whose coefficient
+barely moved. PTRO closed the week near where it opened, so close-to-close
+collapsed to 79 bps while the name realized 241–470 bps of intraday range on
+every one of the five days. That is a small-sample artifact, not a volatility
+regime.
+
+**Consequence: C3's output is not yet usable and C4 must not run on it.** All
+three buckets are populated for the first time, but they fail their own
+cross-check against the previous calibration of the same names, and the failure
+is fully explained by the estimator switch.
+
+**Resolution — approved and implemented 2026-09-13.** Not "which of the two
+short-window estimators is better": both read five days of capture. The grid
+prices its hurdle through `compute_impact_bps_from_daily_df`, which takes
+volatility from `compute_daily_vol_bps_from_daily_bars`. Calibration now uses
+**the same estimator on the same kind of input**, so `coeff` carries impact
+rather than the ratio between two estimators.
+
+`_daily_vol_bps_from_features` is replaced by `resolve_daily_vol_bps(features,
+daily_bars, as_of)`, which returns the volatility **and its source**:
+
+1. `compute_daily_vol_bps_from_daily_bars` over the trailing
+   `CALIBRATION_VOL_WINDOW_DAYS = 60` bars at or before the last capture date
+   (`as_of` caps the window, so a calibration dated T never sees T+1).
+2. Only when a name has no usable daily history: the intraday realized proxy,
+   medianed per day — and it logs a warning, because its coefficient is not on
+   the same scale as the rest.
+
+The close-to-close-over-the-capture-panel path is gone entirely.
+
+**Why 60 days.** The window is not neutral — `coeff ∝ 1/daily_vol_bps`, so a
+window that misreads volatility by 4× misreads every coefficient by 4×. Five
+days gives four returns, which is what caused this defect. A multi-year median
+averages across regime changes, the trap already recorded for ADV (PTRO's
+modelled impact ranged 3.9 → 33.6 bps purely by window choice). 60 trading days
+is stable enough to estimate and short enough to describe the regime the capture
+actually sampled. **Changing it changes every coefficient**, so it is a named
+constant with that warning in its docstring.
+
+**Provenance is now recorded.** `impact_coeffs.json` carries `vol_estimator` and
+`vol_window_days` at the top level and `vol_source` per name; the report states
+them and warns that pre-2026-09-13 runs are on a different scale; `merge_coeffs`
+logs a warning when provenance differs between the payloads being merged. The
+point is that a coefficient is meaningless without the volatility estimator it
+was fitted against, and that fact should not have to be remembered.
+
+### 4.4 Build order
+
+**C1 — Extract the captured sessions. ✅ Done 2026-09-13.**
+
+- [x] `sbcap features` and `sbcap trades` over `segments/dt=2026-09-07 …
+      2026-09-11`, 47 names → `research/out_live/ticks/{SYMBOL}/{date}_*.csv`
+      (the per-symbol subdir layout `_discover_pairs` supports). 235/235 jobs,
+      1.2 GB, zero empty outputs.
+- [x] Confirm capture is still running. **Checked 2026-09-13: healthy.** Local
+      segments stop at 2026-09-11 because **2026-09-12 was a Saturday** — 09-11
+      was the last trading day and it captured cleanly through `seg-090000`.
+      Both EventBridge schedules (`market-open` 08:30, `market-close` 16:25,
+      MON-FRI) are `ENABLED` and the instance is correctly `stopped` for the
+      weekend. Order book cannot be backfilled, so this check is worth repeating
+      on any unexplained gap.
+
+**C2 — Fix the defects (test-first).**
+
+- [x] Dropped `* LOTS_PER_SHARE_UNIT` from **both** `_adv_from_trades` and
+      `detect_impact_events` — they must move together or every coefficient
+      shifts by sqrt(100). Constant removed; the reasoning is a comment at the
+      old site so it is not reintroduced.
+- [x] Audited `median_l1_lots`: book depth and tape volume come from the same
+      feed in the same unit, so run detection was always unit-consistent and the
+      detected *events* were never wrong. Only the name was misleading — renamed
+      to `median_l1_shares` (with `acc_shares` / `threshold_shares`), since the
+      wrong name is what produced the bug.
+- [x] `get_impact_coeff(symbol, adv_notional_idr=...)` now resolves a bucket
+      from the name's own ADV when it is absent from `per_name`; falls through to
+      `global_default` only when that bucket is unconfirmed. `compute_impact_bps`
+      passes the ADV it already holds, so both `_from_df` wrappers inherit the fix.
+      Behaviour with no ADV supplied is unchanged.
+- [x] 13 new tests, RED before GREEN. Full suite: **412 passed, 0 failed,
+      12 skipped.**
+- [ ] **Defect 3 (§4.3a) is not yet fixed** — it needs the methodology decision
+      recorded there.
+
+**C3 — Re-run the calibrator. ✅ Done 2026-09-13 (second run, corrected estimator).**
+
+With §4.3a's fix the cross-check **passes**, and that is what makes the numbers
+usable. The `high_liq` bucket now reads **0.3452** against the previous
+calibration's **0.3768** — within 8%, from an independent capture window, a
+different name membership and a different volatility estimator. Two independent
+measurements agreeing at the bucket level is the evidence the first run lacked.
+
+| bucket | coeff | eff_N | names | prior file |
+|---|---:|---:|---:|---:|
+| `high_liq` | 0.3452 | 5,703 | 18 | 0.3768 |
+| `mid_liq` | **0.3007** | 6,843 | 20 | `null` |
+| `low_liq` | **0.2926** | 1,799 | 9 | `null` |
+
+All 47 names resolved volatility from `daily_bars`; none fell back to the
+intraday proxy. Per-name agreement with the prior run is looser than the bucket
+agreement — PTRO 0.86×, ENRG 1.23×, RATU 1.30×, but BREN 0.44× and TPIA 0.43× —
+which is the expected shape: a five-day per-name fit carries far more noise than
+a pooled bucket at `eff_N` in the thousands.
+
+**The headline number: measured impact is roughly a third of what was assumed.**
+Every name outside the calibrated set was charged at `global_default = 1.0`.
+Measured, the buckets are 0.29–0.35. Impact scales linearly in the coefficient,
+so the universe has been over-charged for impact by about 3×.
+
+- [x] Written to `research/strategy_fit/impact_coeffs.json`; the prior file is
+      archived as `impact_coeffs.SUPERSEDED-2026-09-13-pre-track-c.json`.
+      **Replaced, not merged** — the old per-name entries were fitted against the
+      old volatility estimator and are not on the same scale (§4.3a), and
+      `merge_coeffs` would additionally have kept the old `high_liq` on `eff_N`.
+
+**C3 (first run) — superseded.**
+
+- [x] `cd research && python -m strategy_fit.fill_calibration --data-dir out_live/ticks`
+      (`--data-dir` resolves against the CWD, not against the module — the old
+      docstring's `../out_live` pointed outside the repo).
+- [x] Produced the first non-null `mid_liq` and `low_liq` coefficients in the
+      project's history, all three buckets `confirmed`, and per-name fits for all
+      47 names:
+
+      | bucket | coeff | eff_N | names |
+      |---|---:|---:|---:|
+      | `high_liq` | 0.7415 | 5,703 | 18 |
+      | `mid_liq` | 0.5897 | 6,843 | 20 |
+      | `low_liq` | 0.6227 | 1,799 | 9 |
+
+- [x] Discarded. Its coefficients (`high_liq` 0.7415 / `mid_liq` 0.5897 /
+      `low_liq` 0.6227) were inflated by defect 3 and are kept here only as the
+      record of how the cross-check caught it.
+
+**C4 — Re-judge the grid on measured cost. ✅ Done 2026-09-13, partially.**
+
+- [x] Re-ran the plan-10 grid live, `--use-calibrated`, 115-name universe,
+      1,044 cells. **Run as a controlled A/B**: the same command on the same day
+      against the same data with the flag off is the control, so every difference
+      is attributable to the coefficient and to nothing else. (The previous
+      `strategy_portfolio.md` was 2026-09-05 data on a different universe screen
+      and is *not* a valid comparison — it is archived as
+      `strategy_portfolio.SUPERSEDED-2026-09-13-pre-track-c.md`.)
+
+      | | assumed `1.0` | measured | 
+      |---|---:|---:|
+      | Surviving cells | **1** | **3** |
+      | Cells no longer cost-gated | — | 13 |
+
+- [x] **BNBR is the clean confirmation.** It was the largest blocked cell in the
+      grid and the impact charge was the entire result:
+
+      | | assumed `1.0` | measured |
+      |---|---:|---:|
+      | Friction hurdle | 442.8 bps | **210.2 bps** |
+      | Impact | ~290 bps | **64.9 bps** |
+      | Net edge | **−113.1** (cost_gated) | **+119.5** (PASS) |
+      | Edge over always-long null | — | **+269.3 bps** |
+      | OOS edge / eff-N | — | 420.3 bps / 52 |
+
+      It also clears the always-long null gate that killed PTRO, and it is the
+      one surviving cell **not** flagged UNDERPOWERED.
+
+- [ ] **The 345 long-horizon cells were NOT re-judged.** `run_strategy_fit` is
+      still hardcoded to ADR-0011 (`≤2 trading-day horizon ceiling`), so cells
+      with hold > 2 are not enumerated at all — the grid emits 1,044 rows, not
+      1,389. [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md)
+      lifted that ceiling and `capital_model.py` is already configurable, but the
+      runner does not expose it. **This is outstanding work, and it is the larger
+      half of what C4 was supposed to deliver** — the long-horizon band is A-2's
+      second priority and it is still unmeasured.
+
+### 4.4a What C4 actually establishes — and what it does not
+
+**Establishes.** Impact was over-charged roughly 3× across the universe, and at
+least one cell was killed outright by that assumption. A-1's premise — that the
+closed bands were closed by measurement — was wrong for every name outside the
+calibrated set, because the hurdle they were measured against was assumed.
+
+**Does not establish that BNBR is tradeable.** Three caveats, all load-bearing:
+
+1. **`eff_N = 28`.** BNBR's per-name coefficient rests on 28 impact observations,
+   barely over `MIN_IMPACT_OBS = 20`. Its `mid_liq` bucket (`eff_N` 6,843,
+   coeff 0.3007) is far better measured. Substituting the bucket raises BNBR's
+   impact from 64.9 to ~89 bps and its net from +119.5 to ~+95 — it survives
+   either way, which is the only reason this is a caveat and not a blocker.
+2. **Five days of capture**, one regime, September 2026.
+3. **BREN and INCO are UNDERPOWERED.** INCO in particular flips on a 5.6 bps
+   margin: under the assumed coefficient it failed the null gate at
+   `edge_over_null=70.4 ≤ hurdle=77.5`; measured, the hurdle falls to 64.8 and it
+   passes. That is a cell decided by the third decimal of a cost model, and it
+   should be treated as noise until the hurdle is confirmed by B6.
+
+**The honest summary:** the ruler was wrong, the correction is real and
+measured, and it revived a candidate worth pre-registering a forward test on.
+It did not produce a strategy.
+
+### 4.5 What C decides
+
+| C4 outcome | Consequence |
+|---|---|
+| Measured cost materially **below** modelled | Some closed cells revive. A-1 was partly an artifact of the default. Track B gains a real candidate to trade instead of only a null portfolio |
+| Measured cost **confirms** the model | The ≤ 2-day band is genuinely unwinnable rather than mis-measured. A-1 is settled on evidence and A-2 becomes the only live research question |
+
+Both answers are worth having; neither needs a live order. **C is the cheapest
+decision-relevant work available, so it runs first.**
+
+**Outcome, 2026-09-13: the first row.** Measured cost came in at roughly a third
+of modelled, the surviving-cell count went 1 → 3 on a controlled A/B, and BNBR
+went from −113.1 bps (killed) to +119.5 bps (PASS, clears the null gate, not
+underpowered). A-1 is therefore **not** settled for the ≤ 2-day daily band, and
+Track B now has a real candidate to point at rather than only a null portfolio —
+subject to the three caveats in §4.4a.
+
+## 5. Track B — build order
+
+Ordered by dependency and by blast radius. **B1 is read-only** and can be
+validated against the live account immediately at zero risk; nothing below it is
+safe without it.
+
+### B1 — Position & PnL reconciliation *(read-only)*
+
+- [ ] Carina portfolio/position read client; map to an internal `Position` view.
+- [ ] Reconcile broker-reported holdings against the post-trade store's derived
+      position; emit a typed divergence report rather than silently trusting either.
+- [ ] Cost-basis and realized/unrealized PnL, fee-inclusive
+      ([reference 07](../reference/07-fees-and-costs.md)).
+- [ ] Verify against the real account, end of a session, by hand.
+
+> **Why first.** "What do I own and what did it cost" is the precondition for
+> every order decision, every risk check, and every PnL claim. It is also the
+> only Track B component that can be fully validated before a single order is
+> sent.
+
+### B2 — Risk layer *(no orders yet)*
+
+- [ ] Port and generalise `strategy/broker.go`'s `checkCaps` into a
+      portfolio-level pre-trade check behind the `OrderSink` interface.
+- [ ] Enforce, in code: per-order notional cap, per-day notional cap, max gross
+      exposure, max position per name, **daily loss limit**, kill switch.
+- [ ] Wire [reference 06](../reference/06-pre-trade-rules.md) rules as gates, not
+      advisories.
+- [ ] Kill switch must be trippable **externally** (file/flag), not only from
+      inside the process.
+
+> Must be complete and tested before B4 is armed. This is ADR-0016 gate G2/G3.
+
+### B3 — `LiveSource`
+
+- [ ] Wrap the existing market-data websocket as `<-chan engine.MarketEvent`.
+      `engine.Run` already takes a channel — this is an adapter, not a new engine.
+- [ ] Reconnect/gap semantics identical to the replay path (ADR-0013 parity).
+- [ ] Holiday/session awareness via the plan-14 calendar reader
+      (this absorbs roadmap **W4.2**).
+
+### B4 — `LiveSink` *(first real money)*
+
+- [ ] Carina order routing behind `engine.OrderSink`, replacing the single-symbol
+      fire-and-forget `broker.go` path.
+- [ ] Idempotency keys; order state machine (new → acked → partial → filled /
+      cancelled / rejected); cancel/replace; timeout handling.
+- [ ] Reconcile every terminal state back to B1.
+- [ ] Retain the existing double-arm: `ALGO_LIVE=true` **and** the verbatim
+      `ALGO_CONFIRM` phrase (ADR-0016 gate G4).
+- [ ] Absorbs plan 17 §6.2, §6.4, §6.5.
+
+### B5 — Execution algo
+
+- [ ] Do not market-order a basket. Arrival-price benchmark, time/volume slicing,
+      participation cap from `constraints.max_participation_rate`, cancel-on-adverse.
+- [ ] Absorbs plan 17 §6.3.
+
+### B6 — Realized-cost measurement *(the point)*
+
+Track C fills `mid_liq` and `low_liq` from the tape. B6 measures the half the
+tape cannot see, and cross-checks C's answer against reality.
+
+| Quantity | Source | Obtainable by |
+|---|---|---|
+| Price impact of aggressive flow | captured tape | **C** — offline, no orders |
+| Fill rate, queue wait, adverse selection, rejects | your own resting orders | **B6 only** |
+
+- [ ] Per fill, record: decision price, arrival mid, fill price, participation
+      achieved, realized spread crossed, slippage vs arrival (bps), queue wait,
+      reject/partial counts.
+- [ ] **Exit criterion (§9):** reconcile realized-fill coefficients against Track
+      C's tape-derived coefficients in **all three** buckets. Agreement within
+      tolerance validates both methods and makes the hurdle trustworthy;
+      divergence invalidates one of them and must be resolved before either is
+      trusted.
+- [ ] The pre-Track-C version of this criterion — "fill `mid_liq` and `low_liq`"
+      — is **superseded**. C3 fills them, and a single unverified number is a
+      weaker exit condition than a cross-check between two independent methods.
+- [ ] Absorbs plan 17 §6.6 and completes [plan 15](./15-measured-fill-and-impact-calibration.md).
+
+### B7 — Ops
+
+- [ ] Deploy `strategy-run` with the same self-check discipline the collector has
+      (binary hash check, zero-record alert, freshness).
+- [ ] Supervision, restart policy, alerting on kill-switch trip and on
+      reconciliation divergence.
+
+### B8 — Decay monitoring *(unblocks early)*
+
+- [ ] [Plan 11](./11-decay-monitoring-and-live-revalidation.md) was hard-blocked
+      on "live trading + post-trade store". B1 + B6 deliver real rows without an
+      edge, so the decay loop and global off-switch can be built and exercised on
+      calibration flow.
+
+## 6. Track A — charter and freeze
+
+Track A continues, but **not** by widening the same search. Three rules:
+
+**A-1 — The closed bands stay closed, pending C4.** Daily price-pattern
+(`daily_momentum`, `mean_reversion`, `volume_breakout`) at hold ≤ 2, tick
+microstructure (plans 04/05/06), and intraday ORB are closed by measured
+verdicts on large samples. Do not re-tune thresholds, holds or lookbacks in
+them. Reopening one requires a new *mechanism*, not a new parameter.
+
+One qualification, added with Track C. Those verdicts measured a *gross edge*
+against a *modelled* hurdle, and for every name outside the 7 calibrated ones
+that hurdle used `global_default = 1.0` (§4.3). C4 re-scores them against
+measured cost. **A cell that C4 revives is reopened by evidence, not by tuning,
+and does not violate this rule.** Whatever C4 leaves dead is closed for good.
+
+**A-2 — Work the structurally untested regions, not the drilled one.** In
+priority order:
+
+1. **Event-driven with a named mechanism** — index inclusion/exclusion
+   (LQ45 / IDX30 quarterly rebalance flow), rights issues, corporate actions.
+   **6 cells have ever run.** [Plan 16](./16-strategy-triage-and-prioritization.md)
+   already ranks `event_driven_gap` top at **3.73**. These edges are structural
+   (a forced counterparty), measured in percent rather than basis points, and
+   therefore the only class with a plausible margin over a 125 bps hurdle.
+2. **The long-horizon band** opened by [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md)
+   — blocked first by A-3.
+3. Cross-sectional and pairs, which have 2 cells each.
+
+**A-3 — Start recording point-in-time eligibility now.** This is Wave-0 class
+and it is the one Track A item that is time-sensitive. ADR-0015 recorded that
+the emitten funding endpoints return *currently tradeable* names by construction
+(201/201 alive, zero delistings), `effective_date` is null, and the point-in-time
+universe **cannot be reconstructed** — it can only be recorded going forward.
+Every day without a snapshot is a day of universe history that is permanently
+unavailable. Until this accrues, any long-horizon backtest on
+`research/data/daily/` measures survivorship, not edge — as the +25%/yr first
+pass demonstrated.
+
+- [ ] Daily snapshot of the day-trade ∩ trading-limit membership, appended to a
+      durable store, with the run date as the key.
+- [ ] Emit the plan-12 requirement record for the historical gap this cannot fill.
+
+> Note the user-supplied correction preserved in ADR-0015's consequences: a
+> near-suspended name typically *drops off* the eligibility lists before it dies,
+> so the names missing from a historical backtest are those that **lost
+> eligibility**, not those that were delisted — and Indonesian delistings are
+> rare. The survivorship exposure here is eligibility churn, not death.
+
+## 7. Reconciliation with previous plans
+
+Every prior plan, and what this split does to it. Nothing is silently re-scoped.
+
+| Plan | Was | Under this split |
+|---|---|---|
+| [00](./00-roadmap-research-to-live.md) roadmap | Waves 0–5 strictly serial; Waves 3–5 behind the edge gate | Waves 0–2 **closed, unchanged**. Waves 3–5 re-cut into Track A / Track B, run in parallel (§8). Pillar 2's checklist becomes B1–B7; pillar 3's becomes B2 + Track A sizing |
+| [01](./01-market-data-capture.md), [02](./02-storage-format-and-replay.md), [03](./03-token-rotation.md) | Done | Unchanged. Track B depends on all three |
+| [04](./04-microstructure-study.md), [05](./05-ofi-trade-flow-study.md), [06](./06-fill-simulator-and-backtest.md) | INCONCLUSIVE / NO-GO | Unchanged and **closed** (A-1). Not reopened |
+| [07](./07-repo-restructure.md) | Done — layout mirrors pillars | Unchanged, and it is what makes the split cheap: `research/` is Track A, `strategy/` is Track B, already separated |
+| [08](./08-alpha-factory-workflows.md) | In progress — Workflow B battery | Track A. **Deprioritised**: the battery industrialises a search whose coverage problem (§1) is a choice of region, not of throughput. More cells in the drilled corner is the failure mode, not the fix |
+| [09](./09-universe-screener.md) | Done, Tier A | Track A. Tier B (order-book refinement) is unblocked by capture but is **not** on the critical path |
+| [10](./10-strategy-fit-and-portfolio.md) | Done — 3 PASS, all dead on re-test | Track A, **frozen** under A-1/A-2. The harness stays; what it is pointed at changes. Its 1,389 cells are **re-scored by C4** on measured cost, and its hurdle becomes fully trustworthy after B6 reconciles C3 against realized fills |
+| [11](./11-decay-monitoring-and-live-revalidation.md) | ⛔ Blocked on live trading | **Unblocked early** → B8. Calibration flow gives it real rows without an edge |
+| [12](./12-data-gap-backlog-and-demand-driven-capture.md) | Draft | Track A. Its highest-priority record is now A-3's point-in-time universe gap |
+| [13](./13-capital-allocation-and-capacity.md) | Duty-cycle batch allocator for the 300M leverage sleeve | **Premise superseded** by ADR-0015 (owned cash has no tenor clock, so the ~40–50% duty-cycle utilisation ceiling is void). Becomes Track A's sizing step feeding `target_portfolio.json` §3.1. Its **C\*** capacity caps move to Track C/B — they need measured impact (C3, confirmed by B6), not modelled |
+| [14](./14-market-calendar-and-time-system.md) | Done | Unchanged. Roadmap W4.2 (wire the calendar reader into `strategy/engine/`) folds into **B3** |
+| [15](./15-measured-fill-and-impact-calibration.md) | Capture-based impact calibration | **Necessary, not sufficient — and it stalled for a fixable reason.** It produced `high_liq` and left mid/low null; §4.2–4.3 show that was two defects, not a data limit. It becomes **Track C**, the offline half of cost calibration. What remains genuinely out of reach from captured book — queue position, fill rate, rejects — is **B6**, which also cross-checks C |
+| [16](./16-strategy-triage-and-prioritization.md) | Done | Track A. Its top-ranked untested family (`event_driven_gap`, 3.73) is A-2 item 1 |
+| [17](./17-execution-and-replay-parity-engine.md) | Build-now done; live routing behind the §2 three-condition gate | §2 conditions 1 and 3 **superseded by ADR-0016**; condition 2 retained but re-scoped to gate *size*, not the router's existence. §6.1–6.6 promoted from design sketch to **B3–B6**. Its open parity defect (the two ORB definitions) stays open but is no longer on the critical path, since Track B is validated against a null portfolio, not against ORB |
+
+### ADRs
+
+| ADR | Effect |
+|---|---|
+| [0011](../adr/0011-capital-model-300m-leverage-sleeve.md) | Already superseded by 0015; `LEVERAGED_SLEEVE` survives as a preset |
+| [0013](../adr/0013-one-strategy-interface-and-collector-public-packages.md) | **Load-bearing and unchanged** — one Strategy interface is why B3/B4 are adapters rather than a second engine |
+| [0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md) | Unchanged. Opens Track A's long-horizon band; its point-in-time universe caveat becomes A-3 |
+| [0016](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md) | This plan implements it |
+
+## 8. Re-sequenced waves
+
+```
+  Waves 0–2 ........................ CLOSED (unchanged)
+       │
+       ▼
+  TRACK C — measure the ruler   ← START HERE (no capital, no orders, data on disk)
+  C1 extract 5 captured sessions
+  C2 fix the two calibration defects
+  C3 re-run calibrator → mid_liq / low_liq
+  C4 re-judge 1,389 cells on measured cost
+       │
+       ├──────────────────────────────┬──────────────────────────────┐
+       ▼                              ▼                              │
+  TRACK B (infrastructure)      TRACK A (alpha)                      │
+  B1 reconciliation  ← start    A-3 eligibility snapshots ← start    │
+  B2 risk layer                 A-1 re-confirmed by C4               │
+  B3 LiveSource                 A-2.1 event-driven mechanism         │
+  B4 LiveSink  ← first money    A-2.2 long-horizon band              │
+  B5 execution algo                                                  │
+  B6 realized cost ──── reconciled against C3's coefficients ────────┘
+  B7 ops                                    │
+  B8 decay loop                             ▼
+                                   Track A verdicts become conclusive
+                                            │
+                                            ▼
+                              Wave 5 — live at size, on realized PnL
+```
+
+**C runs first, but does not hold up the two cheap starts.** A-3 and B1 begin
+immediately alongside it: both are free, neither risks capital, and A-3 is losing
+something every day it is deferred. What C gates is *interpretation* — A-1's
+finality and the meaning of every hurdle downstream — not the calendar.
+
+## 9. Definition of done
+
+**Track C is done when** `impact_coeffs.json` carries non-null `mid_liq` and
+`low_liq` coefficients at `eff_N ≥ MIN_IMPACT_OBS` derived from the captured
+tape, **and** the plan-10 grid has been re-scored against them with the verdict
+written down — including the case where the verdict is unchanged.
+
+**Track B is done when `impact_coeffs.json` carries realized-fill coefficients in
+all three buckets that reconcile with Track C's tape-derived coefficients, at
+`eff_N ≥ MIN_IMPACT_OBS`.**
+
+Not when it has features. This is stated as a number in a file precisely because
+infrastructure-first has a runaway failure mode — gold-plating an execution stack
+for a strategy that never arrives — and every prior wave lacked a falsifiable
+exit condition. Rough order of magnitude: ~100 round trips in liquid names at
+de-minimis size. The spend is a **research budget**, booked under
+`strategy_id = "calibration"` (ADR-0016 §6), never as strategy PnL.
+
+**Track A is done for this cycle when** either (a) a family in an A-2 region
+clears the *measured* hurdle and the always-long null gate on a pre-registered
+test, or (b) A-2's regions are exhausted and the honest finding is recorded —
+that at a retail IDX cost stack the tradeable space is narrower than the catalog
+assumed. **(b) is a legitimate outcome and must be written down as one**, not
+treated as a reason to widen the search again.
+
+## 10. Verification
+
+- [ ] B1 reconciliation matches the live account by hand for 3 consecutive sessions.
+- [ ] B2 limits provably reject: an over-cap order, an over-exposure basket, and a
+      post-loss-limit order — each with a test.
+- [ ] B3/B4 replay-vs-live parity: the same null portfolio through `ReplaySource`
+      + `PaperSink` and through `LiveSource` + `LiveSink` produces the same
+      *intents* (fills will differ; intents must not).
+- [x] C2's two fixes each land with a failing test first (13 new tests, RED then
+      GREEN; full suite 412 passed / 0 failed / 12 skipped).
+- [x] **The units fix must not move any fitted coefficient.** Verified
+      end-to-end, not only by unit test: the same legacy dataset
+      (`research/out`) run through `HEAD`'s code and through the fixed code
+      returns coefficients identical to the last digit — BUMI
+      `0.531376689426782`, DEWA `0.5327797444468003`, INDY
+      `0.43458019330279085`, ITMG `0.49495343152208954`, MDKA
+      `0.46662285525232755` — while every ADV falls by exactly 100× and INDY and
+      ITMG move `high_liq` → `mid_liq`. That is the whole defect, isolated.
+- [x] C3 produces non-null `mid_liq` (0.3007, `eff_N` 6,843) and `low_liq`
+      (0.2926, `eff_N` 1,799). The `high_liq` aggregate was not expected to hold
+      at 0.377 — its membership legitimately changed (of the 7 previously
+      calibrated names only ENRG, PTRO and TPIA are still `high_liq`; BRPT, RAJA,
+      RATU and BREN are `mid_liq` on corrected ADV) — yet it landed at **0.3452**,
+      within 8%. Two independent windows agreeing at the bucket level is the
+      cross-check that the first C3 run failed.
+- [x] **C4 run as a controlled A/B**, same day and data with `--use-calibrated`
+      on and off, so every changed cell is attributable to the coefficient alone.
+      Status flips: 0. Cells that stopped being cost-gated: 13. Surviving cells:
+      1 → 3.
+- [ ] **Not verified: the long-horizon band.** The runner is still on ADR-0011's
+      ≤2-day ceiling, so 345 cells were never enumerated (§4.4).
+- [ ] C4's re-scored grid is diffed against the pre-C verdict; every changed cell
+      is attributable to the coefficient change and to nothing else.
+- [ ] B6 divergence check against Track C's coefficients in all three buckets.
+- [ ] Kill switch trips from outside the process and is observed to stop orders.
+
+## 11. Out of scope
+
+- **Short selling.** Long-only until a Track A strategy requires it; negative
+  weights are a schema error (§3.1).
+- **Intraday / high-frequency execution.** The closed bands (A-1) do not need it.
+- **Multi-account or multi-broker routing.**
+- **Track A's `MIN_EFF_N=30` question at a ~20-day hold** — flagged unresolved by
+  ADR-0015 and still unresolved here.
+- **Plan 17's ORB parity defect.** Stays open, off the critical path (§7).

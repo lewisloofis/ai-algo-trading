@@ -3,6 +3,21 @@
 > **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-22
 > **Related:** [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [13-capital-allocation-and-capacity.md](./13-capital-allocation-and-capacity.md) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) · [reference/07-fees-and-costs.md](../reference/07-fees-and-costs.md) · [Plans index](./README.md)
 
+> ## ⚠️ NECESSARY, NOT SUFFICIENT — 2026-09-13
+>
+> This plan delivered a genuinely measured `high_liq` coefficient (0.377, `eff_N=40,351`,
+> 7 names, refit on 58 sessions) and then stalled: `mid_liq` and `low_liq` remain `null` in
+> `impact_coeffs.json` and fall through to `global_default: 1.0`, because those names are
+> not in the 47-name capture. Captured book also cannot observe **queue position, fill rate,
+> reject rate, partial-fill behaviour, or the spread actually crossed** — those exist only
+> once an order has been worked.
+>
+> Under [ADR-0016](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md) this becomes
+> the **offline half** of cost calibration; [plan 18](./18-alpha-and-infrastructure-split.md)
+> **B6** adds the realized-fill half and completes it. B6 must also reconcile its measured
+> coefficients against this plan's `high_liq` values for the 7 captured names — a large
+> divergence invalidates one of the two methods.
+
 > **What this is.** Plan 10's intraday ORB survivors (PTRO/TPIA/BRPT/ENRG/RAJA
 > ORB + PTRO intraday\_momentum) carry an impact charge derived from an *assumed*
 > square-root Almgren model with hand-picked constants

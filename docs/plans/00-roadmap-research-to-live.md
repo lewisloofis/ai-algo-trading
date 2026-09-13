@@ -87,6 +87,13 @@ few look good by chance.*
 
 ## 2. Pillar 2 — Execution system
 
+> **2026-09-13:** this checklist is now [plan 18](./18-alpha-and-infrastructure-split.md)
+> **Track B, tasks B1–B7**, and is no longer gated on a confirmed edge
+> ([ADR-0016](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md)). Order:
+> B1 position & PnL reconciliation (read-only, start here) → B2 risk layer → B3 `LiveSource`
+> → B4 `LiveSink` → B5 execution algo → B6 realized-cost measurement → B7 ops.
+
+
 *None of this exists yet. On a 40 bps market with no maker rebate, execution
 quality is often a bigger lever than the signal.*
 
@@ -200,6 +207,28 @@ for the durable inventory this should become.*
 ---
 
 ## 6. Sequencing — waves of execution
+
+> ## 🔀 RE-CUT 2026-09-13 — Waves 3–5 are no longer serial
+>
+> Waves 0–2 are closed and unchanged. **Waves 3, 4 and 5 are re-cut by
+> [plan 18](./18-alpha-and-infrastructure-split.md)** into two independently
+> schedulable tracks — **Track A (alpha research)** and **Track B (trading
+> infrastructure)** — joined by one contract, `target_portfolio.json`.
+>
+> The ordering principle below ("nothing below Wave 2 should start early") assumed
+> infrastructure work is only worth doing once an edge exists. That assumption created a
+> cycle: a trustworthy verdict needs a measured cost model → that needs realized fills →
+> those need live orders → which §2 and [plan 17 §2](./17-execution-and-replay-parity-engine.md)
+> gated behind a confirmed edge. `impact_coeffs.json` carries a measured `high_liq`
+> coefficient and `null` for `mid_liq`/`low_liq`, so most of the universe was judged
+> against the hand-picked `global_default: 1.0`.
+>
+> [ADR-0016](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md) cuts it:
+> infrastructure is required by *every* alpha outcome, Track B is validated against a
+> **null portfolio** that carries no alpha claim, and live routing is re-gated on bounded
+> size and enforced controls rather than on proven alpha. The waves below are preserved
+> unedited as the record of the 2026-09-04 sequencing.
+
 
 *Re-sequenced 2026-09-04 after a robustness review of the whole stack. The
 original order (screen → capture → find alpha → build machinery) was correct for

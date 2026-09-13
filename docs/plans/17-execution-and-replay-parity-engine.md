@@ -1,7 +1,7 @@
 # Execution & Replay-Parity Engine + Post-Trade Store — The Event-Driven Runtime Scaffold
 
-> **Status:** 📝 Draft · **Owner:** @lewis · **Updated:** 2026-06-22
-> **Related:** [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [ADR-0008: top-level layout mirrors pillars](../adr/0008-top-level-layout-mirrors-pillars.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [02-storage-format-and-replay.md](./02-storage-format-and-replay.md) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [07-repo-restructure.md](./07-repo-restructure.md) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [13-capital-allocation-and-capacity.md](./13-capital-allocation-and-capacity.md) · [14-market-calendar-and-time-system.md](./14-market-calendar-and-time-system.md) · [15-measured-fill-and-impact-calibration.md](./15-measured-fill-and-impact-calibration.md) · [16-strategy-triage-and-prioritization.md](./16-strategy-triage-and-prioritization.md) · [reference/03-order-placement.md](../reference/03-order-placement.md) · [reference/04-order-lifecycle.md](../reference/04-order-lifecycle.md) · [reference/06-pre-trade-rules.md](../reference/06-pre-trade-rules.md) · [reference/07-fees-and-costs.md](../reference/07-fees-and-costs.md) · [Plans index](./README.md)
+> **Status:** 🔨 In Progress · build-now tasks done · §2 gate superseded by ADR-0016 · **Owner:** @lewis · **Updated:** 2026-09-13
+> **Related:** [ADR-0016: alpha and infrastructure are separate tracks](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md) · [18-alpha-and-infrastructure-split.md](./18-alpha-and-infrastructure-split.md) · [ADR-0011: capital model](../adr/0011-capital-model-300m-leverage-sleeve.md) · [ADR-0008: top-level layout mirrors pillars](../adr/0008-top-level-layout-mirrors-pillars.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [02-storage-format-and-replay.md](./02-storage-format-and-replay.md) · [06-fill-simulator-and-backtest.md](./06-fill-simulator-and-backtest.md) · [07-repo-restructure.md](./07-repo-restructure.md) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [13-capital-allocation-and-capacity.md](./13-capital-allocation-and-capacity.md) · [14-market-calendar-and-time-system.md](./14-market-calendar-and-time-system.md) · [15-measured-fill-and-impact-calibration.md](./15-measured-fill-and-impact-calibration.md) · [16-strategy-triage-and-prioritization.md](./16-strategy-triage-and-prioritization.md) · [reference/03-order-placement.md](../reference/03-order-placement.md) · [reference/04-order-lifecycle.md](../reference/04-order-lifecycle.md) · [reference/06-pre-trade-rules.md](../reference/06-pre-trade-rules.md) · [reference/07-fees-and-costs.md](../reference/07-fees-and-costs.md) · [Plans index](./README.md)
 
 > **What this is.** The Go event-driven engine that wires the plan-02 replayer
 > into a `strategy.Strategy` interface, producing (a) a proper event-driven
@@ -73,6 +73,30 @@ ladder. Those are deferred to the STRICT GATE in §3. This is the same
 ---
 
 ## 2. The confirmed-edge gate — a hard prerequisite, not a soft note
+
+> ## 🗑️ SUPERSEDED 2026-09-13 — conditions 1 and 3 are void
+>
+> [ADR-0016](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md) supersedes
+> **condition 1 (edge confirmation)** and **condition 3 (calibrated kill criteria)** as
+> preconditions for the live router's *existence*. They formed a cycle: a strategy verdict
+> needs a trustworthy cost model → that needs realized fills → those need live orders →
+> which this section gated behind a confirmed edge. The cost model's impact term is
+> `global_default: 1.0` — a hand-picked constant — for every name outside the 47-name
+> capture, so the gate forbade the measurement its own condition 1 depended on.
+>
+> **Condition 2 (paper forward test) is retained**, re-scoped: it gates an increase in
+> *size*, not whether the router exists.
+>
+> Live routing is now gated on **bounded size and enforced controls** instead:
+> G1 position reconciliation · G2 risk layer in code (daily loss limit, gross exposure cap,
+> kill switch) · G3 de-minimis per-order **and** per-day notional caps · G4 the existing
+> `ALGO_LIVE` + verbatim `ALGO_CONFIRM` double-arm. See
+> [plan 18 §4](./18-alpha-and-infrastructure-split.md) for the build order.
+>
+> **§6.1–6.6 are promoted from design sketch to tickable work** as plan 18's B3–B6, and
+> the §7 "Deferred tasks" block is unblocked to the same extent. The body below is
+> preserved unedited as the record of the original decision.
+
 
 No live order routing is built or enabled by this plan. The following
 conditions must ALL be satisfied before the live Carina sink (§6) is
