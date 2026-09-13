@@ -15,10 +15,11 @@ algo-trading project, using a lightweight [ADR](https://adr.github.io/) format.
 | [0008](./0008-top-level-layout-mirrors-pillars.md) | Top-level layout mirrors trading-system pillars | Accepted |
 | [0009](./0009-universe-is-funding-intersection-strategy-fit-downstream.md) | Universe is the funding intersection; strategy fit decided downstream | Accepted |
 | [0010](./0010-capture-watchlist-is-topn-diverse-slice-via-tfvars.md) | Capture watchlist is a top-N broad/diverse slice, delivered via tfvars | Accepted |
-| [0011](./0011-capital-model-300m-leverage-sleeve.md) | Capital model — 300M IDR T+2 leverage sleeve run as a periodic batch allocator | Accepted |
+| [0011](./0011-capital-model-300m-leverage-sleeve.md) | Capital model — 300M IDR T+2 leverage sleeve run as a periodic batch allocator | Superseded by [0015](./0015-leverage-optional-horizon-ceiling-lifted.md) |
 | [0012](./0012-market-calendar-single-source-cross-language.md) | Market calendar is one curated source of truth, read by thin per-language clients | Proposed |
 | [0013](./0013-one-strategy-interface-and-collector-public-packages.md) | One Strategy interface for live and replay; collector packages promoted to public API | Accepted |
 | [0014](./0014-financing-accrues-between-settlement-dates.md) | Financing accrues between settlement dates, not from the trade date | Accepted |
+| [0015](./0015-leverage-optional-horizon-ceiling-lifted.md) | Leverage is optional; the ~2-trading-day horizon ceiling is lifted for owned-cash strategies | Accepted |
 
 ## When to write an ADR
 

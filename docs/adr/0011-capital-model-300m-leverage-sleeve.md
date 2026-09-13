@@ -5,6 +5,19 @@
 - **Deciders:** Lewis
 - **Tags:** capital, leverage, financing, cost-gate, sizing, risk
 - **Amended by:** [ADR-0014](./0014-financing-accrues-between-settlement-dates.md) (2026-09-05) — financing arithmetic only
+- **Superseded by:** [ADR-0015](./0015-leverage-optional-horizon-ceiling-lifted.md) (2026-09-13) — leverage is now optional; this ADR's model survives only as the `LEVERAGED_SLEEVE` preset
+
+> ⚠️ **Superseded 2026-09-13.** This ADR assumed the 300M leverage facility was
+> the sleeve's *only* funding source, and derived the ~2-trading-day horizon
+> ceiling and the mandatory financing charge from that assumption. Leverage is
+> now optional: [ADR-0015](./0015-leverage-optional-horizon-ceiling-lifted.md)
+> introduces `OWNED_CASH` as an alternative capital model — no financing, no
+> horizon ceiling — and makes it the new default. The 300M facility, its
+> T+2/T+3/T+4 clock, and the 10 bps/calendar-day rate described below are
+> unchanged and still apply whenever a strategy is funded by leverage (now the
+> `LEVERAGED_SLEEVE` preset); they are simply no longer the sleeve's only
+> option. Read ADR-0015 before assuming the horizon ceiling or financing charge
+> below applies unconditionally.
 
 > ⚠️ **Amended 2026-09-05.** The capital model below stands in full — the 300M
 > facility, the T+2/T+3/T+4 clock, one borrow per cycle, the ~2-trading-day
