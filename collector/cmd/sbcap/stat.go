@@ -311,20 +311,35 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", s)
 }
 
-// formatInt formats an integer with space as the thousands separator.
+// formatInt formats an integer with a space as the thousands separator,
+// e.g. 15136 -> "15 136". The sign, when present, is kept out of the
+// digit-grouping count, so negative numbers (seqcheck's "unexplained" can be
+// negative, see seqcheck.go) group the same way as their positive magnitude.
+//
+// Bug history: an earlier version computed the group boundary as
+// (len(s)-i)%3==1 over the whole formatted string, including the sign byte
+// for negative inputs. That put the separator one digit too early for any
+// 5+ digit magnitude — formatInt(15136) returned "1 5136" instead of
+// "15 136" — while 4-digit inputs only picked up a single leading space,
+// which is invisible once right-justified in a fixed-width column and is
+// why it went unnoticed in `sbcap stat`'s own output.
 func formatInt(n int) string {
-	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
-		return s
+	neg := n < 0
+	if neg {
+		n = -n
 	}
-	// Insert spaces every 3 digits from the right.
-	var out []byte
-	for i, c := range s {
-		pos := len(s) - i
-		if pos > 1 && pos%3 == 1 {
-			out = append(out, ' ')
+	digits := fmt.Sprintf("%d", n)
+
+	var grouped []byte
+	for i := 0; i < len(digits); i++ {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			grouped = append(grouped, ' ')
 		}
-		out = append(out, byte(c))
+		grouped = append(grouped, digits[i])
 	}
-	return string(out)
+
+	if neg {
+		return "-" + string(grouped)
+	}
+	return string(grouped)
 }

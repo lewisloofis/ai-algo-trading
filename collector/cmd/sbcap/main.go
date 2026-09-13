@@ -13,6 +13,7 @@
 //	features Emit a consolidated book+price feature CSV for study use.
 //	trades   Emit a per-trade CSV (continuous-session, side-tagged only).
 //	bars     Emit an OHLCV bar CSV on a fixed interval (chartbit-comparable).
+//	seqcheck Report measured per-symbol market-data frame loss.
 //
 // Segment paths may be uncompressed (.binpb) or zstd-compressed (.binpb.zst).
 // Both local paths and S3 paths (s3://) are accepted in principle; S3 support
@@ -72,6 +73,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "sbcap bars: %v\n", err)
 			os.Exit(1)
 		}
+	case "seqcheck":
+		if err := runSeqCheck(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "sbcap seqcheck: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "sbcap: unknown subcommand %q\n\n", subcommand)
 		usage()
@@ -90,6 +96,7 @@ Usage:
   sbcap features <seg>... --symbol S [--depth N] [--from HH:MM] [--to HH:MM]
   sbcap trades   <seg>... --symbol S [--from HH:MM] [--to HH:MM]
   sbcap bars     <seg>... --symbol S [--interval 1m] [--from HH:MM] [--to HH:MM] [--tagged-only]
+  sbcap seqcheck <seg>... [--symbols A,B,C] [--format table|json|csv] [--busiest-minutes N]
 
 Segment files: .binpb (raw) or .binpb.zst (zstd-compressed)`)
 }
