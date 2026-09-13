@@ -223,6 +223,12 @@ class TestVerdictAndSurvivorsCostGate:
         # single_name_time_series cell never has impact priced in production,
         # but pinning it True here keeps this fixture's PASS/INCONCLUSIVE
         # outcomes governed only by the cost-gate/FDR logic under test.
+        #
+        # null_edge_bps=0.0 (edge_over_null_bps == gross_edge_bps) similarly
+        # isolates these tests from the always-long null gate (a plan-level
+        # gate, covered on its own in test_verdict_gates.py::TestNullEdgeGate)
+        # — with the signal explaining the whole gross edge, edge_over_null
+        # tracks gross_edge_bps 1:1 and doesn't independently gate PASS here.
         return CellResult(
             symbol=symbol,
             family_name="mean_reversion",
@@ -238,6 +244,8 @@ class TestVerdictAndSurvivorsCostGate:
             eff_n=50,
             impact_priced=True,
             min_edge_hurdle_bps=100.0,
+            null_edge_bps=0.0,
+            edge_over_null_bps=net_edge_bps + 20.0,
         )
 
     def test_cost_gate_fail_fdr_accepted_not_survivor_and_not_pass(self):

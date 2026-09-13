@@ -196,3 +196,66 @@ class TestRunSingleNameFamilyLongOnly:
         assert result["status"] == "insufficient_n", (
             f"Long-only count is below MIN_EFF_N; got {result['status']}"
         )
+
+
+class TestNullEdge:
+    """Always-long null (see strategy_fit/report.py's null-edge blocking
+    gate): null_edge_bps is the mean forward_return over the SAME
+    de-overlapped population with the long-only signal filter removed —
+    i.e. what buying every de-overlapped slot unconditionally would have
+    earned. With hold=1 (as `_run` always uses), deoverlap_daily keeps every
+    row, so the null population here is simply every row `_run` was given.
+    """
+
+    def test_null_edge_is_mean_over_both_signal_directions(self):
+        """30 long rows at +150bps, 30 short-signal rows at -1000bps (the
+        same fixture as test_mixed_signal_only_long_side_is_scored). gross
+        edge is long-only (+150bps); the null must average over ALL 60 rows
+        regardless of signal direction, and edge_over_null is the
+        difference — computed by hand below."""
+        n_long = 30
+        n_short = 30
+        signals = np.concatenate([np.full(n_long, 1.0), np.full(n_short, -1.0)])
+        forward_returns = np.concatenate([
+            np.full(n_long, 0.015),   # +150 bps
+            np.full(n_short, -0.10),  # -1000 bps
+        ])
+        result = _run(signals, forward_returns)
+        assert result["status"] == "tested"
+        assert result["gross_edge_bps"] == pytest.approx(150.0, rel=1e-6)
+
+        expected_null_bps = (
+            (n_long * 0.015 + n_short * (-0.10)) / (n_long + n_short) * 1e4
+        )
+        assert expected_null_bps == pytest.approx(-425.0, rel=1e-6), (
+            "sanity-check the hand computation itself"
+        )
+        assert result["null_edge_bps"] == pytest.approx(expected_null_bps, rel=1e-6)
+        assert result["edge_over_null_bps"] == pytest.approx(
+            result["gross_edge_bps"] - expected_null_bps, rel=1e-6
+        )
+        assert result["edge_over_null_bps"] == pytest.approx(575.0, rel=1e-6)
+
+    def test_null_edge_matches_gross_when_all_signals_are_long(self):
+        """When every row is long-signal, the null population IS the
+        strategy population, so null_edge_bps == gross_edge_bps and
+        edge_over_null_bps == 0 — the signal explains none of the edge over
+        what an unconditional buy would have earned, correctly."""
+        n = 40
+        signals = np.full(n, 1.0)
+        forward_returns = np.full(n, 0.02)
+        result = _run(signals, forward_returns)
+        assert result["status"] == "tested"
+        assert result["null_edge_bps"] == pytest.approx(result["gross_edge_bps"], rel=1e-6)
+        assert result["edge_over_null_bps"] == pytest.approx(0.0, abs=1e-6)
+
+    def test_null_edge_none_on_non_tested_status(self):
+        """insufficient_n / error paths must report null_edge_bps=None,
+        edge_over_null_bps=None — never a stale or fabricated value."""
+        n = 10  # below MIN_EFF_N
+        signals = np.full(n, 1.0)
+        forward_returns = np.full(n, 0.02)
+        result = _run(signals, forward_returns)
+        assert result["status"] == "insufficient_n"
+        assert result["null_edge_bps"] is None
+        assert result["edge_over_null_bps"] is None

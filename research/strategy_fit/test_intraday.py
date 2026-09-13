@@ -511,6 +511,208 @@ class TestSignedReturnPValue:
 
 
 # ============================================================
+# Section G: Always-long null gate (report.py's null-edge blocking gate)
+# ============================================================
+
+def _make_orb_null_test_df(n_up: int = 30, n_down: int = 30, ref_price: float = 1000.0) -> pd.DataFrame:
+    """Minimal (3-bars/day) ORB fixture for hand-computing the null.
+
+    UP days: OR window bar at ref_price (or_high=ref_price); the FIRST
+    post-window bar (09:30) breaks out to ref_price*1.02 and holds there;
+    the day's last bar closes at ref_price*1.03. The breakout entry price
+    and the null's "always enter at the first post-window bar" price are
+    IDENTICAL on these days (both are the 09:30 close), so both the
+    strategy and the null earn (1.03-1.02)/1.02 on every UP day.
+
+    DOWN days: OR window bar at ref_price; the first post-window bar does
+    NOT break out (closes flat at ref_price, exactly equal to or_high, which
+    is not `>` it) so the strategy skips the day entirely — but the null
+    still enters there unconditionally, and the day's last bar drops to
+    ref_price*0.95, so the null earns (0.95-1.0)/1.0 = -5% on every DOWN day
+    while the strategy earns nothing from it (not counted at all).
+    """
+    rows: list[dict] = []
+    date = pd.Timestamp("2025-01-06")  # Monday
+    for day_type in ["up"] * n_up + ["down"] * n_down:
+        while date.weekday() >= 5:
+            date += pd.Timedelta(days=1)
+        post_close = ref_price * 1.02 if day_type == "up" else ref_price
+        exit_close = ref_price * 1.03 if day_type == "up" else ref_price * 0.95
+        for h, m, c in ((9, 0, ref_price), (9, 30, post_close), (16, 15, exit_close)):
+            dt = date.replace(hour=h, minute=m)
+            rows.append({
+                "datetime": dt, "date": date.date(), "open": ref_price,
+                "high": max(c, ref_price) * 1.001, "low": min(c, ref_price) * 0.999,
+                "close": c, "volume": 1000, "value": c * 1000, "net_foreign": 0,
+            })
+        date += pd.Timedelta(days=1)
+    return pd.DataFrame(rows)
+
+
+def _make_momentum_null_test_df(n_up: int = 30, n_down: int = 30, ref_price: float = 1000.0) -> pd.DataFrame:
+    """Minimal (3-bars/day) momentum fixture for hand-computing the null.
+
+    UP days: open_of_day=ref_price, close_at_11=ref_price*1.01 (long signal),
+    close_of_day=ref_price*1.02 — counted by both strategy and null.
+    DOWN days: open_of_day=ref_price, close_at_11=ref_price*0.99 (signal < 0,
+    long-only excludes it from the strategy), close_of_day=ref_price*0.97 —
+    counted ONLY by the null (null_returns.append happens before the
+    is_long_signal filter in run_intraday_momentum_family).
+    """
+    rows: list[dict] = []
+    date = pd.Timestamp("2025-01-06")
+    for day_type in ["up"] * n_up + ["down"] * n_down:
+        while date.weekday() >= 5:
+            date += pd.Timedelta(days=1)
+        midday_close = ref_price * 1.01 if day_type == "up" else ref_price * 0.99
+        last_close = ref_price * 1.02 if day_type == "up" else ref_price * 0.97
+        for h, m, c in ((9, 0, ref_price), (11, 0, midday_close), (16, 15, last_close)):
+            dt = date.replace(hour=h, minute=m)
+            rows.append({
+                "datetime": dt, "date": date.date(), "open": ref_price,
+                "high": max(c, ref_price) * 1.001, "low": min(c, ref_price) * 0.999,
+                "close": c, "volume": 1000, "value": c * 1000, "net_foreign": 0,
+            })
+        date += pd.Timedelta(days=1)
+    return pd.DataFrame(rows)
+
+
+def _make_vwap_null_test_df(n_up: int = 30, n_down: int = 30, ref_price: float = 1000.0) -> pd.DataFrame:
+    """Minimal (2 AM bars + 1 PM bar/day) VWAP fixture for hand-computing
+    the null.
+
+    UP days: AM bars at ref_price and ref_price*0.98 (equal volume) →
+    vwap_am = ref_price*0.99, close_at_11 = ref_price*0.98 < vwap_am → long
+    signal. PM close reverts to ref_price — counted by both strategy and
+    null.
+    DOWN days: AM bars at ref_price and ref_price*1.02 → vwap_am =
+    ref_price*1.01, close_at_11 = ref_price*1.02 > vwap_am → short signal,
+    long-only excludes it from the strategy. PM close reverts to ref_price —
+    counted ONLY by the null (null_returns.append happens before the
+    is_long_signal filter in run_intraday_mean_reversion_family).
+    """
+    rows: list[dict] = []
+    date = pd.Timestamp("2025-01-06")
+    for day_type in ["up"] * n_up + ["down"] * n_down:
+        while date.weekday() >= 5:
+            date += pd.Timedelta(days=1)
+        eleven_close = ref_price * 0.98 if day_type == "up" else ref_price * 1.02
+        for h, m, c in ((9, 0, ref_price), (11, 0, eleven_close), (16, 15, ref_price)):
+            dt = date.replace(hour=h, minute=m)
+            rows.append({
+                "datetime": dt, "date": date.date(), "open": ref_price,
+                "high": max(c, ref_price) * 1.001, "low": min(c, ref_price) * 0.999,
+                "close": c, "volume": 1000, "value": c * 1000, "net_foreign": 0,
+            })
+        date += pd.Timedelta(days=1)
+    return pd.DataFrame(rows)
+
+
+class TestNullEdge:
+    """Always-long null (see strategy_fit/report.py's null-edge blocking
+    gate): every intraday family also scores the SAME entry/exit mechanics
+    with the directional signal removed — one per session, so its
+    population is a superset of the strategy's own signed_returns.
+    """
+
+    def test_compute_family_metrics_null_edge_is_mean_of_null_returns(self):
+        """Unit test of the shared metrics helper in isolation: null_edge_bps
+        must be exactly mean(null_returns)*1e4, independent of what
+        signed_returns contains."""
+        from strategy_fit.families_intraday import _compute_family_metrics
+        signed_returns = np.full(40, 0.01)          # strategy: flat +100bps
+        null_returns = np.concatenate([np.full(20, 0.01), np.full(20, -0.03)])
+        result = _compute_family_metrics(signed_returns, null_returns=null_returns)
+        assert result["status"] == "tested"
+        assert result["gross_edge_bps"] == pytest.approx(100.0, rel=1e-6)
+        expected_null_bps = (20 * 0.01 + 20 * (-0.03)) / 40 * 1e4
+        assert expected_null_bps == pytest.approx(-100.0, rel=1e-6)
+        assert result["null_edge_bps"] == pytest.approx(expected_null_bps, rel=1e-6)
+        assert result["edge_over_null_bps"] == pytest.approx(200.0, rel=1e-6)
+
+    def test_compute_family_metrics_null_edge_none_when_null_returns_omitted(self):
+        """Callers that don't pass null_returns (or pass an empty array) must
+        get null_edge_bps=None / edge_over_null_bps=None — never a silent 0.0
+        substitute."""
+        from strategy_fit.families_intraday import _compute_family_metrics
+        signed_returns = np.full(40, 0.01)
+        result = _compute_family_metrics(signed_returns)
+        assert result["status"] == "tested"
+        assert result["null_edge_bps"] is None
+        assert result["edge_over_null_bps"] is None
+
+        result_empty = _compute_family_metrics(signed_returns, null_returns=np.array([]))
+        assert result_empty["null_edge_bps"] is None
+        assert result_empty["edge_over_null_bps"] is None
+
+    def test_orb_null_averages_breakout_and_non_breakout_days(self):
+        """30 UP days (breakout — counted by both) + 30 DOWN days (no
+        breakout — counted ONLY by the null): eff_n must stay 30 (long-only),
+        while the null averages over all 60 sessions."""
+        from strategy_fit.families_intraday import run_orb_family
+        df = _make_orb_null_test_df(n_up=30, n_down=30)
+        result = run_orb_family(df)
+        assert result["status"] == "tested"
+        assert result["eff_n"] == 30, "only the 30 UP (breakout) days are long-only tradeable"
+
+        up_return = (1.03 - 1.02) / 1.02
+        down_return = (0.95 - 1.0) / 1.0
+        assert result["gross_edge_bps"] == pytest.approx(up_return * 1e4, rel=1e-6)
+        expected_null_bps = (30 * up_return + 30 * down_return) / 60 * 1e4
+        assert result["null_edge_bps"] == pytest.approx(expected_null_bps, rel=1e-6)
+        assert result["edge_over_null_bps"] == pytest.approx(
+            result["gross_edge_bps"] - expected_null_bps, rel=1e-6
+        )
+
+    def test_momentum_null_averages_up_and_down_mornings(self):
+        """30 UP mornings (long signal — counted by both) + 30 DOWN mornings
+        (short signal, long-only excludes them — counted ONLY by the null)."""
+        from strategy_fit.families_intraday import run_intraday_momentum_family
+        df = _make_momentum_null_test_df(n_up=30, n_down=30)
+        result = run_intraday_momentum_family(df)
+        assert result["status"] == "tested"
+        assert result["eff_n"] == 30
+
+        up_return = (1.02 - 1.01) / 1.01
+        down_return = (0.97 - 0.99) / 0.99
+        assert result["gross_edge_bps"] == pytest.approx(up_return * 1e4, rel=1e-6)
+        expected_null_bps = (30 * up_return + 30 * down_return) / 60 * 1e4
+        assert result["null_edge_bps"] == pytest.approx(expected_null_bps, rel=1e-6)
+        assert result["edge_over_null_bps"] == pytest.approx(
+            result["gross_edge_bps"] - expected_null_bps, rel=1e-6
+        )
+
+    def test_vwap_null_averages_long_and_short_signal_days(self):
+        """30 below-VWAP days (long signal — counted by both) + 30
+        above-VWAP days (short signal, long-only excludes them — counted
+        ONLY by the null)."""
+        from strategy_fit.families_intraday import run_intraday_mean_reversion_family
+        df = _make_vwap_null_test_df(n_up=30, n_down=30)
+        result = run_intraday_mean_reversion_family(df)
+        assert result["status"] == "tested"
+        assert result["eff_n"] == 30
+
+        up_return = (1.0 / 0.98) - 1.0
+        down_return = (1.0 / 1.02) - 1.0
+        assert result["gross_edge_bps"] == pytest.approx(up_return * 1e4, rel=1e-6)
+        expected_null_bps = (30 * up_return + 30 * down_return) / 60 * 1e4
+        assert result["null_edge_bps"] == pytest.approx(expected_null_bps, rel=1e-6)
+        assert result["edge_over_null_bps"] == pytest.approx(
+            result["gross_edge_bps"] - expected_null_bps, rel=1e-6
+        )
+
+    def test_orb_null_none_on_insufficient_n(self):
+        """The existing all-down-breakout fixture (zero long entries) must
+        report null_edge_bps=None / edge_over_null_bps=None."""
+        from strategy_fit.families_intraday import run_orb_family
+        df = _make_orb_breakout_most_days_df(n_days=40, all_down=True)
+        result = run_orb_family(df)
+        assert result["status"] == "insufficient_n"
+        assert result["null_edge_bps"] is None
+        assert result["edge_over_null_bps"] is None
+
+
+# ============================================================
 # Section F: BUG 2 — ORB trades on a normal fraction of days
 # ============================================================
 

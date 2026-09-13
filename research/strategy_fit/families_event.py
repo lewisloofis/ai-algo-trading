@@ -226,7 +226,12 @@ def run_event_family(
     -------
     dict
         Keys: status, skip_reason, hit_rate, eff_n, gross_edge_bps,
-              net_edge_bps, p_value.
+              net_edge_bps, p_value, null_edge_bps, edge_over_null_bps.
+              null_edge_bps is the mean forward_return over ALL pooled
+              de-overlapped events regardless of sign (the "always-long
+              null" — see strategy_fit/report.py's null-edge blocking gate);
+              edge_over_null_bps = gross_edge_bps - null_edge_bps. Both None
+              on every non-"tested" path.
     """
     detector = EVENT_DETECTORS.get(event_detector_name)
     if detector is None:
@@ -238,6 +243,8 @@ def run_event_family(
             "gross_edge_bps": None,
             "net_edge_bps": None,
             "p_value": None,
+            "null_edge_bps": None,
+            "edge_over_null_bps": None,
         }
 
     per_symbol_events: list[pd.DataFrame] = []
@@ -264,6 +271,8 @@ def run_event_family(
             "gross_edge_bps": None,
             "net_edge_bps": None,
             "p_value": None,
+            "null_edge_bps": None,
+            "edge_over_null_bps": None,
         }
 
     pooled = pd.concat(per_symbol_events, ignore_index=True)
@@ -278,6 +287,8 @@ def run_event_family(
             "gross_edge_bps": None,
             "net_edge_bps": None,
             "p_value": None,
+            "null_edge_bps": None,
+            "edge_over_null_bps": None,
         }
 
     sig = pooled["signal"].to_numpy(dtype=float)
@@ -299,6 +310,8 @@ def run_event_family(
             "gross_edge_bps": None,
             "net_edge_bps": None,
             "p_value": None,
+            "null_edge_bps": None,
+            "edge_over_null_bps": None,
         }
 
     # After the long-only filter, sign(sig_v) is always +1, so hit_rate is
@@ -309,6 +322,18 @@ def run_event_family(
     # net_edge_bps is NOT pre-computed here: the runner computes true
     # net-after-full-cost as (gross - hurdle) to avoid double-counting the
     # friction floor.  The key is preserved in the dict for API stability.
+
+    # null_edge_bps (always-long null): mean forward return over ALL pooled
+    # de-overlapped events regardless of sign — same detection, same
+    # per-symbol de-overlap, same pooling, only the long_only_mask direction
+    # filter removed. `valid_null` differs from `valid` above by exactly that
+    # one term, so this population is a superset of fwd_v's.
+    valid_null = np.isfinite(sig) & np.isfinite(fwd) & (np.abs(fwd) > 0)
+    fwd_null = fwd[valid_null]
+    null_edge_bps = float(np.mean(fwd_null) * 1e4) if len(fwd_null) > 0 else None
+    edge_over_null_bps = (
+        gross_edge_bps - null_edge_bps if null_edge_bps is not None else None
+    )
 
     # p-value: one-sample bootstrap that mean(fwd_v) > 0. bootstrap_hit_rate_pvalue's
     # sign-permutation test degenerates once sig_v is all-positive (permuting
@@ -328,4 +353,6 @@ def run_event_family(
         "gross_edge_bps": gross_edge_bps,
         "net_edge_bps": None,
         "p_value": p_value,
+        "null_edge_bps": null_edge_bps,
+        "edge_over_null_bps": edge_over_null_bps,
     }

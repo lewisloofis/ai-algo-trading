@@ -183,3 +183,67 @@ class TestRunEventFamilyLongOnly:
             f"toward 0 by the down-gap −1% events, proving they leaked in)"
         )
         assert result["hit_rate"] == 1.0
+
+
+class TestNullEdge:
+    """Always-long null (see strategy_fit/report.py's null-edge blocking
+    gate): null_edge_bps is the mean forward_return over ALL pooled
+    de-overlapped events regardless of sign — same detection, same
+    per-symbol de-overlap, same pooling as the strategy leg, only the
+    long_only_mask direction filter removed.
+    """
+
+    def test_null_edge_averages_over_up_and_down_gap_events(self):
+        """_make_gap_df(n=100) produces up-gap events at forward_return=+1%
+        and down-gap events at forward_return=-1% in equal counts (49 each,
+        by construction — see the by-hand count below), so the null must
+        average to exactly 0.0 bps: the strategy's long-only +100bps gross
+        edge is then entirely edge_over_null."""
+        from strategy_fit.families_event import run_event_family
+        n = 100
+        hist = {"SYM": _make_gap_df(n=n)}
+        result = run_event_family(hist, event_detector_name="gap_event", horizon_trading_days=1)
+        up_n = _up_gap_event_count(n)
+        down_n = _down_gap_event_count(n)
+        assert up_n == down_n == 49, (
+            "precondition for the hand-computed null below: equal up/down counts"
+        )
+        assert result["status"] == "tested"
+        expected_null_bps = (up_n * 0.01 + down_n * (-0.01)) / (up_n + down_n) * 1e4
+        assert expected_null_bps == pytest.approx(0.0, abs=1e-9)
+        assert result["null_edge_bps"] == pytest.approx(expected_null_bps, abs=1e-6)
+        assert result["edge_over_null_bps"] == pytest.approx(
+            result["gross_edge_bps"] - expected_null_bps, rel=1e-6
+        )
+        assert result["edge_over_null_bps"] == pytest.approx(100.0, rel=1e-6)
+
+    def test_null_edge_none_on_non_tested_status(self):
+        """The all-down-gap fixture (no long-side events at all) must report
+        null_edge_bps=None, edge_over_null_bps=None — never a stale or
+        fabricated value."""
+        from strategy_fit.families_event import run_event_family
+        n = 100
+        dates = pd.bdate_range("2025-01-01", periods=n)
+        ref_price = 1000.0
+        closes = np.empty(n)
+        closes[0] = ref_price
+        for t in range(0, n - 1):
+            closes[t + 1] = closes[t] * 0.99
+        opens = np.empty(n)
+        opens[0] = closes[0]
+        for t in range(1, n):
+            opens[t] = closes[t - 1] * 0.95
+        df = pd.DataFrame({
+            "date": dates.strftime("%Y-%m-%d"),
+            "open": opens,
+            "high": np.maximum(opens, closes) * 1.001,
+            "low": np.minimum(opens, closes) * 0.999,
+            "close": closes,
+            "volume": np.full(n, 1_000_000),
+            "net_foreign": np.zeros(n),
+        })
+        hist = {"SYM": df}
+        result = run_event_family(hist, event_detector_name="gap_event", horizon_trading_days=1)
+        assert result["status"] == "insufficient_n"
+        assert result["null_edge_bps"] is None
+        assert result["edge_over_null_bps"] is None

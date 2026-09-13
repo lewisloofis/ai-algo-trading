@@ -64,11 +64,14 @@ def _insufficient_n_result(skip_reason: str) -> dict[str, Any]:
         "p_value": None,
         "net_edge_bps": None,
         "per_trade_sigma_bps": None,
+        "null_edge_bps": None,
+        "edge_over_null_bps": None,
     }
 
 
 def _compute_family_metrics(
     signed_returns: np.ndarray,
+    null_returns: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Compute gross_edge_bps, hit_rate, eff_n, p_value, per_trade_sigma_bps
     from signed returns array.
@@ -82,6 +85,15 @@ def _compute_family_metrics(
     lib.stats.required_effective_n must be fed the real thing.  None when
     fewer than 2 observations (sample std is undefined) — callers must treat
     that as "sigma unavailable", never silently substitute a default.
+
+    null_returns : optional array of per-session returns from the SAME
+    entry/exit mechanics as signed_returns with the directional signal
+    removed (the "always-long null" — see strategy_fit/report.py's null-edge
+    blocking gate).  Every family in this module builds one: the population
+    is a superset of signed_returns (it includes sessions the signal
+    filtered out), so its length is always >= len(signed_returns).
+    null_edge_bps / edge_over_null_bps are None when null_returns is None or
+    empty — never silently substituted or fabricated.
     """
     eff_n = len(signed_returns)
     if eff_n < MIN_EFF_N:
@@ -91,6 +103,15 @@ def _compute_family_metrics(
     # hit_rate: fraction where signed_return > 0
     hit_rate = float(np.mean(signed_returns > 0))
     per_trade_sigma_bps = float(np.std(signed_returns, ddof=1) * 1e4) if eff_n > 1 else None
+
+    null_edge_bps = (
+        float(np.mean(null_returns) * 1e4)
+        if null_returns is not None and len(null_returns) > 0
+        else None
+    )
+    edge_over_null_bps = (
+        gross_edge_bps - null_edge_bps if null_edge_bps is not None else None
+    )
 
     # One-sample bootstrap p-value: signed_returns is the realized per-trade PnL
     # (direction × magnitude), one trade per day and iid across days, so an iid
@@ -108,6 +129,8 @@ def _compute_family_metrics(
         "p_value": p_value,
         "net_edge_bps": None,
         "per_trade_sigma_bps": per_trade_sigma_bps,
+        "null_edge_bps": null_edge_bps,
+        "edge_over_null_bps": edge_over_null_bps,
     }
 
 
@@ -128,11 +151,17 @@ def run_orb_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
     Returns
     -------
     dict with keys: status, skip_reason, gross_edge_bps, hit_rate,
-                    eff_n, p_value, net_edge_bps.
+                    eff_n, p_value, net_edge_bps, null_edge_bps,
+                    edge_over_null_bps. The latter two (see
+                    _compute_family_metrics) score the SAME entry/exit
+                    mechanics with the directional signal removed — the
+                    "always-long null" (strategy_fit/report.py's null-edge
+                    blocking gate) — and are None when not tested.
     """
     _check_required_cols(intraday_df)
 
     signed_returns: list[float] = []
+    null_returns: list[float] = []
     df = intraday_df.copy()
     df["_dt"] = pd.to_datetime(df["datetime"])
     df["_t_min"] = df["_dt"].dt.hour * 60 + df["_dt"].dt.minute
@@ -157,6 +186,18 @@ def run_orb_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
         if len(post_bars) == 0:
             continue
 
+        exit_close = float(day.iloc[-1]["close"])
+
+        # Null (always-long): buy the FIRST post-OR-window bar unconditionally
+        # — same entry/exit mechanics as the strategy leg (enter right after
+        # the opening range forms, hold to close), with the breakout
+        # DIRECTION signal removed. Computed for every session with an OR and
+        # a post-window bar, independent of whether a long breakout occurs
+        # below — this population is therefore a superset of signed_returns.
+        null_entry_price = float(post_bars.iloc[0]["close"])
+        if null_entry_price != 0.0:
+            null_returns.append((exit_close - null_entry_price) / null_entry_price)
+
         entry_price = 0.0
         for close_val in post_bars["close"].to_numpy(dtype=float):
             if close_val > or_high:
@@ -167,7 +208,6 @@ def run_orb_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
             continue  # no long breakout this day
 
         # Exit: last bar close of the day.
-        exit_close = float(day.iloc[-1]["close"])
         ret = (exit_close - entry_price) / entry_price
         signed_returns.append(ret)
 
@@ -176,7 +216,7 @@ def run_orb_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
             f"eff_n={len(signed_returns)} < MIN_EFF_N={MIN_EFF_N}"
         )
 
-    return _compute_family_metrics(np.array(signed_returns))
+    return _compute_family_metrics(np.array(signed_returns), null_returns=np.array(null_returns))
 
 
 def run_intraday_momentum_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
@@ -199,11 +239,17 @@ def run_intraday_momentum_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
     Returns
     -------
     dict with keys: status, skip_reason, gross_edge_bps, hit_rate,
-                    eff_n, p_value, net_edge_bps.
+                    eff_n, p_value, net_edge_bps, null_edge_bps,
+                    edge_over_null_bps. The latter two (see
+                    _compute_family_metrics) score the SAME entry/exit
+                    mechanics with the directional signal removed — the
+                    "always-long null" (strategy_fit/report.py's null-edge
+                    blocking gate) — and are None when not tested.
     """
     _check_required_cols(intraday_df)
 
     signed_returns: list[float] = []
+    null_returns: list[float] = []
     df = intraday_df.copy()
     df["_dt"] = pd.to_datetime(df["datetime"])
     df["_t_min"] = df["_dt"].dt.hour * 60 + df["_dt"].dt.minute
@@ -227,11 +273,18 @@ def run_intraday_momentum_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
         if close_at_midday == 0:
             continue
 
+        # Null (always-long): same entry/exit mechanics (midday close ->
+        # close of day) with the morning-direction signal removed — take the
+        # trade every session regardless of direction. Computed before the
+        # signal filter below, so this population is a superset of
+        # signed_returns (it also includes down/flat-morning sessions).
+        forward_return = close_of_day / close_at_midday - 1.0
+        null_returns.append(forward_return)
+
         signal = float(np.sign(close_at_midday - open_of_day))
         if not is_long_signal(signal):
             continue  # short/flat morning move — not tradeable long-only on IDX retail
 
-        forward_return = close_of_day / close_at_midday - 1.0
         signed_returns.append(forward_return)  # signal is always +1 here after the filter
 
     if len(signed_returns) < MIN_EFF_N:
@@ -239,7 +292,7 @@ def run_intraday_momentum_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
             f"eff_n={len(signed_returns)} < MIN_EFF_N={MIN_EFF_N}"
         )
 
-    return _compute_family_metrics(np.array(signed_returns))
+    return _compute_family_metrics(np.array(signed_returns), null_returns=np.array(null_returns))
 
 
 def run_intraday_mean_reversion_family(intraday_df: pd.DataFrame) -> dict[str, Any]:
@@ -263,11 +316,17 @@ def run_intraday_mean_reversion_family(intraday_df: pd.DataFrame) -> dict[str, A
     Returns
     -------
     dict with keys: status, skip_reason, gross_edge_bps, hit_rate,
-                    eff_n, p_value, net_edge_bps.
+                    eff_n, p_value, net_edge_bps, null_edge_bps,
+                    edge_over_null_bps. The latter two (see
+                    _compute_family_metrics) score the SAME entry/exit
+                    mechanics with the directional signal removed — the
+                    "always-long null" (strategy_fit/report.py's null-edge
+                    blocking gate) — and are None when not tested.
     """
     _check_required_cols(intraday_df)
 
     signed_returns: list[float] = []
+    null_returns: list[float] = []
     df = intraday_df.copy()
     df["_dt"] = pd.to_datetime(df["datetime"])
     df["_t_min"] = df["_dt"].dt.hour * 60 + df["_dt"].dt.minute
@@ -296,14 +355,21 @@ def run_intraday_mean_reversion_family(intraday_df: pd.DataFrame) -> dict[str, A
         if vwap_am == 0 or close_at_11 == 0:
             continue
 
+        # close_of_day: last bar
+        close_of_day = float(day.iloc[-1]["close"])
+        forward_return = close_of_day / close_at_11 - 1.0
+
+        # Null (always-long): same entry/exit mechanics (11:00 close -> close
+        # of day) with the VWAP-deviation signal removed — take the trade
+        # every session regardless of direction. Computed before the signal
+        # filter below, so this population is a superset of signed_returns
+        # (it also includes at/above-VWAP sessions).
+        null_returns.append(forward_return)
+
         # signal: negative of deviation (above VWAP → short signal)
         signal = -(close_at_11 / vwap_am - 1.0)
         if not is_long_signal(signal):
             continue  # price at/above VWAP — not tradeable long-only on IDX retail
-
-        # close_of_day: last bar
-        close_of_day = float(day.iloc[-1]["close"])
-        forward_return = close_of_day / close_at_11 - 1.0
 
         signed_returns.append(forward_return)  # signal is always +1 here after the filter
 
@@ -312,4 +378,4 @@ def run_intraday_mean_reversion_family(intraday_df: pd.DataFrame) -> dict[str, A
             f"eff_n={len(signed_returns)} < MIN_EFF_N={MIN_EFF_N}"
         )
 
-    return _compute_family_metrics(np.array(signed_returns))
+    return _compute_family_metrics(np.array(signed_returns), null_returns=np.array(null_returns))

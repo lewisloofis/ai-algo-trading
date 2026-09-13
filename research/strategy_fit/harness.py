@@ -370,3 +370,30 @@ class CellResult:
     0.0" from "impact never priced at all" — a hard prerequisite for a cell
     to contribute to a PASS verdict (see strategy_fit/report.py:compute_verdict).
     """
+    # --- Always-long null (beta-vs-alpha) gate ---
+    null_edge_bps: float | None = None
+    """
+    Mean per-trade edge (bps) of the SAME population — same de-overlap, same
+    hold, same long-only constraint — with the signal deleted: i.e. what
+    buying every de-overlapped slot unconditionally (signal ignored) would
+    have earned.  This is the "always-long null": a strategy that leans on
+    asset drift rather than genuine signal will show a null_edge_bps close to
+    (or above) its own gross_edge_bps.  Computed by the family runner right
+    alongside gross_edge_bps, so it is definitionally the same population.
+    None for shapes with no long-only null to compare against
+    (cross_sectional / pairs — structurally long/short, see
+    strategy_fit/long_only.py) or for any non-"tested" cell.
+    """
+    edge_over_null_bps: float | None = None
+    """
+    gross_edge_bps - null_edge_bps: the edge attributable to the SIGNAL
+    itself, net of whatever the underlying asset's drift alone would have
+    contributed.  A cell can report a strongly positive gross_edge_bps (and
+    even a positive net_edge_bps) while edge_over_null_bps is small or
+    negative — the return is beta (asset drift), not alpha (signal), and a
+    per-trade strategy paying per-trade friction N times has no business
+    case for beta that a single buy-and-hold wouldn't capture more cheaply.
+    This is a hard PASS prerequisite (see
+    strategy_fit/report.py:NULL_GATE_REQUIRES_SIGNAL_CLEARS_HURDLE and
+    _is_pass_eligible).  None wherever null_edge_bps is None.
+    """

@@ -358,6 +358,8 @@ def _run_single_name_cell(
         best_entry_dow=entry_dow,
         modelled_impact_bps=daily_impact_bps,
         impact_priced=True,
+        null_edge_bps=result.get("null_edge_bps"),
+        edge_over_null_bps=result.get("edge_over_null_bps"),
         oos_edge_bps=wf_daily.oos_edge_bps,
         oos_hit_rate=wf_daily.oos_hit_rate,
         oos_eff_n=wf_daily.oos_eff_n,
@@ -435,6 +437,8 @@ def _run_event_cell(
         passes_cost_gate=cost_pass,
         min_edge_hurdle_bps=hurdle,
         best_entry_dow=entry_dow,
+        null_edge_bps=result.get("null_edge_bps"),
+        edge_over_null_bps=result.get("edge_over_null_bps"),
     )
 
 
@@ -665,6 +669,8 @@ def _run_intraday_cell(
         best_entry_dow=entry_dow,
         modelled_impact_bps=intraday_impact_bps,
         impact_priced=True,
+        null_edge_bps=result.get("null_edge_bps"),
+        edge_over_null_bps=result.get("edge_over_null_bps"),
         oos_edge_bps=wf_intraday.oos_edge_bps,
         oos_hit_rate=wf_intraday.oos_hit_rate,
         oos_eff_n=wf_intraday.oos_eff_n,

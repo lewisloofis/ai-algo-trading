@@ -333,11 +333,17 @@ def run_single_name_family(
     -------
     dict
         Keys: status, skip_reason, hit_rate, eff_n, gross_edge_bps,
-              net_edge_bps, p_value, per_trade_sigma_bps.  Suitable for
-              constructing CellResult.  per_trade_sigma_bps (plan-10 W2.1)
-              mirrors families_intraday.py: the sample std of the long-only
-              signed_returns array that produced gross_edge_bps, None on
-              every non-"tested" path and when fewer than 2 observations.
+              net_edge_bps, p_value, per_trade_sigma_bps, null_edge_bps,
+              edge_over_null_bps.  Suitable for constructing CellResult.
+              per_trade_sigma_bps (plan-10 W2.1) mirrors families_intraday.py:
+              the sample std of the long-only signed_returns array that
+              produced gross_edge_bps, None on every non-"tested" path and
+              when fewer than 2 observations. null_edge_bps is the mean
+              forward_return of the SAME de-overlapped population with the
+              long-only signal filter removed (the "always-long null" —
+              see strategy_fit/report.py's null-edge blocking gate);
+              edge_over_null_bps = gross_edge_bps - null_edge_bps. Both None
+              on every non-"tested" path.
     """
     try:
         signal_df = signal_fn(df, hold=horizon_trading_days)
@@ -352,6 +358,8 @@ def run_single_name_family(
             "net_edge_bps": None,
             "p_value": None,
             "per_trade_sigma_bps": None,
+            "null_edge_bps": None,
+            "edge_over_null_bps": None,
         }
 
     if len(signal_df) == 0:
@@ -364,6 +372,8 @@ def run_single_name_family(
             "net_edge_bps": None,
             "p_value": None,
             "per_trade_sigma_bps": None,
+            "null_edge_bps": None,
+            "edge_over_null_bps": None,
         }
 
     deoverlapped = deoverlap_daily(signal_df, hold=horizon_trading_days)
@@ -379,6 +389,8 @@ def run_single_name_family(
             "net_edge_bps": None,
             "p_value": None,
             "per_trade_sigma_bps": None,
+            "null_edge_bps": None,
+            "edge_over_null_bps": None,
         }
 
     fwd = deoverlapped["forward_return"].to_numpy(dtype=float)
@@ -406,6 +418,27 @@ def run_single_name_family(
         float(np.std(signed_returns, ddof=1) * 1e4) if len(signed_returns) > 1 else None
     )
 
+    # null_edge_bps (always-long null): the SAME de-overlapped population's
+    # forward_return, mean, with the long-only SIGNAL FILTER removed — i.e.
+    # what buying every de-overlapped slot unconditionally would have earned.
+    # `deoverlapped` (built above, before valid_mask) still contains signal<=0
+    # rows, so it is exactly "this trading pattern, signal deleted": same
+    # de-overlap, same hold, only the direction filter gone.
+    #
+    # NOTE (D2, not fixed here): production de-overlaps the raw signal stream
+    # THEN applies the long-only filter — deoverlapped's rows are chosen
+    # without regard to which will later pass long_only_mask, so the
+    # long-only-filtered eff_n can be smaller than what de-overlapping AFTER
+    # filtering would have produced. The null below is computed on this same
+    # (pre-long-only-filter) de-overlapped population so it stays comparable
+    # to the strategy leg despite that ordering; if the ordering biases
+    # gross_edge_bps, it biases null_edge_bps the same way, not differently.
+    null_fwd = deoverlapped["forward_return"].to_numpy(dtype=float)
+    null_edge_bps = float(np.mean(null_fwd) * 1e4) if len(null_fwd) > 0 else None
+    edge_over_null_bps = (
+        gross_edge_bps - null_edge_bps if null_edge_bps is not None else None
+    )
+
     # p-value: one-sample bootstrap that mean(signed_returns) > 0. After the
     # long-only filter, signal is always +1, so bootstrap_hit_rate_pvalue's
     # sign-permutation test degenerates (permuting an all-positive array can
@@ -427,4 +460,6 @@ def run_single_name_family(
         "net_edge_bps": None,
         "p_value": p_value,
         "per_trade_sigma_bps": per_trade_sigma_bps,
+        "null_edge_bps": null_edge_bps,
+        "edge_over_null_bps": edge_over_null_bps,
     }
