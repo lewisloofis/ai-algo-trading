@@ -22,6 +22,8 @@ from typing import Any
 
 import pandas as pd
 
+from strategy_fit.capital_model import ACTIVE_CAPITAL_MODEL, CapitalModel
+
 # ---------------------------------------------------------------------------
 # Shape constants
 # ---------------------------------------------------------------------------
@@ -35,16 +37,26 @@ SHAPE_PAIRS: str = "pairs"                        # plan-10 §7.6, now testable
 SHAPE_INTRADAY_SAME_DAY: str = "intraday_same_day"  # same-day / hold=0 families
 
 # ---------------------------------------------------------------------------
-# Capital-ceiling constant (ADR-0011)
+# Capital-ceiling constant (ADR-0011, superseded by ADR-0015)
 # ---------------------------------------------------------------------------
 
-MAX_HOLD_TRADING_DAYS: int = 2
+MAX_HOLD_TRADING_DAYS: int | None = ACTIVE_CAPITAL_MODEL.max_hold_trading_days
 """
-Capital horizon ceiling from ADR-0011: T+2 sell-safe / T+4 forced liquidation.
+Capital horizon ceiling, derived from ``ACTIVE_CAPITAL_MODEL``.
 
-The leverage facility caps practical holds at ≤2 trading days.  Any strategy
-family with horizon_trading_days > MAX_HOLD_TRADING_DAYS is capital-blocked
-(not merely data-blocked) and must be rejected by the harness.
+.. deprecated:: ADR-0015 (2026-09-13)
+    This module-level constant is kept for backward compatibility only — it
+    snapshots ``ACTIVE_CAPITAL_MODEL.max_hold_trading_days`` at import time
+    and will NOT reflect a capital model passed explicitly to
+    :func:`reject_horizon_exceeded`.  Read
+    ``strategy_fit.capital_model.ACTIVE_CAPITAL_MODEL`` (or pass an explicit
+    ``capital_model``) instead of importing this name in new code.
+
+Under ADR-0011 (leveraged sleeve), this was a hard-wired ``2``: the leverage
+facility caps practical holds at ≤2 trading days (T+2 sell-safe / T+4 forced
+liquidation).  Under ADR-0015, leverage is optional and the default capital
+model (``OWNED_CASH``) carries no ceiling, so this constant is ``None`` unless
+``ACTIVE_CAPITAL_MODEL`` is switched back to ``LEVERAGED_SLEEVE``.
 """
 
 # ---------------------------------------------------------------------------
@@ -79,21 +91,31 @@ class StrategyFamily:
 # Horizon ceiling enforcement
 # ---------------------------------------------------------------------------
 
-def reject_horizon_exceeded(family: StrategyFamily) -> dict[str, Any] | None:
+def reject_horizon_exceeded(
+    family: StrategyFamily, *, capital_model: CapitalModel | None = None
+) -> dict[str, Any] | None:
     """
     Return a rejection dict if *family* exceeds the capital horizon ceiling.
 
     Returns None if the family is within the deployable band (hold ≤
-    MAX_HOLD_TRADING_DAYS).  Returns a status dict with ``status="skipped_horizon"``
-    and a descriptive ``skip_reason`` when the ceiling is exceeded.
+    ``capital_model.max_hold_trading_days``), or unconditionally when the
+    active capital model has no ceiling (``max_hold_trading_days is None`` —
+    e.g. ``OWNED_CASH``).  Returns a status dict with
+    ``status="skipped_horizon"`` and a descriptive ``skip_reason`` when the
+    ceiling is exceeded.
 
     This check is applied before any backtest computation; it is not possible
-    to override it by injecting a signal — capital is a hard constraint.
+    to override it by injecting a signal — capital is a hard constraint
+    whenever the active model has one.
 
     Parameters
     ----------
     family : StrategyFamily
         The strategy family to check.
+    capital_model : CapitalModel or None
+        The capital model whose horizon ceiling applies.  Defaults to
+        ``strategy_fit.capital_model.ACTIVE_CAPITAL_MODEL`` (ADR-0015:
+        ``OWNED_CASH``, no ceiling) when not supplied.
 
     Returns
     -------
@@ -101,13 +123,15 @@ def reject_horizon_exceeded(family: StrategyFamily) -> dict[str, Any] | None:
         None if not rejected; otherwise a rejection dict suitable for
         building a CellResult record.
     """
-    if family.horizon_trading_days <= MAX_HOLD_TRADING_DAYS:
+    model = capital_model if capital_model is not None else ACTIVE_CAPITAL_MODEL
+    max_hold = model.max_hold_trading_days
+    if max_hold is None or family.horizon_trading_days <= max_hold:
         return None
     return {
         "status": "skipped_horizon",
         "skip_reason": (
             f"capital_blocked: hold {family.horizon_trading_days} trading days "
-            f"> MAX_HOLD_TRADING_DAYS={MAX_HOLD_TRADING_DAYS} (ADR-0011)"
+            f"> max_hold={max_hold} (capital model: {model.name}, ADR-0015)"
         ),
     }
 

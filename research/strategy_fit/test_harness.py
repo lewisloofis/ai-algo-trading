@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from strategy_fit.capital_model import LEVERAGED_SLEEVE, OWNED_CASH
 from strategy_fit.harness import (
     MAX_HOLD_TRADING_DAYS,
     SHAPE_EVENT_DRIVEN,
@@ -61,8 +62,19 @@ def _make_daily_df(n: int, hold: int = 1) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 class TestHorizonCeiling:
-    def test_max_hold_constant_is_2(self):
-        assert MAX_HOLD_TRADING_DAYS == 2
+    """
+    ADR-0015 (2026-09-13): leverage is optional and the default capital model
+    (OWNED_CASH) has no horizon ceiling.  Tests that exercise the ceiling
+    itself pass ``capital_model=LEVERAGED_SLEEVE`` explicitly to keep pinning
+    the ADR-0011 ~2-trading-day ceiling regardless of the default.
+    """
+
+    def test_max_hold_constant_is_2_under_leveraged_sleeve(self):
+        assert LEVERAGED_SLEEVE.max_hold_trading_days == 2
+
+    def test_deprecated_module_constant_reflects_active_default(self):
+        """MAX_HOLD_TRADING_DAYS snapshots ACTIVE_CAPITAL_MODEL (OWNED_CASH) at import time."""
+        assert MAX_HOLD_TRADING_DAYS is None
 
     def test_hold_3_is_rejected(self):
         family = StrategyFamily(
@@ -70,7 +82,7 @@ class TestHorizonCeiling:
             shape=SHAPE_SINGLE_NAME,
             horizon_trading_days=3,
         )
-        result = reject_horizon_exceeded(family)
+        result = reject_horizon_exceeded(family, capital_model=LEVERAGED_SLEEVE)
         assert result is not None
         assert result["status"] == "skipped_horizon"
         assert "capital_blocked" in result["skip_reason"]
@@ -82,7 +94,7 @@ class TestHorizonCeiling:
             shape=SHAPE_SINGLE_NAME,
             horizon_trading_days=4,
         )
-        result = reject_horizon_exceeded(family)
+        result = reject_horizon_exceeded(family, capital_model=LEVERAGED_SLEEVE)
         assert result is not None
         assert result["status"] == "skipped_horizon"
 
@@ -92,7 +104,7 @@ class TestHorizonCeiling:
             shape=SHAPE_SINGLE_NAME,
             horizon_trading_days=2,
         )
-        result = reject_horizon_exceeded(family)
+        result = reject_horizon_exceeded(family, capital_model=LEVERAGED_SLEEVE)
         assert result is None  # None means "not rejected"
 
     def test_hold_1_is_not_rejected(self):
@@ -101,7 +113,7 @@ class TestHorizonCeiling:
             shape=SHAPE_SINGLE_NAME,
             horizon_trading_days=1,
         )
-        result = reject_horizon_exceeded(family)
+        result = reject_horizon_exceeded(family, capital_model=LEVERAGED_SLEEVE)
         assert result is None
 
     def test_hold_0_is_not_rejected(self):
@@ -111,18 +123,38 @@ class TestHorizonCeiling:
             shape=SHAPE_SINGLE_NAME,
             horizon_trading_days=0,
         )
-        result = reject_horizon_exceeded(family)
+        result = reject_horizon_exceeded(family, capital_model=LEVERAGED_SLEEVE)
         assert result is None
 
     def test_skip_reason_mentions_max(self):
-        """Skip reason must mention MAX_HOLD_TRADING_DAYS for clarity."""
+        """Skip reason must mention the leveraged sleeve's max_hold_trading_days for clarity."""
         family = StrategyFamily(
             name="test_family",
             shape=SHAPE_SINGLE_NAME,
             horizon_trading_days=5,
         )
+        result = reject_horizon_exceeded(family, capital_model=LEVERAGED_SLEEVE)
+        assert str(LEVERAGED_SLEEVE.max_hold_trading_days) in result["skip_reason"]
+
+    def test_owned_cash_never_rejects_regardless_of_horizon(self):
+        """OWNED_CASH has no ceiling: even a 20-trading-day hold is not rejected."""
+        family = StrategyFamily(
+            name="test_family",
+            shape=SHAPE_SINGLE_NAME,
+            horizon_trading_days=20,
+        )
+        result = reject_horizon_exceeded(family, capital_model=OWNED_CASH)
+        assert result is None
+
+    def test_owned_cash_is_the_default_without_explicit_capital_model(self):
+        """No capital_model passed → falls back to ACTIVE_CAPITAL_MODEL (OWNED_CASH): no ceiling."""
+        family = StrategyFamily(
+            name="test_family",
+            shape=SHAPE_SINGLE_NAME,
+            horizon_trading_days=20,
+        )
         result = reject_horizon_exceeded(family)
-        assert str(MAX_HOLD_TRADING_DAYS) in result["skip_reason"]
+        assert result is None
 
 
 # ---------------------------------------------------------------------------

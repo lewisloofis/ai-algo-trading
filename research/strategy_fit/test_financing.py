@@ -5,12 +5,18 @@ Settlement model corrected 2026-09-05: the charged window runs from the entry's
 T+2 settlement to the exit's T+2 settlement, so the common shift cancels and the
 cost depends on the *settlement* weekday, not the entry weekday.  See the
 financing module docstring and ADR-0011 §"Financing".
+
+ADR-0015 (2026-09-13): leverage is optional and ``ACTIVE_CAPITAL_MODEL``
+defaults to ``OWNED_CASH`` (no financing).  Tests below that exercise the
+financing arithmetic itself pass ``capital_model=LEVERAGED_SLEEVE`` explicitly
+so they keep pinning ADR-0011/0014 behaviour regardless of the default.
 """
 from datetime import date
 
 import pytest
 
 from lib.market_calendar import CALENDAR
+from strategy_fit.capital_model import LEVERAGED_SLEEVE, OWNED_CASH
 from strategy_fit.financing import (
     FINANCING_BPS_PER_CAL_DAY,
     FRI,
@@ -38,20 +44,24 @@ class TestBrokerWorkedExamples:
     """The two cases the broker described, asserted on real dates."""
 
     def test_thursday_buy_friday_sell_costs_one_day(self):
-        """Buy Thu settles Mon; sell Fri settles Tue → 1 day late, 10 bps."""
+        """Buy Thu settles Mon; sell Fri settles Tue → 1 day late, 10 bps (leveraged sleeve)."""
         entry = _CLEAN_MONDAY.replace(day=8)          # Thursday
         assert entry.weekday() == THU
         assert CALENDAR.add_trading_days(entry, SETTLEMENT_TRADING_DAYS).weekday() == MON
         assert calendar_days_outstanding(THU, 1, entry_date=entry) == 1
-        assert financing_bps(THU, 1, entry_date=entry) == pytest.approx(10.0)
+        assert financing_bps(
+            THU, 1, entry_date=entry, capital_model=LEVERAGED_SLEEVE
+        ) == pytest.approx(10.0)
 
     def test_wednesday_buy_thursday_sell_pays_the_weekend(self):
-        """Buy Wed settles Fri; sell Thu settles Mon → Sat+Sun on top, 3 days."""
+        """Buy Wed settles Fri; sell Thu settles Mon → Sat+Sun on top, 3 days (leveraged sleeve)."""
         entry = _CLEAN_MONDAY.replace(day=7)          # Wednesday
         assert entry.weekday() == WED
         assert CALENDAR.add_trading_days(entry, SETTLEMENT_TRADING_DAYS).weekday() == FRI
         assert calendar_days_outstanding(WED, 1, entry_date=entry) == 3
-        assert financing_bps(WED, 1, entry_date=entry) == pytest.approx(30.0)
+        assert financing_bps(
+            WED, 1, entry_date=entry, capital_model=LEVERAGED_SLEEVE
+        ) == pytest.approx(30.0)
 
     def test_wednesday_is_the_only_expensive_entry_day_for_a_one_day_hold(self):
         """Every weekday but Wednesday costs exactly 1 calendar day at hold=1."""
@@ -186,15 +196,28 @@ def test_financing_bps_hold0():
 # ---------------------------------------------------------------------------
 
 def test_full_pass_hurdle_basic():
-    """hurdle = min_edge + modelled_impact + financing.
+    """hurdle = min_edge + modelled_impact + financing (leveraged sleeve).
     Wed entry, hold=1: financing=30 bps → hurdle = 10 + 5 + 30 = 45."""
     result = full_pass_hurdle_bps(
         min_edge_to_clear_bps=10.0,
         modelled_impact_bps=5.0,
         entry_dow=WED,
         hold_trading_days=1,
+        capital_model=LEVERAGED_SLEEVE,
     )
     assert result == pytest.approx(45.0)
+
+
+def test_full_pass_hurdle_owned_cash_has_no_financing():
+    """OWNED_CASH: hurdle = min_edge + impact exactly, financing contributes 0."""
+    result = full_pass_hurdle_bps(
+        min_edge_to_clear_bps=10.0,
+        modelled_impact_bps=5.0,
+        entry_dow=WED,  # the expensive leveraged-sleeve day — irrelevant here
+        hold_trading_days=1,
+        capital_model=OWNED_CASH,
+    )
+    assert result == pytest.approx(15.0)
 
 
 def test_full_pass_hurdle_hold0():
@@ -232,7 +255,8 @@ def test_passes_gate_false():
 
 def test_passes_gate_dow_changes_outcome():
     """
-    Same edge, Mon (10 bps financing) vs Wed (30 bps) changes the outcome.
+    Leveraged sleeve: same edge, Mon (10 bps financing) vs Wed (30 bps) changes
+    the outcome.
     edge=30, min=10, impact=5:
       Mon: hurdle = 10+5+10 = 25 → 30 > 25 → True
       Wed: hurdle = 10+5+30 = 45 → 30 < 45 → False
@@ -244,6 +268,7 @@ def test_passes_gate_dow_changes_outcome():
         modelled_impact_bps=5.0,
         entry_dow=MON,
         hold_trading_days=1,
+        capital_model=LEVERAGED_SLEEVE,
     )
     passes_wed = passes_gate(
         net_edge_bps=edge,
@@ -251,9 +276,33 @@ def test_passes_gate_dow_changes_outcome():
         modelled_impact_bps=5.0,
         entry_dow=WED,
         hold_trading_days=1,
+        capital_model=LEVERAGED_SLEEVE,
     )
     assert passes_mon is True
     assert passes_wed is False
+
+
+def test_passes_gate_owned_cash_dow_is_irrelevant():
+    """OWNED_CASH: entry day-of-week never matters because financing is 0."""
+    edge = 20.0
+    passes_mon = passes_gate(
+        net_edge_bps=edge,
+        min_edge_to_clear_bps=10.0,
+        modelled_impact_bps=5.0,
+        entry_dow=MON,
+        hold_trading_days=1,
+        capital_model=OWNED_CASH,
+    )
+    passes_wed = passes_gate(
+        net_edge_bps=edge,
+        min_edge_to_clear_bps=10.0,
+        modelled_impact_bps=5.0,
+        entry_dow=WED,
+        hold_trading_days=1,
+        capital_model=OWNED_CASH,
+    )
+    assert passes_mon is True
+    assert passes_wed is True
 
 
 # ---------------------------------------------------------------------------
@@ -285,31 +334,48 @@ class TestBestFeasibleHurdle:
         assert 0 <= dow <= 4
 
     def test_cheapest_entry_for_hold1_is_one_calendar_day(self):
-        """Mon/Tue/Thu/Fri all cost 1 cal day at hold=1; Wed costs 3."""
+        """Leveraged sleeve: Mon/Tue/Thu/Fri all cost 1 cal day at hold=1; Wed costs 3."""
         hurdle, dow = best_feasible_hurdle_bps(
             min_edge_to_clear_bps=10.0,
             modelled_impact_bps=0.0,
             hold_trading_days=1,
+            capital_model=LEVERAGED_SLEEVE,
         )
         assert hurdle == pytest.approx(20.0)   # 10 floor + 10 financing
         assert dow == MON                      # tie broken by lowest index
 
     def test_wednesday_is_the_day_best_feasible_avoids(self):
-        """The chosen hurdle is strictly below the Wednesday hurdle at hold=1."""
+        """Leveraged sleeve: the chosen hurdle is strictly below the Wednesday hurdle at hold=1."""
         hurdle, best_dow = best_feasible_hurdle_bps(
             min_edge_to_clear_bps=10.0,
             modelled_impact_bps=5.0,
             hold_trading_days=1,
+            capital_model=LEVERAGED_SLEEVE,
         )
-        wed_hurdle = full_pass_hurdle_bps(10.0, 5.0, entry_dow=WED, hold_trading_days=1)
+        wed_hurdle = full_pass_hurdle_bps(
+            10.0, 5.0, entry_dow=WED, hold_trading_days=1, capital_model=LEVERAGED_SLEEVE
+        )
         assert hurdle < wed_hurdle
         assert best_dow != WED
 
     def test_cell_that_clears_monday_but_not_wednesday_passes(self):
-        """Regression: edge=30 passes the Mon hurdle=25 but not Wed's 45."""
+        """Regression: edge=30 passes the Mon hurdle=25 but not Wed's 45 (leveraged sleeve)."""
         edge = 30.0
-        hurdle, _ = best_feasible_hurdle_bps(10.0, 5.0, hold_trading_days=1)
+        hurdle, _ = best_feasible_hurdle_bps(
+            10.0, 5.0, hold_trading_days=1, capital_model=LEVERAGED_SLEEVE
+        )
         assert edge > hurdle, f"edge={edge} should exceed best-feasible hurdle={hurdle}"
+
+    def test_owned_cash_all_weekdays_tie_at_hold1(self):
+        """OWNED_CASH: every weekday ties (no financing), best_dow is Monday by tie-break."""
+        hurdle, dow = best_feasible_hurdle_bps(
+            min_edge_to_clear_bps=10.0,
+            modelled_impact_bps=0.0,
+            hold_trading_days=1,
+            capital_model=OWNED_CASH,
+        )
+        assert hurdle == pytest.approx(10.0)  # floor only, no financing
+        assert dow == MON
 
     def test_best_entry_dow_is_recorded(self):
         """best_entry_dow is in 0..4 and is not None."""
@@ -325,8 +391,48 @@ class TestBestFeasibleHurdle:
     @pytest.mark.parametrize("hold,expected_financing", [(0, 0.0), (1, 10.0), (2, 20.0), (3, 30.0)])
     def test_best_feasible_financing_is_ten_bps_per_held_day(self, hold, expected_financing):
         """
-        With the entry day chosen freely, the weekend is always avoidable: the
-        best-feasible financing is exactly 10 bps per trading day held.
+        Leveraged sleeve: with the entry day chosen freely, the weekend is
+        always avoidable, so the best-feasible financing is exactly 10 bps
+        per trading day held.
         """
-        hurdle, _ = best_feasible_hurdle_bps(0.0, 0.0, hold_trading_days=hold)
+        hurdle, _ = best_feasible_hurdle_bps(
+            0.0, 0.0, hold_trading_days=hold, capital_model=LEVERAGED_SLEEVE
+        )
         assert hurdle == pytest.approx(expected_financing)
+
+    @pytest.mark.parametrize("hold", [0, 1, 2, 3])
+    def test_owned_cash_hurdle_is_always_zero_financing(self, hold):
+        """OWNED_CASH: best-feasible financing is 0 regardless of hold length."""
+        hurdle, _ = best_feasible_hurdle_bps(
+            0.0, 0.0, hold_trading_days=hold, capital_model=OWNED_CASH
+        )
+        assert hurdle == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# ADR-0015: capital model defaults and financing gate by model
+# ---------------------------------------------------------------------------
+
+class TestCapitalModelDefault:
+    """Default capital model behaviour (ADR-0015, changed 2026-09-13)."""
+
+    def test_default_capital_model_is_owned_cash(self):
+        from strategy_fit.capital_model import ACTIVE_CAPITAL_MODEL
+        assert ACTIVE_CAPITAL_MODEL is OWNED_CASH
+        assert ACTIVE_CAPITAL_MODEL.name == "owned_cash"
+        assert ACTIVE_CAPITAL_MODEL.funded_by_leverage is False
+        assert ACTIVE_CAPITAL_MODEL.max_hold_trading_days is None
+        assert ACTIVE_CAPITAL_MODEL.financing_bps_per_cal_day == 0
+
+    def test_financing_bps_defaults_to_zero_without_explicit_model(self):
+        """No capital_model passed → falls back to ACTIVE_CAPITAL_MODEL (OWNED_CASH)."""
+        assert financing_bps(WED, 1) == pytest.approx(0.0)
+
+    def test_financing_bps_is_nonzero_when_leveraged_sleeve_explicit(self):
+        """Passing capital_model=LEVERAGED_SLEEVE explicitly restores financing."""
+        assert financing_bps(WED, 1, capital_model=LEVERAGED_SLEEVE) == pytest.approx(30.0)
+
+    def test_leveraged_sleeve_model_constants(self):
+        assert LEVERAGED_SLEEVE.funded_by_leverage is True
+        assert LEVERAGED_SLEEVE.max_hold_trading_days == 2
+        assert LEVERAGED_SLEEVE.financing_bps_per_cal_day == 10

@@ -54,13 +54,25 @@ from __future__ import annotations
 from datetime import date as _date
 
 from lib.market_calendar import CALENDAR as _CALENDAR
+from strategy_fit.capital_model import ACTIVE_CAPITAL_MODEL, CapitalModel
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 FINANCING_BPS_PER_CAL_DAY: int = 10
-"""Financing rate: 10 bps per calendar day the borrow is outstanding (ADR-0011)."""
+"""
+Financing rate: 10 bps per calendar day the borrow is outstanding (ADR-0011).
+
+.. deprecated:: ADR-0015 (2026-09-13)
+    Kept for backward compatibility; equal to
+    ``strategy_fit.capital_model.LEVERAGED_SLEEVE.financing_bps_per_cal_day``.
+    Since leverage is now optional, the rate actually applied by
+    :func:`financing_bps` and friends comes from the active (or explicitly
+    passed) ``CapitalModel``, not from this constant — a model with
+    ``funded_by_leverage=False`` (e.g. ``OWNED_CASH``) charges 0 regardless of
+    this value.
+"""
 
 SETTLEMENT_TRADING_DAYS: int = 2
 """
@@ -203,11 +215,15 @@ def financing_bps(
     hold_trading_days: int,
     *,
     entry_date: _date | None = None,
+    capital_model: CapitalModel | None = None,
 ) -> float:
     """
     Financing cost in basis points for a given entry day-of-week and hold.
 
-    Formula: FINANCING_BPS_PER_CAL_DAY × calendar_days_outstanding(…)
+    Formula: capital_model.financing_bps_per_cal_day × calendar_days_outstanding(…)
+
+    Returns exactly 0.0 when the capital model is not funded by leverage (or
+    its rate is 0) — owned cash carries no financing charge (ADR-0015).
 
     Parameters
     ----------
@@ -218,14 +234,20 @@ def financing_bps(
     entry_date : date | None
         Actual calendar date of entry. When provided, enables holiday-aware
         financing calculation via the market calendar.
+    capital_model : CapitalModel or None
+        The capital model funding the position. Defaults to
+        ``strategy_fit.capital_model.ACTIVE_CAPITAL_MODEL`` when not supplied.
 
     Returns
     -------
     float
         Financing cost in bps.
     """
+    model = capital_model if capital_model is not None else ACTIVE_CAPITAL_MODEL
+    if not model.funded_by_leverage or model.financing_bps_per_cal_day == 0:
+        return 0.0
     return float(
-        FINANCING_BPS_PER_CAL_DAY
+        model.financing_bps_per_cal_day
         * calendar_days_outstanding(entry_dow, hold_trading_days, entry_date=entry_date)
     )
 
@@ -235,6 +257,8 @@ def full_pass_hurdle_bps(
     modelled_impact_bps: float,
     entry_dow: int,
     hold_trading_days: int,
+    *,
+    capital_model: CapitalModel | None = None,
 ) -> float:
     """
     Full cost hurdle a strategy's net edge must exceed to pass the gate.
@@ -244,6 +268,8 @@ def full_pass_hurdle_bps(
     The 40 bps round-trip fee is already baked into ``min_edge_to_clear_bps``
     (plan-09 annotation: min_spread_bps + ROUND_TRIP_BPS).  Financing is the
     additional ADR-0011 term and must not be double-counted with the fee.
+    Under a capital model with no leverage (e.g. ``OWNED_CASH``, ADR-0015),
+    financing contributes exactly 0.0 and the hurdle is min_edge + impact.
 
     Parameters
     ----------
@@ -256,19 +282,26 @@ def full_pass_hurdle_bps(
         Day-of-week of entry (0=Mon … 4=Fri).
     hold_trading_days : int
         Position hold in trading days.
+    capital_model : CapitalModel or None
+        The capital model funding the position. Defaults to
+        ``strategy_fit.capital_model.ACTIVE_CAPITAL_MODEL`` when not supplied.
 
     Returns
     -------
     float
         Full cost hurdle in bps.
     """
-    return min_edge_to_clear_bps + modelled_impact_bps + financing_bps(entry_dow, hold_trading_days)
+    return min_edge_to_clear_bps + modelled_impact_bps + financing_bps(
+        entry_dow, hold_trading_days, capital_model=capital_model
+    )
 
 
 def best_feasible_hurdle_bps(
     min_edge_to_clear_bps: float,
     modelled_impact_bps: float,
     hold_trading_days: int,
+    *,
+    capital_model: CapitalModel | None = None,
 ) -> tuple[float, int]:
     """
     Return the minimum cost hurdle achievable by choosing the cheapest entry day.
@@ -297,6 +330,11 @@ def best_feasible_hurdle_bps(
         Estimated market-impact / slippage.
     hold_trading_days : int
         Position hold in trading days (0 = intraday/same-day).
+    capital_model : CapitalModel or None
+        The capital model funding the position. Defaults to
+        ``strategy_fit.capital_model.ACTIVE_CAPITAL_MODEL`` when not supplied.
+        Under a model with no leverage, financing is 0 at every entry day, so
+        all five weekdays tie and ``best_dow`` is Monday (index 0).
 
     Returns
     -------
@@ -311,6 +349,7 @@ def best_feasible_hurdle_bps(
             modelled_impact_bps=modelled_impact_bps,
             entry_dow=dow,
             hold_trading_days=hold_trading_days,
+            capital_model=capital_model,
         )
         if hurdle < best_hurdle:
             best_hurdle = hurdle
@@ -324,6 +363,8 @@ def passes_gate(
     modelled_impact_bps: float,
     entry_dow: int,
     hold_trading_days: int,
+    *,
+    capital_model: CapitalModel | None = None,
 ) -> bool:
     """
     Return True if ``net_edge_bps`` strictly exceeds the full pass hurdle.
@@ -343,6 +384,9 @@ def passes_gate(
         Day-of-week of entry.
     hold_trading_days : int
         Position hold in trading days.
+    capital_model : CapitalModel or None
+        The capital model funding the position. Defaults to
+        ``strategy_fit.capital_model.ACTIVE_CAPITAL_MODEL`` when not supplied.
 
     Returns
     -------
@@ -354,5 +398,6 @@ def passes_gate(
         modelled_impact_bps=modelled_impact_bps,
         entry_dow=entry_dow,
         hold_trading_days=hold_trading_days,
+        capital_model=capital_model,
     )
     return net_edge_bps > hurdle
