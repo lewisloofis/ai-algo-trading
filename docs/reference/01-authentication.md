@@ -245,10 +245,11 @@ GET https://exodus.stockbit.com/sekuritas/auth/token
 Authorization: Bearer <main access token>
 ```
 
-Response:
+Response — **wrapped in the standard `data` envelope**, confirmed live
+(HTTP 200); an earlier draft of this doc showed it bare:
 
 ```json
-{ "token": "<login_token>", "target": "2" }
+{ "message": "OK", "data": { "token": "<login_token>", "target": "2" } }
 ```
 
 `target` selects which trading backend to use:

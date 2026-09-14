@@ -80,9 +80,9 @@ Response `data` is a `CashInfo` object:
 | `trade_limit` | double | Total funded limit (credit + cash) for the regular account. |
 | `trade_balance` | double | Remaining regular buying power (after open-buy reservations). **Use this to size new regular buy orders.** |
 | `day_trade_buying_power` | double | Gross intraday buying power (leverage applied). |
-| `day_trade_leverage` | double | Leverage multiplier in effect for the sub-account. |
+| `day_trade_leverage` | double | **Not a multiplier.** Verified live: an IDR amount (observed as exactly 4× available cash on a day-trade-eligible name; `0` on a name that isn't day-trade eligible). An earlier draft of this doc called it a "leverage multiplier in effect" — that was wrong. |
 | `day_trade_trading_balance` | double | Remaining day-trade buying power after open reservations. |
-| `margin` | object | Present only for margin accounts; see §1.3. |
+| `margin` | object | **Always present**, for every account — not "only for margin accounts" as an earlier draft of this doc said. A non-margin account gets a `margin` object with `status: MARGIN_ACCOUNT_STATUS_UNREGISTERED` and zeros in every other field; see §1.3. Because of this, `margin != nil` / "is the field present" is **not** a valid "is this a margin account" check — read `status` instead. |
 
 Source: proto `sb-protos/proto/securities/trm/core/balance/public/v2/balance.proto:43-88`,
 web client call `sb-web/src/global/Securities/api/balance.ts:6-15`,
@@ -167,6 +167,14 @@ Returns a `PortfolioList` containing:
 - `results[]` — regular account positions as `PortfolioItem` (see §2.2).
 - `day_trade[]` — day-trade virtual-account positions, same shape.
 
+**Confirmed live, not in scope for a read-only reconciliation client but
+worth recording so this table isn't mistaken for exhaustive:** the response
+also carries top-level `smart_order_info` and `transfer_info` (the latter
+"only filled on SETTLED portfolio list query" per the proto comment), and
+each `PortfolioItem` additionally carries `company`, `exercise`,
+`margin_info`, `trading_end`, and `type`. None of these are documented
+further here — see the proto source directly if you need them.
+
 Source: proto service `sb-protos/proto/securities/trm/core/portfolio/public/v2/portfolio.proto:21-23`,
 web client calls `sb-web/src/lib/api/trade.ts:42-51`.
 
@@ -200,10 +208,45 @@ sb-protos/proto/securities/trm/core/portfolio/entity/v2/portfolio.proto:64-76
 | Field | Meaning |
 |-------|---------|
 | `stock_on_hand` | Raw share count held by the custodian. |
-| `available` | **T+2 settled lots and shares — what you can sell right now.** |
-| `balance` | Total position including unsettled shares (available + unsettled). This is the value shown in most portfolio UIs. |
-| `unsettled` | `balance − available`: shares from recent buys that are not yet T+2 settled and **cannot be sold**. |
+| `available` | **Settled AND not already committed to a resting sell order — what you can sell right now.** See the correction below; this is *not* simply "T+2 settled". |
+| `balance` | The true total holding — independent of settlement state and of any resting order. This is the value shown in most portfolio UIs. |
+| `unsettled` | Shares from recent buys that are not yet T+2 settled and **cannot be sold**. See the correction below: `unsettled` is **not** `balance − available` in general. |
 | `unsettled_until_at` | Date until which the unsettled portion remains locked. Always set to the next trading day; individual settlement dates per-trade are not exposed at this level (see proto comment at line 73-75). |
+
+**Correction: `unsettled = balance − available` is wrong.** An earlier
+version of this doc stated that identity and code built on it (a
+`BalanceConsistent()` check comparing `available + unsettled` to `balance`).
+Verified live against a real account: a name with a resting GTC sell order
+for its entire position had `available = 0` and `unsettled = 0` while
+`balance` held the full amount. Cross-checked against `GET
+/order/v2/list`: the open order's `qty.lot_open × 100` closed the gap to the
+share. The actual relation is a **three-way** identity:
+
+```
+balance = available + unsettled + reserved_by_open_sell_orders
+```
+
+`available` means "settled **and not already committed to a resting sell
+order**" — a share can't be sold twice any more than an unsettled share can
+be sold at all. It remains the correct (and only) basis for *sizing a new
+sell* (see the note below), but it is **not** a position-truth signal by
+itself, and neither `available + unsettled` nor `balance` alone tells you
+whether the account is internally consistent without also knowing open
+orders. A reconciliation or sizing tool that doesn't fetch `GET
+/order/v2/list` should treat a gap between `available + unsettled` and
+`balance` as *unresolved*, not as a broker error — it is very often just a
+resting order.
+
+**`unsettled_until_at` is a `google.type.Date` object, not a date string.**
+The field is `*date.Date` at portfolio.proto line 73-ish (see the proto path
+below), and the live JSON response confirms it: `{"year": 2026, "month": 9,
+"day": 16}`, not `"2026-09-16"`. An earlier draft of this doc (and the code
+it informed) treated it as a plain string — that broke a decoder outright
+against a real account, since the field is present on every position.
+**The zero-value sentinel is `{"year": 1, "month": 1, "day": 1}`** for a
+position with nothing unsettled, not an omitted field and not
+`{0, 0, 0}` — check for both when treating "no unsettled date" as the
+condition.
 
 The proto comment on `available` explicitly notes: _"this will be T+2
 (previously TX)"_ — confirming that only fully settled shares are counted here.
@@ -408,17 +451,22 @@ The Stockbit backend enforces this in both directions:
 **For shares (bought shares):**
 - Shares bought on day T appear in `PortfolioQty.balance` immediately (so the
   UI can show the total holding), but are captured in `unsettled` until day T+2.
-- Only `available.lot / available.share` reflects T+2-settled, sellable shares.
+- `available.lot / available.share` reflects T+2-settled shares that are
+  *also* not already committed to a resting sell order — see the correction
+  in §2.2.1. Settlement is only half of what keeps a share out of `available`.
 - `unsettled_until_at` gives the date until which the unsettled shares are locked.
 
 ```
-PortfolioQty.balance = PortfolioQty.available + PortfolioQty.unsettled
+PortfolioQty.balance = PortfolioQty.available + PortfolioQty.unsettled + reserved_by_open_sell_orders
 ```
+
+(§2.2.1 has the full correction and the live evidence for the third term —
+an earlier version of this doc omitted it.)
 
 The proto comment on `balance` confirms: _"previously balance_lot, balance_share.
 this still will be TX (since we need to show it on porto)"_ — meaning the display
-balance intentionally includes unsettled shares, while `available` is strictly
-settled.
+balance intentionally includes unsettled shares, while `available` is net of
+settlement *and* resting orders.
 
 Source: `sb-protos/proto/securities/trm/core/portfolio/entity/v2/portfolio.proto:64-76`.
 
