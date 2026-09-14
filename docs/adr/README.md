@@ -19,8 +19,9 @@ algo-trading project, using a lightweight [ADR](https://adr.github.io/) format.
 | [0012](./0012-market-calendar-single-source-cross-language.md) | Market calendar is one curated source of truth, read by thin per-language clients | Proposed |
 | [0013](./0013-one-strategy-interface-and-collector-public-packages.md) | One Strategy interface for live and replay; collector packages promoted to public API | Accepted |
 | [0014](./0014-financing-accrues-between-settlement-dates.md) | Financing accrues between settlement dates, not from the trade date | Accepted |
-| [0015](./0015-leverage-optional-horizon-ceiling-lifted.md) | Leverage is optional; the ~2-trading-day horizon ceiling is lifted for owned-cash strategies | Accepted |
+| [0015](./0015-leverage-optional-horizon-ceiling-lifted.md) | Leverage is optional; the ~2-trading-day horizon ceiling is lifted for owned-cash strategies | Accepted · amended by [0017](./0017-sleeve-is-a-funded-sub-account.md) |
 | [0016](./0016-alpha-and-infrastructure-are-separate-tracks.md) | Alpha discovery and trading infrastructure are separate tracks; live routing is gated on size, not on edge | Accepted |
+| [0017](./0017-sleeve-is-a-funded-sub-account.md) | The sleeve is a separate funded broker sub-account; its capital is measured, not assumed | Proposed |
 
 ## When to write an ADR
 
