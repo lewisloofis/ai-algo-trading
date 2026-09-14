@@ -1,0 +1,17 @@
+{
+  "message": "success",
+  "data": {
+    "trade_limit": 60000000,
+    "trade_balance": 40000000,
+    "day_trade_buying_power": 0,
+    "day_trade_leverage": 0,
+    "day_trade_trading_balance": 0,
+    "margin": {
+      "buying_power": 0,
+      "status": "MARGIN_ACCOUNT_STATUS_UNREGISTERED",
+      "trading_balance": 0,
+      "total_debt": 0,
+      "total_collateral": 0
+    }
+  }
+}

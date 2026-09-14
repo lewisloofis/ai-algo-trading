@@ -1,0 +1,15 @@
+{
+  "message": "success",
+  "data": {
+    "summary": {
+      "trading": { "balance": 40000000 },
+      "amount": { "invested": 0, "allocated": 0, "credit_limit": 0 },
+      "profit_loss": { "net": 0, "unrealised": 0, "realised": 0 },
+      "gain": 0,
+      "equity": 40000000,
+      "debt": { "ratio": 0, "total": 0, "market_value": 0, "buffer": { "value": 0, "percentage": 0 } }
+    },
+    "results": [],
+    "day_trade": []
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "summary": {
+    "trading": { "balance": 12345678 },
+    "amount": { "invested": 9200000, "allocated": 0, "credit_limit": 0 },
+    "profit_loss": { "net": 300000, "unrealised": 300000, "realised": 0 },
+    "gain": 3.26,
+    "equity": 9500000,
+    "debt": { "ratio": 0, "total": 0, "market_value": 0, "buffer": { "value": 0, "percentage": 0 } }
+  },
+  "results": [
+    {
+      "symbol": "BBCA",
+      "is_sharia": false,
+      "qty": {
+        "stock_on_hand": 1000,
+        "available": { "lot": 10, "share": 1000 },
+        "balance": { "lot": 10, "share": 1000 },
+        "unsettled": { "lot": 0, "share": 0 },
+        "unsettled_until_at": { "year": 1, "month": 1, "day": 1 }
+      },
+      "price": { "latest": 9500, "average": { "price": 9200, "fee": 9213.8 } },
+      "asset": { "unrealised": { "market_value": 9500000, "profit_loss": 300000, "gain": 3.26 }, "amount_invested": 9200000 },
+      "flags": { "allow_order": true, "have_smart_order": false, "can_buy": true, "can_sell": true, "allow_market_order": true },
+      "haircut": { "trading_limit": 0.8, "margin_trading": 0.7 }
+    }
+  ],
+  "day_trade": []
+}

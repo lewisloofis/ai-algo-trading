@@ -1,0 +1,29 @@
+{
+  "message": "OK",
+  "data": [
+    {
+      "symbol": "ZZZZ",
+      "side": "SIDE_SELL",
+      "status_text": "ACTIVE",
+      "qty": { "lot_open": 25, "lot_done": 0, "lot_total": 25 },
+      "gtc": { "is_gtc": true },
+      "price": { "order": 500 }
+    },
+    {
+      "symbol": "AAAA",
+      "side": "SIDE_BUY",
+      "status_text": "ACTIVE",
+      "qty": { "lot_open": 5, "lot_done": 0, "lot_total": 5 },
+      "gtc": { "is_gtc": false },
+      "price": { "order": 950 }
+    },
+    {
+      "symbol": "YYYY",
+      "side": "SIDE_SELL",
+      "status_text": "FILLED",
+      "qty": { "lot_open": 0, "lot_done": 10, "lot_total": 10 },
+      "gtc": { "is_gtc": false },
+      "price": { "order": 300 }
+    }
+  ]
+}

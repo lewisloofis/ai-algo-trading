@@ -1,0 +1,14 @@
+{
+  "message": "success",
+  "data": {
+    "aggregated_portfolio_summary": {
+      "trading": { "balance": 12345678 },
+      "amount": { "invested": 15400000, "allocated": 0, "credit_limit": 0 },
+      "profit_loss": { "net": 500000, "unrealised": 500000, "realised": 0 },
+      "gain": 3.25,
+      "equity": 15900000,
+      "debt": { "ratio": 93.55, "total": 0, "market_value": 0, "buffer": { "value": 0, "percentage": 0 } }
+    },
+    "summary_per_portfolios": []
+  }
+}

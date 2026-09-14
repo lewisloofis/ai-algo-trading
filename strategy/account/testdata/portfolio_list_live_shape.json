@@ -1,0 +1,53 @@
+{
+  "message": "OK",
+  "data": {
+    "smart_order_info": { "enabled": false },
+    "summary": {
+      "trading": { "balance": 40000000 },
+      "amount": { "invested": 12500000, "allocated": 0, "credit_limit": 0 },
+      "profit_loss": { "net": 0, "unrealised": 0, "realised": 0 },
+      "gain": 0,
+      "equity": 12500000,
+      "debt": { "ratio": 0, "total": 0, "market_value": 0, "buffer": { "value": 0, "percentage": 0 } }
+    },
+    "results": [
+      {
+        "symbol": "AAAA",
+        "company": { "name": "Synthetic Co A" },
+        "type": "",
+        "is_sharia": false,
+        "qty": {
+          "stock_on_hand": 500,
+          "available": { "lot": 5, "share": 500 },
+          "balance": { "lot": 5, "share": 500 },
+          "unsettled": { "lot": 0, "share": 0 },
+          "unsettled_until_at": { "year": 1, "month": 1, "day": 1 }
+        },
+        "price": { "latest": 1000, "average": { "price": 950, "fee": 951.4 } },
+        "asset": { "unrealised": { "market_value": 500000, "profit_loss": 24300, "gain": 5.1 }, "amount_invested": 475000 },
+        "flags": { "allow_order": true, "have_smart_order": false, "can_buy": true, "can_sell": true, "allow_market_order": true },
+        "haircut": { "trading_limit": 0.8, "margin_trading": 0.7 },
+        "exercise": null,
+        "margin_info": null,
+        "trading_end": null
+      },
+      {
+        "symbol": "ZZZZ",
+        "is_sharia": false,
+        "qty": {
+          "stock_on_hand": 2500,
+          "available": { "lot": 0, "share": 0 },
+          "balance": { "lot": 25, "share": 2500 },
+          "unsettled": { "lot": 0, "share": 0 },
+          "unsettled_until_at": { "year": 1, "month": 1, "day": 1 }
+        },
+        "price": { "latest": 500, "average": { "price": 480, "fee": 480.7 } },
+        "asset": { "unrealised": { "market_value": 1250000, "profit_loss": 48250, "gain": 4.02 }, "amount_invested": 1201750 },
+        "flags": { "allow_order": true, "have_smart_order": false, "can_buy": true, "can_sell": false, "allow_market_order": true },
+        "haircut": { "trading_limit": 0.8, "margin_trading": 0.7 }
+      }
+    ],
+    "day_trade": [],
+    "transfer_info": { "note": "only present on a SETTLED portfolio list query" }
+  }
+}

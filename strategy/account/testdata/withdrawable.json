@@ -1,0 +1,19 @@
+{
+  "message": "success",
+  "data": {
+    "balance": {
+      "withdrawable": 5000000,
+      "transaction": 40000000,
+      "pending": 1000000,
+      "leverage_liability": 0,
+      "net_withdrawable": 5000000,
+      "transferable": 5000000
+    },
+    "settlement_schedules": [
+      { "title": "T+0", "formatted_date": "13/09/26", "balance": 0 },
+      { "title": "T+1", "formatted_date": "14/09/26", "balance": 500000 },
+      { "title": "T+2", "formatted_date": "15/09/26", "balance": 1000000 }
+    ],
+    "legends": []
+  }
+}
