@@ -30,6 +30,23 @@ All facts below are cross-verified across `sb-web`, `sb-ios`, `sb-android`, and
 | Portfolio summary | `GET /portfolio/v2/summary` | P&L, debt ratio |
 | Trading limits (margin, order caps) | `GET /trading/info` | `margin_trading.*`, `order_count_limit.*`, `split_order.*` |
 
+### 0.1 Multi-sub-account scoping
+
+One trading token can address several sub-accounts under the same login
+(confirmed live: a token stamped `acn=0001958` addressed a second
+sub-account, `008488L`, fine by query parameter — no second PIN handshake).
+That makes account scoping a per-endpoint question, and the answer is not
+uniform. Measured against a real multi-account login:
+
+| Endpoint | Scoping parameter(s) | Honoured? |
+|---|---|---|
+| `GET /portfolio/v2/list` | `acc_no` | **Yes** — an empty sub-account correctly returned 0 results while the token's own account had holdings. |
+| `GET /balance/withdrawable` | `balance_scope=BALANCE_SCOPE_SELECTED_ACCOUNT` + `account_number` | **Yes** — scoped and aggregate calls returned materially different numbers. |
+| `GET /balance/cash/info` | *(none — §1.2 already notes the web client doesn't send `acc_no` explicitly)* | **No** — always answers for the trading token's own account, whichever sub-account you're trying to size a buy for. |
+| `GET /order/v2/list` | *(none)* | **No**, and there is no parameter to even try: order rows carry no account field at all. The full confirmed key set is `action, amount, corpaction_info, day_trade, force_sell, group_id, gtc, is_sharia, leverage_type, market_order_id, message, nego_in_app, order_id, order_source, platform_order_type, prev_order_id, price, qty, securities_kind, side, smart_order, status_text, symbol, time, time_utc` — every sub-account's resting orders come back in one list, indistinguishable by anything the endpoint returns. The only reliable discriminator is `order_id` matched against your own record of which IDs you placed. |
+
+**Practical consequence:** a multi-account setup cannot use `/balance/cash/info` as sub-account-scoped buying power, and cannot use `/order/v2/list` to compute a sub-account's open-order reservations without independently tracking which `order_id`s belong to that sub-account. Both are real constraints on any tool built on this API, not implementation gaps to route around with a cleverer query parameter.
+
 ---
 
 ## 1. Cash / buying power

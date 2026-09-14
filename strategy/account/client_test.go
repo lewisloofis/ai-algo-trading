@@ -22,6 +22,22 @@ func (f *fakeTokenSource) TradingToken() string {
 	return f.token
 }
 
+// testAccNo is a synthetic account number used across tests that don't
+// exercise accNo-specific behavior — New requires one, and no test should
+// need to care what it is beyond "non-empty".
+const testAccNo = "TEST0001"
+
+// newTestClient constructs a Client for tests, failing the test on error
+// rather than making every call site handle New's error return.
+func newTestClient(t *testing.T, host string, tokens TokenSource, httpClient *http.Client) *Client {
+	t.Helper()
+	c, err := New(host, testAccNo, tokens, httpClient)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return c
+}
+
 // serveFixture starts an httptest.Server that returns the named testdata
 // file with the given status for every request, and records the last
 // request it received.
@@ -63,9 +79,9 @@ func serveJSON(t *testing.T, status int, body string) *httptest.Server {
 func TestPortfolioList_ParsesEnvelope(t *testing.T) {
 	srv, _ := serveFixture(t, http.StatusOK, "testdata/portfolio_list.json")
 	tokens := &fakeTokenSource{token: "trading-token"}
-	c := New(srv.URL, tokens, srv.Client())
+	c := newTestClient(t, srv.URL, tokens, srv.Client())
 
-	list, err := c.PortfolioList(context.Background(), "")
+	list, err := c.PortfolioList(context.Background())
 	if err != nil {
 		t.Fatalf("PortfolioList: %v", err)
 	}
@@ -88,9 +104,9 @@ func TestPortfolioList_ParsesEnvelope(t *testing.T) {
 
 func TestPortfolioList_EmptyResultsIsNotAnError(t *testing.T) {
 	srv, _ := serveFixture(t, http.StatusOK, "testdata/portfolio_list_empty.json")
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 
-	list, err := c.PortfolioList(context.Background(), "")
+	list, err := c.PortfolioList(context.Background())
 	if err != nil {
 		t.Fatalf("PortfolioList: %v", err)
 	}
@@ -104,9 +120,9 @@ func TestPortfolioList_FlattenedEnvelopeFallback(t *testing.T) {
 	// (05-account-state.md warns the nesting varies); the client must still
 	// parse the payload from the top level.
 	srv, _ := serveFixture(t, http.StatusOK, "testdata/portfolio_list_flat.json")
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 
-	list, err := c.PortfolioList(context.Background(), "")
+	list, err := c.PortfolioList(context.Background())
 	if err != nil {
 		t.Fatalf("PortfolioList: %v", err)
 	}
@@ -119,9 +135,9 @@ func TestPortfolioList_NullDataIsAnErrorNotEmptyPortfolio(t *testing.T) {
 	// This is the case the team is specifically guarding against: a
 	// malformed 200 must not silently read as "you hold nothing".
 	srv, _ := serveFixture(t, http.StatusOK, "testdata/portfolio_list_null_data.json")
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 
-	_, err := c.PortfolioList(context.Background(), "")
+	_, err := c.PortfolioList(context.Background())
 	if err == nil {
 		t.Fatal("PortfolioList: got nil error for null data field, want ErrEmptyResponse")
 	}
@@ -132,9 +148,9 @@ func TestPortfolioList_NullDataIsAnErrorNotEmptyPortfolio(t *testing.T) {
 
 func TestPortfolioList_EmptyBodyIsAnError(t *testing.T) {
 	srv, _ := serveFixture(t, http.StatusOK, "")
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 
-	_, err := c.PortfolioList(context.Background(), "")
+	_, err := c.PortfolioList(context.Background())
 	if !errors.Is(err, ErrEmptyResponse) {
 		t.Errorf("PortfolioList error = %v, want errors.Is(err, ErrEmptyResponse)", err)
 	}
@@ -143,9 +159,9 @@ func TestPortfolioList_EmptyBodyIsAnError(t *testing.T) {
 func TestGet_401And403ReturnErrUnauthorized(t *testing.T) {
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		srv, _ := serveFixture(t, status, "")
-		c := New(srv.URL, &fakeTokenSource{token: "expired"}, srv.Client())
+		c := newTestClient(t, srv.URL, &fakeTokenSource{token: "expired"}, srv.Client())
 
-		_, err := c.PortfolioList(context.Background(), "")
+		_, err := c.PortfolioList(context.Background())
 		if !errors.Is(err, ErrUnauthorized) {
 			t.Errorf("status %d: PortfolioList error = %v, want errors.Is(err, ErrUnauthorized)", status, err)
 		}
@@ -157,9 +173,9 @@ func TestGet_401And403ReturnErrUnauthorized(t *testing.T) {
 
 func TestGet_OtherNon2xxReturnsAPIError(t *testing.T) {
 	srv, _ := serveFixture(t, http.StatusInternalServerError, "")
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 
-	_, err := c.PortfolioList(context.Background(), "")
+	_, err := c.PortfolioList(context.Background())
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("PortfolioList error = %v (%T), want *APIError", err, err)
@@ -178,7 +194,7 @@ func TestGet_SendsBearerAuthorizationHeader(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := New(srv.URL, &fakeTokenSource{token: "secret-trading-token"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "secret-trading-token"}, srv.Client())
 	_, _ = c.CashInfo(context.Background(), "BBCA")
 
 	if want := "Bearer secret-trading-token"; gotAuth != want {
@@ -188,7 +204,7 @@ func TestGet_SendsBearerAuthorizationHeader(t *testing.T) {
 
 func TestCashInfo_ParsesEnvelope(t *testing.T) {
 	srv, _ := serveFixture(t, http.StatusOK, "testdata/cash_info.json")
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 
 	info, err := c.CashInfo(context.Background(), "BBCA")
 	if err != nil {
@@ -206,6 +222,11 @@ func TestCashInfo_ParsesEnvelope(t *testing.T) {
 	if info.Margin.Status != "MARGIN_ACCOUNT_STATUS_UNREGISTERED" {
 		t.Errorf("Margin.Status = %q, want MARGIN_ACCOUNT_STATUS_UNREGISTERED", info.Margin.Status)
 	}
+	// CashInfo must be self-describing as account-wide, not sleeve-scoped —
+	// confirmed live, this endpoint ignores account scoping entirely.
+	if info.ScopeWarning != CashInfoNotAccountScoped {
+		t.Errorf("ScopeWarning = %q, want %q", info.ScopeWarning, CashInfoNotAccountScoped)
+	}
 }
 
 func TestCashInfo_SendsStockCodeQueryParam(t *testing.T) {
@@ -217,7 +238,7 @@ func TestCashInfo_SendsStockCodeQueryParam(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 	_, _ = c.CashInfo(context.Background(), "TLKM")
 
 	if gotQuery != "TLKM" {
@@ -225,9 +246,64 @@ func TestCashInfo_SendsStockCodeQueryParam(t *testing.T) {
 	}
 }
 
+// TestPortfolioList_SendsAccNoQueryParam guards the account-scoping fix:
+// confirmed live, /portfolio/v2/list honours acc_no, and Client must always
+// send the account it was constructed for.
+func TestPortfolioList_SendsAccNoQueryParam(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("acc_no")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := New(srv.URL, "008488L", &fakeTokenSource{token: "t"}, srv.Client())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := c.PortfolioList(context.Background()); err != nil {
+		t.Fatalf("PortfolioList: %v", err)
+	}
+
+	if gotQuery != "008488L" {
+		t.Errorf("acc_no query param = %q, want 008488L", gotQuery)
+	}
+}
+
+// TestWithdrawable_SendsAccountScopingQueryParams guards the same fix for
+// Withdrawable: confirmed live, /balance/withdrawable honours
+// balance_scope=BALANCE_SCOPE_SELECTED_ACCOUNT + account_number, and
+// omitting them silently aggregates across every sub-account.
+func TestWithdrawable_SendsAccountScopingQueryParams(t *testing.T) {
+	var gotScope, gotAccNo string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotScope = r.URL.Query().Get("balance_scope")
+		gotAccNo = r.URL.Query().Get("account_number")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := New(srv.URL, "008488L", &fakeTokenSource{token: "t"}, srv.Client())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := c.Withdrawable(context.Background()); err != nil {
+		t.Fatalf("Withdrawable: %v", err)
+	}
+
+	if gotScope != "BALANCE_SCOPE_SELECTED_ACCOUNT" {
+		t.Errorf("balance_scope query param = %q, want BALANCE_SCOPE_SELECTED_ACCOUNT", gotScope)
+	}
+	if gotAccNo != "008488L" {
+		t.Errorf("account_number query param = %q, want 008488L", gotAccNo)
+	}
+}
+
 func TestWithdrawable_ParsesEnvelope(t *testing.T) {
 	srv, _ := serveFixture(t, http.StatusOK, "testdata/withdrawable.json")
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 
 	w, err := c.Withdrawable(context.Background())
 	if err != nil {
@@ -246,7 +322,7 @@ func TestWithdrawable_ParsesEnvelope(t *testing.T) {
 
 func TestPortfolioSummary_ParsesEnvelope(t *testing.T) {
 	srv, _ := serveFixture(t, http.StatusOK, "testdata/portfolio_summary.json")
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 
 	summary, err := c.PortfolioSummary(context.Background())
 	if err != nil {
@@ -266,9 +342,9 @@ func TestPortfolioSummary_ParsesEnvelope(t *testing.T) {
 // from (unsettled_until_at was originally typed as a bare string).
 func TestPortfolioList_LiveShapeExtraFieldsAndUnsettledSentinel(t *testing.T) {
 	srv, _ := serveFixture(t, http.StatusOK, "testdata/portfolio_list_live_shape.json")
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 
-	list, err := c.PortfolioList(context.Background(), "")
+	list, err := c.PortfolioList(context.Background())
 	if err != nil {
 		t.Fatalf("PortfolioList: %v", err)
 	}
@@ -327,11 +403,27 @@ func TestDate_StringAndIsZero(t *testing.T) {
 }
 
 func TestNew_DefaultsHostAndHTTPClient(t *testing.T) {
-	c := New("", &fakeTokenSource{token: "t"}, nil)
+	c, err := New("", testAccNo, &fakeTokenSource{token: "t"}, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	if c.host != DefaultHost {
 		t.Errorf("host = %q, want %q", c.host, DefaultHost)
 	}
 	if c.http == nil {
 		t.Error("http client is nil, want http.DefaultClient")
+	}
+}
+
+// TestNew_EmptyAccNoIsAConstructionError guards the failure mode this whole
+// change exists to prevent: an empty account number must never silently
+// fall through to whatever account the trading token itself belongs to.
+func TestNew_EmptyAccNoIsAConstructionError(t *testing.T) {
+	c, err := New("", "", &fakeTokenSource{token: "t"}, nil)
+	if err == nil {
+		t.Fatal("New with empty accNo: got nil error, want an error")
+	}
+	if c != nil {
+		t.Errorf("New with empty accNo: got non-nil Client %+v, want nil", c)
 	}
 }

@@ -146,11 +146,14 @@ func (v Verdict) String() string {
 // MarshalJSON renders the verdict as its String() label.
 func (v Verdict) MarshalJSON() ([]byte, error) { return json.Marshal(v.String()) }
 
-// Report is the full reconciliation output for one sink_kind. sink_kind is
-// carried on the report itself so nobody reads a paper reconciliation as a
-// live one.
+// Report is the full reconciliation output for one sink_kind, on one
+// account. Both are carried on the report itself so nobody reads a paper
+// reconciliation as a live one, or a core-book reconciliation as a sleeve
+// one — the same reasoning, applied to account scoping instead of sink
+// kind.
 type Report struct {
 	SinkKind      string       `json:"sink_kind"`
+	AccountNumber string       `json:"account_number"`
 	Verdict       Verdict      `json:"verdict"`
 	Divergences   []Divergence `json:"divergences"`
 	BrokerSymbols int          `json:"broker_symbols"`
@@ -194,22 +197,27 @@ func closeTo(a, b float64) bool {
 	return math.Abs(a-b) <= QuantityToleranceShares
 }
 
-// Reconcile compares broker-reported holdings (broker.Results) against the
-// position derived from our own post-trade store (derived) for sinkKind, and
-// returns a typed divergence report. Neither side is treated as the
-// authority — the report states what each says and classifies the
-// difference (docs/plans/18-alpha-and-infrastructure-split.md §5, B1).
+// Reconcile compares broker-reported holdings (broker.Results, already
+// scoped to accNo by the caller's Client) against the position derived from
+// our own post-trade store (derived) for sinkKind, and returns a typed
+// divergence report. Neither side is treated as the authority — the report
+// states what each says and classifies the difference
+// (docs/plans/18-alpha-and-infrastructure-split.md §5, B1).
 //
 // openOrders is the account's open orders (Client.OpenOrders) — needed to
 // compute how many of each symbol's shares are already committed to a
 // resting sell order, which the broker's `available` figure nets out (see
-// position.go's Settlement doc comment). Pass nil if the caller has no
-// open-orders data; every symbol's reservedSell is then treated as 0, which
-// will read as DivergenceSettlementInconsistent for any symbol that
-// actually has a resting sell — that is the correct, conservative failure
-// mode (flag it rather than guess) and not a reason to skip fetching orders.
-func Reconcile(sinkKind string, broker PortfolioList, openOrders []Order, derived []engine.DerivedPosition) Report {
-	reservedBySymbol := ReservedSellShares(openOrders)
+// position.go's Settlement doc comment). /order/v2/list returns every
+// sub-account's orders with no account attribution at all (confirmed live),
+// so openOrders is filtered to ourOrderIDs — normally
+// engine.PostTradeStore.OrderIDs(sinkKind) — before counting reservations;
+// see OwnReservedSellShares. Pass nil for either if the caller has no data;
+// every symbol's reservedSell is then treated as 0, which will read as
+// DivergenceSettlementInconsistent for any symbol that actually has a
+// resting sell of ours — that is the correct, conservative failure mode
+// (flag it rather than guess) and not a reason to skip fetching orders.
+func Reconcile(sinkKind, accNo string, broker PortfolioList, openOrders []Order, ourOrderIDs map[string]struct{}, derived []engine.DerivedPosition) Report {
+	reservedBySymbol := OwnReservedSellShares(openOrders, ourOrderIDs)
 
 	brokerBySymbol := make(map[string]Position, len(broker.Results))
 	for _, p := range broker.Results {
@@ -249,6 +257,7 @@ func Reconcile(sinkKind string, broker PortfolioList, openOrders []Order, derive
 
 	return Report{
 		SinkKind:      sinkKind,
+		AccountNumber: accNo,
 		Verdict:       verdict,
 		Divergences:   divergences,
 		BrokerSymbols: len(brokerBySymbol),

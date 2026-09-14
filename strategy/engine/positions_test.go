@@ -130,6 +130,43 @@ func TestDerivedPositions_NoFillsReturnsEmpty(t *testing.T) {
 	}
 }
 
+func TestOrderIDs_FiltersBySinkKindAndReturnsASet(t *testing.T) {
+	store := newTestStore(t)
+	var seq int64
+	insertFilledOrder(t, store, &seq, "live", "BBCA", "buy", 9200, 10, 13800, 1)
+	insertFilledOrder(t, store, &seq, "live", "TLKM", "sell", 3100, 5, 1937, 2)
+	insertFilledOrder(t, store, &seq, "paper", "AAAA", "buy", 500, 1, 75, 3)
+
+	got, err := store.OrderIDs("live")
+	if err != nil {
+		t.Fatalf("OrderIDs: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("OrderIDs(live) = %+v, want 2 entries", got)
+	}
+	if _, ok := got["BBCA-buy-1"]; !ok {
+		t.Errorf("OrderIDs(live) missing BBCA-buy-1: %+v", got)
+	}
+	if _, ok := got["TLKM-sell-3"]; !ok {
+		t.Errorf("OrderIDs(live) missing TLKM-sell-3: %+v", got)
+	}
+	if _, ok := got["AAAA-buy-5"]; ok {
+		t.Errorf("OrderIDs(live) unexpectedly contains a paper order id: %+v", got)
+	}
+}
+
+func TestOrderIDs_NoOrdersReturnsEmptySet(t *testing.T) {
+	store := newTestStore(t)
+
+	got, err := store.OrderIDs("live")
+	if err != nil {
+		t.Fatalf("OrderIDs: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("OrderIDs = %+v, want empty", got)
+	}
+}
+
 func TestAttributionsByStrategy_FiltersAndOrders(t *testing.T) {
 	store := newTestStore(t)
 	rows := []AttributionRow{

@@ -27,6 +27,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("account-recon", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	storePath := fs.String("store", "", "path to the SQLite post-trade store (required)")
+	accNo := fs.String("acc-no", "", "brokerage sub-account number to reconcile, e.g. the trading sleeve (required, no default)")
 	sinkKind := fs.String("sink-kind", "live", "sink_kind to reconcile against (e.g. live, paper)")
 	format := fs.String("format", "text", "output format: text|json")
 	timeout := fs.Duration("timeout", 20*time.Second, "HTTP timeout for the Carina request")
@@ -36,6 +37,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	if *storePath == "" {
 		fmt.Fprintln(stderr, "account-recon: --store is required")
+		fs.Usage()
+		return 2
+	}
+	if *accNo == "" {
+		// No default on purpose: falling back to some "default" account
+		// would silently reconcile whichever account the trading token
+		// itself belongs to (confirmed live: that can be a different,
+		// pre-existing core book, not the sleeve this bot trades).
+		fmt.Fprintln(stderr, "account-recon: --acc-no is required (the sub-account to reconcile; there is no safe default)")
 		fs.Usage()
 		return 2
 	}
@@ -64,12 +74,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	client := account.New(host, staticToken(token), &http.Client{Timeout: *timeout})
+	// Our own order IDs — the only reliable discriminator between "our
+	// resting orders" and "some other sub-account's", since /order/v2/list
+	// returns every sub-account's orders with no account attribution at all
+	// (see account.OpenOrders' doc comment).
+	ourOrderIDs, err := store.OrderIDs(*sinkKind)
+	if err != nil {
+		fmt.Fprintf(stderr, "account-recon: read our order ids: %v\n", err)
+		return 1
+	}
+
+	client, err := account.New(host, *accNo, staticToken(token), &http.Client{Timeout: *timeout})
+	if err != nil {
+		fmt.Fprintf(stderr, "account-recon: %v\n", err)
+		return 2
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	broker, err := client.PortfolioList(ctx, "")
+	broker, err := client.PortfolioList(ctx)
 	if err != nil {
 		fmt.Fprintf(stderr, "account-recon: fetch broker portfolio: %v\n", err)
 		return 1
@@ -86,7 +110,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	report := account.Reconcile(*sinkKind, broker, openOrders, derived)
+	report := account.Reconcile(*sinkKind, *accNo, broker, openOrders, ourOrderIDs, derived)
 
 	if err := printReport(stdout, report, *format); err != nil {
 		fmt.Fprintf(stderr, "account-recon: %v\n", err)
@@ -103,7 +127,7 @@ func printReport(w io.Writer, r account.Report, format string) error {
 		return enc.Encode(r)
 	}
 
-	fmt.Fprintf(w, "Reconciliation report — sink_kind=%s\n", r.SinkKind)
+	fmt.Fprintf(w, "Reconciliation report — sink_kind=%s acc_no=%s\n", r.SinkKind, r.AccountNumber)
 	fmt.Fprintf(w, "Verdict: %s (broker symbols=%d, store symbols=%d)\n", r.Verdict, r.BrokerSymbols, r.StoreSymbols)
 	if len(r.Divergences) == 0 {
 		fmt.Fprintln(w, "No divergences.")

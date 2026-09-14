@@ -130,6 +130,34 @@ func (s *PostTradeStore) DerivedPositions(sinkKind string) ([]DerivedPosition, e
 	return out, nil
 }
 
+// OrderIDs returns the set of order_id values recorded in order_intent under
+// sinkKind — this bot's own orders, as far as the store knows. It exists
+// because /order/v2/list (strategy/account.Client.OpenOrders) returns every
+// sub-account's orders with no account attribution at all: order_id is the
+// only reliable discriminator between "ours" and "some other account's",
+// and the store is the only place that knows which order_ids are ours (see
+// strategy/account.OwnReservedSellShares).
+func (s *PostTradeStore) OrderIDs(sinkKind string) (map[string]struct{}, error) {
+	rows, err := s.db.Query(`SELECT order_id FROM order_intent WHERE sink_kind = ?`, sinkKind)
+	if err != nil {
+		return nil, fmt.Errorf("order ids: query: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make(map[string]struct{})
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("order ids: scan: %w", err)
+		}
+		ids[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("order ids: iterate: %w", err)
+	}
+	return ids, nil
+}
+
 // AttributionsByStrategy returns every completed round-trip recorded for
 // strategyID, in entry order. The attribution table carries strategy_id but
 // not sink_kind (see the schema in store.go); a caller reconciling against

@@ -10,7 +10,7 @@ func TestClient_OpenOrders_ParsesBareArrayEnvelope(t *testing.T) {
 	// Confirmed live: unlike the portfolio/balance endpoints, this
 	// response's `data` field is a bare JSON array, not an object.
 	srv, _ := serveFixture(t, http.StatusOK, "testdata/open_orders.json")
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 
 	orders, err := c.OpenOrders(context.Background())
 	if err != nil {
@@ -32,7 +32,7 @@ func TestClient_OpenOrders_ParsesBareArrayEnvelope(t *testing.T) {
 
 func TestClient_OpenOrders_EmptyArrayIsNotAnError(t *testing.T) {
 	srv := serveJSON(t, http.StatusOK, `{"message":"OK","data":[]}`)
-	c := New(srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
 
 	orders, err := c.OpenOrders(context.Background())
 	if err != nil {

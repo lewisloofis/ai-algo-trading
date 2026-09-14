@@ -19,9 +19,19 @@ func brokerPosition(symbol string, available, balance, unsettled float64, amount
 }
 
 // activeSell builds an ACTIVE SIDE_SELL Order reserving lots*LotSize shares
-// of symbol — the shape ReservedSellShares filters for.
-func activeSell(symbol string, lots float64) Order {
-	return Order{Symbol: symbol, Side: activeSellSide, StatusText: activeSellStatus, Qty: OrderQty{LotOpen: lots}}
+// of symbol under orderID — the shape ReservedSellShares filters for.
+func activeSell(symbol, orderID string, lots float64) Order {
+	return Order{OrderID: orderID, Symbol: symbol, Side: activeSellSide, StatusText: activeSellStatus, Qty: OrderQty{LotOpen: lots}}
+}
+
+// orderIDSet builds the map[string]struct{} shape
+// engine.PostTradeStore.OrderIDs / OwnReservedSellShares expect.
+func orderIDSet(ids ...string) map[string]struct{} {
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set
 }
 
 func TestReconcile_CleanMatch(t *testing.T) {
@@ -32,7 +42,7 @@ func TestReconcile_CleanMatch(t *testing.T) {
 		{Symbol: "BBCA", Shares: 1000, CostBasisExFeeIDR: 9200000},
 	}
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if report.Verdict != VerdictMatch {
 		t.Fatalf("Verdict = %v, want MATCH; divergences=%+v", report.Verdict, report.Divergences)
@@ -51,7 +61,7 @@ func TestReconcile_HeldAtBrokerOnly(t *testing.T) {
 	}}
 	var derived []engine.DerivedPosition // store has nothing
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if report.Verdict != VerdictDivergent {
 		t.Fatalf("Verdict = %v, want DIVERGENT", report.Verdict)
@@ -77,7 +87,7 @@ func TestReconcile_HeldInStoreOnly(t *testing.T) {
 		{Symbol: "BBCA", Shares: 1000, CostBasisExFeeIDR: 9200000},
 	}
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if report.Verdict != VerdictDivergent {
 		t.Fatalf("Verdict = %v, want DIVERGENT", report.Verdict)
@@ -98,7 +108,7 @@ func TestReconcile_QuantityMismatch_GenuineBreak(t *testing.T) {
 		{Symbol: "BBCA", Shares: 1500, CostBasisExFeeIDR: 13800000},
 	}
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if report.Verdict != VerdictDivergent {
 		t.Fatalf("Verdict = %v, want DIVERGENT", report.Verdict)
@@ -126,7 +136,7 @@ func TestReconcile_QuantityShortfall(t *testing.T) {
 		{Symbol: "BBCA", Shares: 50, CostBasisExFeeIDR: 450000},
 	}
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if report.Verdict != VerdictDivergent {
 		t.Fatalf("Verdict = %v, want DIVERGENT", report.Verdict)
@@ -160,7 +170,7 @@ func TestReconcile_UnsettledLagProducesNoDivergenceOnceComparedAgainstBalance(t 
 		{Symbol: "BBCA", Shares: 150, CostBasisExFeeIDR: 900000}, // store matches balance
 	}
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if len(report.Divergences) != 0 {
 		t.Fatalf("Divergences = %+v, want none — DivergenceUnsettledOnly is retired, this case is just a clean match now", report.Divergences)
@@ -176,28 +186,58 @@ func TestReconcile_UnsettledLagProducesNoDivergenceOnceComparedAgainstBalance(t 
 // TestReconcile_RestingSellOrderExplainsTheGap is the real-account case that
 // falsified round 1's two-term BalanceConsistent: a resting GTC sell for the
 // entire position drives Available and Unsettled to 0 while Balance still
-// holds everything. Feeding the resting order in through openOrders must
-// resolve this cleanly — no DivergenceSettlementInconsistent, no quantity
-// mismatch — since it is a completely normal account state. Numbers here
-// are synthetic, not the real account's.
+// holds everything. Feeding the resting order in through openOrders — and
+// telling Reconcile it's ours via ourOrderIDs, per the second review round's
+// finding that /order/v2/list carries no account attribution at all — must
+// resolve this cleanly. Numbers here are synthetic, not the real account's.
 func TestReconcile_RestingSellOrderExplainsTheGap(t *testing.T) {
 	broker := PortfolioList{Results: []Position{
 		brokerPosition("ZZZZ", 0, 2500, 0, 1201750), // available=0 unsettled=0 balance=2500
 	}}
 	openOrders := []Order{
-		activeSell("ZZZZ", 25), // 25 lots = 2500 shares reserved
+		activeSell("ZZZZ", "our-order-1", 25), // 25 lots = 2500 shares reserved
 	}
+	ourOrderIDs := orderIDSet("our-order-1")
 	derived := []engine.DerivedPosition{
 		{Symbol: "ZZZZ", Shares: 2500, CostBasisExFeeIDR: 1201750},
 	}
 
-	report := Reconcile("live", broker, openOrders, derived)
+	report := Reconcile("live", testAccNo, broker, openOrders, ourOrderIDs, derived)
 
 	if len(report.Divergences) != 0 {
 		t.Fatalf("Divergences = %+v, want none — a resting sell for the whole position is a normal account state", report.Divergences)
 	}
 	if report.Verdict != VerdictMatch {
 		t.Errorf("Verdict = %v, want MATCH", report.Verdict)
+	}
+	if report.AccountNumber != testAccNo {
+		t.Errorf("AccountNumber = %q, want %q", report.AccountNumber, testAccNo)
+	}
+}
+
+// TestReconcile_RestingSellInAnUnrelatedAccountIsNotCountedAsOurs is the
+// scoping fix's core guarantee: /order/v2/list returns every sub-account's
+// orders with no account field at all (confirmed live), so a resting sell
+// for the same symbol in some other account (e.g. the core book) must NOT
+// be counted as a reservation against this account just because it shares
+// a symbol. Without ourOrderIDs recognizing it, the gap is unexplained and
+// correctly reads as unresolved, not as a false benign match.
+func TestReconcile_RestingSellInAnUnrelatedAccountIsNotCountedAsOurs(t *testing.T) {
+	broker := PortfolioList{Results: []Position{
+		brokerPosition("ZZZZ", 0, 2500, 0, 1201750), // available=0 unsettled=0 balance=2500
+	}}
+	openOrders := []Order{
+		activeSell("ZZZZ", "someone-elses-order", 25), // resting sell exists, but it isn't ours
+	}
+	var ourOrderIDs map[string]struct{} // we have placed no orders at all
+	derived := []engine.DerivedPosition{
+		{Symbol: "ZZZZ", Shares: 2500, CostBasisExFeeIDR: 1201750},
+	}
+
+	report := Reconcile("live", testAccNo, broker, openOrders, ourOrderIDs, derived)
+
+	if len(report.Divergences) != 1 || report.Divergences[0].Kind != DivergenceSettlementInconsistent {
+		t.Fatalf("Divergences = %+v, want one DivergenceSettlementInconsistent — an unrelated account's resting sell must not explain our gap", report.Divergences)
 	}
 }
 
@@ -214,7 +254,7 @@ func TestReconcile_WithoutOpenOrdersARestingSellReadsAsInconsistent(t *testing.T
 		{Symbol: "ZZZZ", Shares: 2500, CostBasisExFeeIDR: 1201750},
 	}
 
-	report := Reconcile("live", broker, nil, derived) // no openOrders
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived) // no openOrders
 
 	if len(report.Divergences) != 1 || report.Divergences[0].Kind != DivergenceSettlementInconsistent {
 		t.Fatalf("Divergences = %+v, want one DivergenceSettlementInconsistent", report.Divergences)
@@ -235,7 +275,7 @@ func TestReconcile_ImpossibleQuantitiesIsCaughtWithoutOrderData(t *testing.T) {
 		{Symbol: "BBCA", Shares: 2500, CostBasisExFeeIDR: 900000},
 	}
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if len(report.Divergences) != 1 || report.Divergences[0].Kind != DivergenceSettlementInconsistent {
 		t.Fatalf("Divergences = %+v, want one DivergenceSettlementInconsistent", report.Divergences)
@@ -255,7 +295,7 @@ func TestReconcile_InconsistentBrokerLegsIsItsOwnCriticalFinding(t *testing.T) {
 		{Symbol: "BBCA", Shares: 150, CostBasisExFeeIDR: 900000}, // would look like a match against 150 if not caught first
 	}
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if report.Verdict != VerdictDivergent {
 		t.Fatalf("Verdict = %v, want DIVERGENT", report.Verdict)
@@ -283,7 +323,7 @@ func TestReconcile_ExcessWithNoExplanationIsAGenuineMismatch(t *testing.T) {
 		{Symbol: "BBCA", Shares: 150, CostBasisExFeeIDR: 1350000},
 	}
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if report.Verdict != VerdictDivergent {
 		t.Fatalf("Verdict = %v, want DIVERGENT", report.Verdict)
@@ -309,7 +349,7 @@ func TestReconcile_QuantityMismatchNotesWhenDeltaMatchesAKnownLeg(t *testing.T) 
 		{Symbol: "BBCA", Shares: 1000, CostBasisExFeeIDR: 900000}, // store missed the unsettled leg entirely
 	}
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if len(report.Divergences) != 1 {
 		t.Fatalf("Divergences = %+v, want 1", report.Divergences)
@@ -340,7 +380,7 @@ func TestReconcile_CostBasisMismatch(t *testing.T) {
 		{Symbol: "BBCA", Shares: 1000, CostBasisExFeeIDR: 9800000},
 	}
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if report.Verdict != VerdictDivergent {
 		t.Fatalf("Verdict = %v, want DIVERGENT", report.Verdict)
@@ -369,7 +409,7 @@ func TestReconcile_CostBasisWithinToleranceIsNotFlagged(t *testing.T) {
 		{Symbol: "BBCA", Shares: 1000, CostBasisExFeeIDR: 9218000},
 	}
 
-	report := Reconcile("live", broker, nil, derived)
+	report := Reconcile("live", testAccNo, broker, nil, nil, derived)
 
 	if report.Verdict != VerdictMatch {
 		t.Fatalf("Verdict = %v, want MATCH; divergences=%+v", report.Verdict, report.Divergences)
@@ -385,10 +425,15 @@ func TestReconcile_ReportCarriesSinkKindAndSymbolCounts(t *testing.T) {
 		{Symbol: "BBCA", Shares: 1000, CostBasisExFeeIDR: 9200000},
 	}
 
-	report := Reconcile("paper", broker, nil, derived)
+	report := Reconcile("paper", "008488L", broker, nil, nil, derived)
 
 	if report.SinkKind != "paper" {
 		t.Errorf("SinkKind = %q, want paper", report.SinkKind)
+	}
+	// AccountNumber is carried on the report for the same reason SinkKind
+	// is: a core-book reconciliation must not be readable as a sleeve one.
+	if report.AccountNumber != "008488L" {
+		t.Errorf("AccountNumber = %q, want 008488L", report.AccountNumber)
 	}
 	if report.BrokerSymbols != 2 {
 		t.Errorf("BrokerSymbols = %d, want 2", report.BrokerSymbols)

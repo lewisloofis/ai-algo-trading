@@ -40,28 +40,47 @@ type TokenSource interface {
 	TradingToken() string
 }
 
-// Client is a read-only HTTP client for the Carina account-state endpoints.
-// It has exactly one request path (get); there is no method on Client that
-// performs a POST, PUT, PATCH, or DELETE, and none should ever be added —
-// see readonly_test.go.
+// Client is a read-only HTTP client for the Carina account-state endpoints,
+// scoped to a single brokerage sub-account (accNo). It has exactly one
+// request path (get); there is no method on Client that performs a POST,
+// PUT, PATCH, or DELETE, and none should ever be added — see
+// readonly_test.go.
+//
+// Scoping is imperfect and known to be so: confirmed live, /portfolio/v2/list
+// and /balance/withdrawable honour their account-scoping parameters, but
+// /balance/cash/info and /order/v2/list silently ignore theirs and always
+// answer for the trading token's own account — which need not be accNo (one
+// trading token was observed addressing multiple sub-accounts). CashInfo is
+// typed to say so (see its ScopeWarning field); OpenOrders' rows carry no
+// account attribution at all, which is why Reconcile needs the caller's own
+// order IDs rather than trusting the endpoint to scope itself (see
+// OwnReservedSellShares).
 type Client struct {
 	host   string
+	accNo  string
 	tokens TokenSource
 	http   *http.Client
 }
 
-// New returns a Client for host, authenticating with tokens over httpClient.
-// An empty host defaults to DefaultHost. A nil httpClient defaults to
+// New returns a Client for host, scoped to accNo, authenticating with tokens
+// over httpClient. accNo is required: an empty value is a construction
+// error rather than a silent fall-through to whatever account the trading
+// token itself belongs to — that fallback is exactly the failure this type
+// exists to prevent (reconciling the wrong sub-account by accident). An
+// empty host defaults to DefaultHost. A nil httpClient defaults to
 // http.DefaultClient; tests should inject a client pointed at an
 // httptest.Server so no test touches the real network.
-func New(host string, tokens TokenSource, httpClient *http.Client) *Client {
+func New(host, accNo string, tokens TokenSource, httpClient *http.Client) (*Client, error) {
+	if accNo == "" {
+		return nil, errors.New("account: New: accNo is required (an empty value would silently fall through to the trading token's own account)")
+	}
 	if host == "" {
 		host = DefaultHost
 	}
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &Client{host: strings.TrimRight(host, "/"), tokens: tokens, http: httpClient}
+	return &Client{host: strings.TrimRight(host, "/"), accNo: accNo, tokens: tokens, http: httpClient}, nil
 }
 
 // ErrUnauthorized is returned when the trading token is rejected (HTTP 401
@@ -175,13 +194,12 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// PortfolioList fetches GET /portfolio/v2/list. accNo is optional; pass ""
-// to let the server resolve the account from the auth token.
-func (c *Client) PortfolioList(ctx context.Context, accNo string) (PortfolioList, error) {
-	q := url.Values{}
-	if accNo != "" {
-		q.Set("acc_no", accNo)
-	}
+// PortfolioList fetches GET /portfolio/v2/list scoped to Client's accNo.
+// Confirmed live: acc_no is honoured — a sleeve sub-account with no
+// holdings returns 0 results even though the token's own (core-book)
+// account has positions.
+func (c *Client) PortfolioList(ctx context.Context) (PortfolioList, error) {
+	q := url.Values{"acc_no": {c.accNo}}
 	body, err := c.get(ctx, "/portfolio/v2/list", q)
 	if err != nil {
 		return PortfolioList{}, err
@@ -191,19 +209,41 @@ func (c *Client) PortfolioList(ctx context.Context, accNo string) (PortfolioList
 
 // CashInfo fetches GET /balance/cash/info for stockCode (required — the
 // server uses it to compute stock-specific buying power).
+//
+// CAUTION, confirmed live: this endpoint does NOT honour account scoping —
+// it always answers for the trading token's own account, regardless of
+// Client.accNo. The returned CashInfo.ScopeWarning says so on the value
+// itself (not only in this comment) so a caller cannot mistake it for
+// sleeve-scoped buying power just because it came out of a Client
+// constructed with a sleeve accNo. It remains the only buying-power source
+// available; a sizing check must not read TradeBalance here as sleeve
+// buying power — it can be the entire core book's limit.
 func (c *Client) CashInfo(ctx context.Context, stockCode string) (CashInfo, error) {
 	q := url.Values{"stock_code": {stockCode}}
 	body, err := c.get(ctx, "/balance/cash/info", q)
 	if err != nil {
 		return CashInfo{}, err
 	}
-	return decodeEnvelope[CashInfo](body, "/balance/cash/info")
+	info, err := decodeEnvelope[CashInfo](body, "/balance/cash/info")
+	if err != nil {
+		return CashInfo{}, err
+	}
+	info.ScopeWarning = CashInfoNotAccountScoped
+	return info, nil
 }
 
-// Withdrawable fetches GET /balance/withdrawable, aggregated across all
-// related sub-accounts.
+// Withdrawable fetches GET /balance/withdrawable scoped to Client's accNo
+// (balance_scope=BALANCE_SCOPE_SELECTED_ACCOUNT&account_number=accNo, not
+// the default cross-sub-account aggregate). Confirmed live: this scoping is
+// honoured — a sleeve sub-account with no holdings returns 0 across every
+// field even though the aggregate (unscoped) call would include the core
+// book's cash.
 func (c *Client) Withdrawable(ctx context.Context) (Withdrawable, error) {
-	body, err := c.get(ctx, "/balance/withdrawable", nil)
+	q := url.Values{
+		"balance_scope":  {"BALANCE_SCOPE_SELECTED_ACCOUNT"},
+		"account_number": {c.accNo},
+	}
+	body, err := c.get(ctx, "/balance/withdrawable", q)
 	if err != nil {
 		return Withdrawable{}, err
 	}
@@ -220,8 +260,25 @@ func (c *Client) PortfolioSummary(ctx context.Context) (PortfolioSummaryData, er
 	return decodeEnvelope[PortfolioSummaryData](body, "/portfolio/v2/summary")
 }
 
+// CashInfoScope names the account-scoping guarantee (or lack of one) a
+// CashInfo value carries.
+type CashInfoScope string
+
+// CashInfoNotAccountScoped is the only value CashInfo.ScopeWarning ever
+// takes today. It exists as a typed, always-populated field — not just a
+// doc comment — so that a CashInfo value logged, serialized, or handed to
+// B2's sizing logic carries its own danger label: this data describes the
+// trading token's own account, which may not be the sub-account a caller
+// thinks it queried.
+const CashInfoNotAccountScoped CashInfoScope = "account_wide_not_sleeve_scoped"
+
 // CashInfo is GetCashInfoResponse.data (docs/reference/05-account-state.md §1.2).
 type CashInfo struct {
+	// ScopeWarning is always CashInfoNotAccountScoped — see its doc comment.
+	// Stamped by Client.CashInfo after decoding; the API itself never
+	// returns this field.
+	ScopeWarning CashInfoScope `json:"scope_warning"`
+
 	TradeLimit             float64 `json:"trade_limit"`
 	TradeBalance           float64 `json:"trade_balance"`
 	DayTradeBuyingPower    float64 `json:"day_trade_buying_power"`
