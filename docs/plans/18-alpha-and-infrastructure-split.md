@@ -1,6 +1,6 @@
 # Alpha / Infrastructure Split — Two Tracks, One Seam
 
-> **Status:** ✅ Approved · **Owner:** @lewis · **Updated:** 2026-09-13
+> **Status:** ✅ Approved · 🔬 Track C complete · 🔨 Track B in progress (B1) · **Owner:** @lewis · **Updated:** 2026-09-14
 > **Related:** [ADR-0016: alpha and infrastructure are separate tracks](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md) · [ADR-0015: leverage is optional](../adr/0015-leverage-optional-horizon-ceiling-lifted.md) · [ADR-0013: one Strategy interface](../adr/0013-one-strategy-interface-and-collector-public-packages.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [13-capital-allocation-and-capacity.md](./13-capital-allocation-and-capacity.md) · [15-measured-fill-and-impact-calibration.md](./15-measured-fill-and-impact-calibration.md) · [16-strategy-triage-and-prioritization.md](./16-strategy-triage-and-prioritization.md) · [17-execution-and-replay-parity-engine.md](./17-execution-and-replay-parity-engine.md) · [Plans index](./README.md)
 
 > **What this is.** The re-cut of roadmap Waves 3–5 into two independently
@@ -385,14 +385,46 @@ so the universe has been over-charged for impact by about 3×.
       It also clears the always-long null gate that killed PTRO, and it is the
       one surviving cell **not** flagged UNDERPOWERED.
 
-- [ ] **The 345 long-horizon cells were NOT re-judged.** `run_strategy_fit` is
-      still hardcoded to ADR-0011 (`≤2 trading-day horizon ceiling`), so cells
-      with hold > 2 are not enumerated at all — the grid emits 1,044 rows, not
-      1,389. [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md)
-      lifted that ceiling and `capital_model.py` is already configurable, but the
-      runner does not expose it. **This is outstanding work, and it is the larger
-      half of what C4 was supposed to deliver** — the long-horizon band is A-2's
-      second priority and it is still unmeasured.
+- [x] **The long-horizon band was re-judged. ✅ Done 2026-09-13.** The ≤2-day
+      ceiling lived in **two** places, and lifting it in `capital_model.py` alone
+      had made the 345 long-horizon cells *vanish* from the coverage table rather
+      than turn into tested ones — `SINGLE_NAME_HOLDS` still enumerated `[1, 2]`,
+      so they read as "not applicable" instead of "untested". Holds are now
+      `[1, 2, 5, 20, 60]`, with cross-sectional and pairs following the same list
+      rather than their own literals. The grid goes **1,044 → 2,093 cells**.
+
+      | hold | tested | insufficient_n |
+      |---:|---:|---:|
+      | 5 | 344 | 1 |
+      | 20 | 3 | 345 |
+      | 60 | 3 | 338 |
+
+      **hold=5 is a genuine new band and it produced a new survivor** — HRTA
+      `volume_breakout` h5, net **+257.0 bps**, the largest net edge in the grid,
+      though UNDERPOWERED at `eff_N=62`. **Holds 20 and 60 are almost entirely
+      walled off by `MIN_EFF_N=30`**: after de-overlap, a 60-day hold over the
+      default 2024-01-01 window yields ~12 independent trades per name. That is
+      the known lookback trap, not a bug — and widening the window trades it for
+      survivorship exposure, which is exactly what A-3 has only just started
+      accruing against. **A-2.2 is therefore `data_blocked`, not untested**, and
+      that is a different and more useful answer than the one this box asked for.
+
+- [x] Two defects found while verifying the above, both in the direction that
+      manufactures a result:
+
+      - `report.py` hardcoded *"Capital model: ADR-0011 — 300M IDR T+2 leverage
+        sleeve, 10 bps/cal-day financing, ≤2 trading-day horizon ceiling"* and
+        printed it whatever model actually ran. **Every report since ADR-0015
+        asserted a financing charge and a ceiling that were not applied**, in the
+        direction that makes hurdles look higher than they were. Now derived from
+        `ACTIVE_CAPITAL_MODEL` via `render_capital_model_line()`, which also
+        states that the two models are not comparable.
+      - An expired `SB_BEARER_TOKEN` makes both emitten endpoints return HTTP
+        401; `screen_universe` degraded to an empty intersection rather than
+        raising, so `run_grid` completed over **zero symbols** and wrote a
+        confident "Verdict: NO-GO" over a good report. A credentials failure must
+        not be able to author a research result: `run_grid` now raises
+        `EmptyUniverseError`, naming the token as the usual cause.
 
 ### 4.4a What C4 actually establishes — and what it does not
 
@@ -444,12 +476,55 @@ safe without it.
 
 ### B1 — Position & PnL reconciliation *(read-only)*
 
-- [ ] Carina portfolio/position read client; map to an internal `Position` view.
-- [ ] Reconcile broker-reported holdings against the post-trade store's derived
+> **Status: built 2026-09-14, not yet pointed at the real account.** Package
+> `strategy/account` (client / position / pnl / recon) + `strategy/engine/positions.go`
+> + `strategy/cmd/account-recon`. `go build`, `go vet` clean; 58 tests, `account`
+> at 86.0% coverage, race-clean, no network in tests.
+
+- [x] Carina portfolio/position read client; map to an internal `Position` view.
+      **Structurally read-only**: `get()` is the package's only request path and
+      `readonly_test.go` fails the build if any other HTTP method token or a
+      second `http.NewRequestWithContext` appears. Field shapes are grounded in
+      the generated protobuf structs under `sb-protos/gen/go/...`, not in this
+      repo's prose docs — `PortfolioQty.{available,balance,unsettled}` as
+      `{lot,share}` at `portfolio/entity/v2/portfolio.pb.go:1008-1014`.
+      **An auth failure cannot present as an empty portfolio**: 401/403 returns
+      a typed `ErrUnauthorized`, and a 200 with no usable `data` returns
+      `ErrEmptyResponse`. This is the §4.4 lesson applied — there, an expired
+      token let `run_grid` write a confident NO-GO over zero symbols; here the
+      same bug would report "you hold nothing" and reconcile it as a match.
+- [x] Reconcile broker-reported holdings against the post-trade store's derived
       position; emit a typed divergence report rather than silently trusting either.
-- [ ] Cost-basis and realized/unrealized PnL, fee-inclusive
-      ([reference 07](../reference/07-fees-and-costs.md)).
-- [ ] Verify against the real account, end of a session, by hand.
+      Five kinds: `held_at_broker_only`, `held_in_store_only`, `quantity_mismatch`,
+      `unsettled_only`, `cost_basis_mismatch`, plus `settlement_inconsistent` when
+      the broker's own `available + unsettled != balance` — in that case neither
+      leg is a trustworthy comparison basis and the report says so instead of
+      picking one. `sink_kind` filters both sides of the fill→intent join:
+      reconciling paper fills against a live account is noise, and the kind is
+      printed in the report header so a paper run cannot be read as a live one.
+
+      > **The defect worth remembering.** The first implementation classified the
+      > benign T+2 lag by testing whether the delta from `available` *equalled*
+      > `unsettled` — which is sign-blind. A store total 50 shares **short** of a
+      > 150-share broker position produced the same |delta| as the benign case and
+      > was reported `unsettled_only` / INFO / **verdict MATCH, exit 0**. The gate
+      > would have waved through the exact condition it exists to catch, in the
+      > dangerous direction (broker holdings we have no record of). The benign case
+      > means *store total ≈ broker `balance`*, so that is now what it tests, with
+      > `BalanceConsistent()` as a precondition. Four regression tests pin it.
+- [x] Cost-basis and realized/unrealized PnL, fee-inclusive
+      ([reference 07](../reference/07-fees-and-costs.md)). Buy 0.15% / sell 0.25%
+      **all-in** (the exchange-fee breakdown is inside those rates, not additive),
+      carried in a `FeeSchedule` parameter rather than baked in, as reference 07
+      instructs. Derived cost basis uses moving-average accounting, matching the
+      basis the broker's own `amount_invested` / `price.average` are computed on —
+      FIFO would make the two sides incomparable on a partial sell.
+- [ ] **Verify against the real account, end of a session, by hand.** Needs live
+      credentials and a session's own fills; nothing below B1 is safe until this
+      passes. Invocation: `SB_TRADING_ACCESS_TOKEN=… account-recon --store <path>
+      --sink-kind live`. §10 requires three consecutive clean sessions.
+      **`unsettled_only` is deliberately INFO and does not fail the verdict** — a
+      gate that trips on every routine recent buy is a gate that gets ignored.
 
 > **Why first.** "What do I own and what did it cost" is the precondition for
 > every order decision, every risk check, and every PnL claim. It is also the
@@ -570,9 +645,29 @@ unavailable. Until this accrues, any long-horizon backtest on
 `research/data/daily/` measures survivorship, not edge — as the +25%/yr first
 pass demonstrated.
 
-- [ ] Daily snapshot of the day-trade ∩ trading-limit membership, appended to a
-      durable store, with the run date as the key.
+- [x] Daily snapshot of the day-trade ∩ trading-limit membership, appended to a
+      durable store, with the run date as the key. **✅ Done 2026-09-14.**
+      Snapshots land in S3 at `universe/dt=YYYY-MM-DD/eligibility.json`,
+      date-partitioned like the market data and written on the collector's
+      schedule rather than whenever a laptop is awake (`research/data/*` is
+      gitignored, so a local file would be neither tracked nor backed up).
+      **Both legs are stored, not just the intersection** — a name can leave the
+      eligible set by falling off either list, and which one is not recoverable
+      afterwards. Automated on the collector box as a boot-triggered
+      `universe-snapshot.service`: EventBridge starts the instance at 08:30 on
+      weekdays only, so one boot **is** one pre-open snapshot per trading day —
+      no timer to drift and nothing to fire on a holiday. Deliberately decoupled
+      from `collector.service` in both directions, because a failed snapshot must
+      never stop capture (the book cannot be backfilled) and a failed capture
+      must not stop the snapshot. `EmittenClient.fetch_subsector` **raises**
+      where the screener's copy swallows HTTP errors: that degradation is right
+      for a screening run and wrong for a recording one, where an expired token
+      would write "nothing was tradeable today" down as fact, permanently.
+      Recorded so far: 2026-09-13 and 2026-09-14, 118 day-trade / 198
+      trading-limit / **115 eligible**.
 - [ ] Emit the plan-12 requirement record for the historical gap this cannot fill.
+      **Still open** — `research/out/data_backlog.md` does not exist yet, so the
+      gap is documented in prose here and nowhere a machine can read it.
 
 > Note the user-supplied correction preserved in ADR-0015's consequences: a
 > near-suspended name typically *drops off* the eligibility lists before it dies,
@@ -644,6 +739,20 @@ immediately alongside it: both are free, neither risks capital, and A-3 is losin
 something every day it is deferred. What C gates is *interpretation* — A-1's
 finality and the meaning of every hurdle downstream — not the calendar.
 
+### Progress, 2026-09-14
+
+| | State |
+|---|---|
+| **Track C** | ✅ **Complete.** C1–C4 done, including the long-horizon half of C4 (§4.4). The ruler is measured: buckets 0.29–0.35 against the assumed 1.0 |
+| **Track A** | A-3 ✅ done and automated (the plan-12 record is the one piece left). A-1 partly reopened by C4 — BNBR and HRTA are live candidates, both caveated. A-2.1 (event-driven, the top-ranked untested family) is the open research question; A-2.2 is `data_blocked` on `MIN_EFF_N` |
+| **Track B** | 🔨 **Started at B1.** Nothing existed before 2026-09-14: `strategy/` was the plan-17 scaffold — engine, replay source, paper sink, store, ORB — with no account client, no risk layer, no reconciliation |
+
+**Track B is now the critical path.** Track C measured the impact half of the
+cost model and found it over-charged ~3×; the fill half — queue position, fill
+rate, adverse selection, rejects — is reachable only through B6, and B6 is
+reachable only through B1–B5. Until then every Track A verdict still rests on a
+cost model that has been cross-checked against itself and never against a fill.
+
 ## 9. Definition of done
 
 **Track C is done when** `impact_coeffs.json` carries non-null `mid_liq` and
@@ -698,8 +807,12 @@ treated as a reason to widen the search again.
       on and off, so every changed cell is attributable to the coefficient alone.
       Status flips: 0. Cells that stopped being cost-gated: 13. Surviving cells:
       1 → 3.
-- [ ] **Not verified: the long-horizon band.** The runner is still on ADR-0011's
-      ≤2-day ceiling, so 345 cells were never enumerated (§4.4).
+- [x] **The long-horizon band is verified.** The grid enumerates 2,093 cells
+      across holds `[1, 2, 5, 20, 60]`; hold=5 tested 344 of 345 cells and
+      produced HRTA `volume_breakout` h5 at +257.0 bps (UNDERPOWERED, `eff_N=62`).
+      Holds 20 and 60 come back `insufficient_n` on 345/338 cells — a measured
+      data limit under `MIN_EFF_N=30` after de-overlap, recorded as such rather
+      than left blank (§4.4).
 - [ ] C4's re-scored grid is diffed against the pre-C verdict; every changed cell
       is attributable to the coefficient change and to nothing else.
 - [ ] B6 divergence check against Track C's coefficients in all three buckets.
