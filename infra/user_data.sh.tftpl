@@ -104,6 +104,82 @@ SyslogIdentifier=collector
 WantedBy=multi-user.target
 UNIT
 
-# --- Enable and start the service ---------------------------------------------
+# --- Eligibility snapshot (plan 18 A-3) ---------------------------------------
+# Records which symbols were fundable TODAY. The emitten endpoints report only
+# current eligibility -- no history, effective_date is null -- so the
+# point-in-time universe cannot be reconstructed, only accrued going forward.
+# Every session without a snapshot is permanently missing.
+#
+# Fired once per boot rather than on a timer: EventBridge starts this instance
+# at 08:30 on weekdays only, so boot-triggered IS one snapshot per trading day,
+# taken pre-open. No timer to drift, nothing to run on a holiday.
+#
+# Deliberately decoupled from collector.service. A failed snapshot must never
+# stop capture (order book cannot be backfilled), and a failed capture must not
+# stop the snapshot.
+install -d -o collector -g collector -m 750 /opt/universe
+
+cat > /opt/universe/run.sh << 'SNAP'
+#!/bin/bash
+set -euo pipefail
+
+ARTIFACT="s3://${s3_bucket}/artifacts/universe-snapshot.pyz"
+REGION="${region}"
+DEST=/opt/universe/universe-snapshot.pyz
+
+# Refresh the artifact each boot, same contract as the collector binary: a
+# publish to the artifacts key is picked up by the next scheduled start. Falls
+# back to the last-known-good copy so an S3 blip does not cost a session.
+TMP="$(mktemp /opt/universe/snap.XXXXXX)"
+if aws s3 cp "$ARTIFACT" "$TMP" --region "$REGION"; then
+  chmod 0755 "$TMP"
+  mv -f "$TMP" "$DEST"
+else
+  rm -f "$TMP"
+  [ -f "$DEST" ] || { echo "snapshot: no artifact and no cached copy" >&2; exit 1; }
+  echo "snapshot: S3 fetch failed; using cached $DEST" >&2
+fi
+
+# No SB_BEARER_TOKEN here: the token is read from $SSM_PARAM_PREFIX/access,
+# which the collector rotates. Read-only -- it never touches /refresh, because
+# minting a token would rotate the refresh token and invalidate the collector's
+# own session mid-capture.
+exec python3 "$DEST" --bucket "${s3_bucket}" --region "$REGION" --ssm-prefix "${ssm_prefix}"
+SNAP
+chmod 0755 /opt/universe/run.sh
+chown collector:collector /opt/universe/run.sh
+
+cat > /etc/systemd/system/universe-snapshot.service << 'SNAPUNIT'
+[Unit]
+Description=Record today's fundable universe (plan 18 A-3)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=collector
+Group=collector
+ExecStart=/opt/universe/run.sh
+RemainAfterExit=no
+
+# One retry: the box boots at 08:30 and a transient API or S3 failure would
+# otherwise cost a day that cannot be re-recorded.
+Restart=on-failure
+RestartSec=60s
+StartLimitBurst=2
+
+Environment="AWS_REGION=${region}"
+Environment="SSM_PARAM_PREFIX=${ssm_prefix}"
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=universe-snapshot
+
+[Install]
+WantedBy=multi-user.target
+SNAPUNIT
+
+# --- Enable and start the services --------------------------------------------
 systemctl daemon-reload
 systemctl enable --now collector.service
+systemctl enable --now universe-snapshot.service

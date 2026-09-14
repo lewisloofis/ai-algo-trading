@@ -1,7 +1,7 @@
 # §7.5 / §12.3 — IAM role + instance profile for the EC2 collector
 #
 # Permissions:
-#   s3:PutObject          → raw/* on the marketdata bucket (upload only; no read/delete)
+#   s3:PutObject          → raw/* and universe/* on the marketdata bucket (upload only)
 #   s3:GetObject          → artifacts/* on the marketdata bucket (boot-time binary fetch)
 #   ssm:GetParameter      → /sb-collector/* (boot-time token + watchlist read)
 #   ssm:GetParameters     → /sb-collector/* (batch read variant used by SDK)
@@ -29,13 +29,18 @@ resource "aws_iam_role" "collector" {
 
 # Inline policy: least-privilege S3 + SSM + KMS access.
 data "aws_iam_policy_document" "collector_permissions" {
-  # Upload compressed segments to raw/ — write-only.
+  # Upload compressed segments to raw/ and daily eligibility snapshots to
+  # universe/ — write-only. universe/ is a separate prefix so it stays outside
+  # the raw/ lifecycle rules: segments transition to cheaper storage on a clock
+  # that suits bulk tick data, while the snapshots are a small, permanently-hot
+  # index that every backtest reads (plan 18 A-3).
   statement {
     sid     = "S3PutObject"
     effect  = "Allow"
     actions = ["s3:PutObject"]
     resources = [
-      "${aws_s3_bucket.marketdata.arn}/raw/*"
+      "${aws_s3_bucket.marketdata.arn}/raw/*",
+      "${aws_s3_bucket.marketdata.arn}/universe/*"
     ]
   }
 

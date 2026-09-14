@@ -35,10 +35,10 @@ import re
 import subprocess
 import tempfile
 
-from screener.screen_universe import (
+from screener.emitten import (
     SUBSECTOR_DAY_TRADE,
     SUBSECTOR_TRADING_LIMIT,
-    LiveDataSource,
+    EmittenClient,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,17 +63,33 @@ class EmptySnapshotError(RuntimeError):
     """
 
 
-class _EmittenSource:
-    """Adapter exposing the two funding legs as separate calls."""
+def resolve_bearer_token(ssm_prefix: str | None = None, region: str = "") -> str:
+    """
+    Bearer token from ``SB_BEARER_TOKEN``, else from SSM Parameter Store.
 
-    def __init__(self, ds: LiveDataSource) -> None:
-        self._ds = ds
+    On a workstation the env var is the convenient path. On the collector box
+    there is no env var: the token lives at ``{ssm_prefix}/access`` and is
+    rotated by the collector itself, so this reads it fresh on each run.
 
-    def fetch_day_trade(self) -> set[str]:
-        return self._ds._fetch_subsector_symbols("day-trade", SUBSECTOR_DAY_TRADE)
-
-    def fetch_trading_limit(self) -> set[str]:
-        return self._ds._fetch_subsector_symbols("trading-limit", SUBSECTOR_TRADING_LIMIT)
+    **Read-only by design.** It never touches ``{ssm_prefix}/refresh``: minting
+    a token rotates the refresh token, which would invalidate the collector's
+    own session mid-capture. If ``/access`` has expired this raises, the
+    snapshot is skipped for the day, and the collector is left alone.
+    """
+    token = os.environ.get("SB_BEARER_TOKEN")
+    if token:
+        return token
+    if not ssm_prefix:
+        raise EnvironmentError(
+            "no SB_BEARER_TOKEN and no --ssm-prefix given; cannot authenticate"
+        )
+    out = subprocess.run(
+        ["aws", "ssm", "get-parameter", "--name", f"{ssm_prefix}/access",
+         "--with-decryption", "--query", "Parameter.Value", "--output", "text"],
+        check=True, capture_output=True, text=True,
+        env={**os.environ, **({"AWS_DEFAULT_REGION": region} if region else {})},
+    )
+    return out.stdout.strip()
 
 
 def build_snapshot(source, as_of: str) -> dict:
@@ -156,13 +172,19 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--bucket", required=True, help="S3 bucket to write into.")
     parser.add_argument("--region", default=os.environ.get("AWS_DEFAULT_REGION", "ap-southeast-3"))
     parser.add_argument("--as-of", default=None, help="Snapshot date (default: today, WIB).")
+    parser.add_argument(
+        "--ssm-prefix", default=os.environ.get("SSM_PARAM_PREFIX"),
+        help="SSM prefix holding the rotated access token (e.g. /sb-collector). "
+             "Used only when SB_BEARER_TOKEN is unset.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Build and print; do not upload.")
     args = parser.parse_args(argv)
 
     wib = _dt.timezone(_dt.timedelta(hours=7))
     as_of = args.as_of or _dt.datetime.now(wib).date().isoformat()
 
-    snapshot = build_snapshot(_EmittenSource(LiveDataSource()), as_of=as_of)
+    token = resolve_bearer_token(args.ssm_prefix, args.region)
+    snapshot = build_snapshot(EmittenClient(token), as_of=as_of)
     logger.info(
         "%s: %d day-trade ∩ %d trading-limit = %d eligible",
         as_of, snapshot["counts"]["day_trade"],

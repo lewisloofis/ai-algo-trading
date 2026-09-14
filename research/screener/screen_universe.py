@@ -93,9 +93,16 @@ DEFAULT_API_HOST = os.environ.get("SB_API_HOST", "exodus.stockbit.com")
 # Funding-universe (emitten) endpoints — VERIFIED live (HTTP 200).
 # The funding gate is the INTERSECTION of these two subsectors
 # (day-trade ∩ trading-limit — "all funding options unlocked").
-EMITTEN_BASE_URL = f"https://{DEFAULT_API_HOST}/emitten/v3/sector/88/subsector"
-SUBSECTOR_DAY_TRADE = "1000004658"      # day-trade eligible
-SUBSECTOR_TRADING_LIMIT = "1000005139"  # trading-limit eligible
+#
+# Defined in screener.emitten, which is stdlib-only so the eligibility snapshot
+# can run on the collector box without pandas. Imported rather than repeated:
+# two copies of an endpoint id drift, and a stale one here would silently screen
+# the wrong universe.
+from screener.emitten import (  # noqa: E402
+    EMITTEN_BASE_URL,
+    SUBSECTOR_DAY_TRADE,
+    SUBSECTOR_TRADING_LIMIT,
+)
 
 # OHLCV daily history endpoint — VERIFIED live (HTTP 200).
 # date semantics: from=NEWER bound, to=OLDER bound (descending range), limit=0 = unlimited.
