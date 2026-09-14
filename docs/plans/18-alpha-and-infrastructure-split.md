@@ -143,6 +143,86 @@ This is why the null portfolio, not the best available strategy, is the primary
 calibration instrument: trading a real candidate conflates "was there alpha" with
 "was the execution good", and we already cannot answer the first question.
 
+### 3.4 Where the sleeve trades — account `008488L`
+
+**The bot trades one brokerage sub-account, and it is not the core book.**
+Measured live on 2026-09-14, `GET /portfolio/v2/summary` →
+`summary_per_portfolios[]` returns two:
+
+| account | name | state |
+|---|---|---|
+| `0001958` | LEWIS | the owner's pre-existing core book — 8 positions, ~1.3B IDR invested |
+| `008488L` | Trading | **empty** — 0 invested, 0 equity, 0 cash, 0 positions |
+
+Everything Track B does happens in `008488L`.
+
+**Why this is load-bearing and not an operational detail.** The two accounts
+share one login, so without the split the bot and the core book are the same
+book as far as every endpoint is concerned, and three things break:
+
+1. **B1 could never reach MATCH.** Reconciliation compares broker holdings
+   against positions derived from our own fills. The core book has no fills to
+   derive from — it predates the store — so it reports as eight
+   `held_at_broker_only` CRITICAL divergences, permanently. The gate cannot pass,
+   which makes it useless as a gate.
+2. **B2's caps would be meaningless.** "Max gross exposure" and "max position per
+   name" computed over a shared account measure the core book, not the sleeve.
+3. **B4's blast radius would include the core book.** Live routing's first
+   mistake should not be able to touch BBKP or HMSP.
+
+**What it replaces.** The alternative was a recorded opening-balance baseline —
+a `position_baseline` table asserting "assume the broker was right on day one",
+plus an operator re-baselining step after every manual trade in the core book.
+That is an *assertion*; a separate account is a *boundary*. The sleeve starts
+empty, so store-derived equals broker balance from the first fill with nothing
+to assume. The baseline design is dropped.
+
+**Token mechanism (verified).** One trading token covers both accounts. The
+handshake is two steps — `GET exodus/sekuritas/auth/token` with the main token
+yields a `login_token`, then `POST carina/auth/v2/login` with
+`{login_token, pin}` yields the trading access/refresh pair. The resulting JWT is
+stamped `acn=0001958` and still addresses `008488L` by query parameter, so there
+is no second login and no account selection in the handshake.
+
+**Scoping is inconsistent, and two endpoints ignore the parameter silently:**
+
+| endpoint | parameter | honoured? |
+|---|---|---|
+| `/portfolio/v2/list` | `acc_no` | ✅ 8 results vs 0 |
+| `/balance/withdrawable` | `balance_scope` + `account_number` | ✅ 29.7M vs 0 |
+| `/balance/cash/info` | `acc_no` | ❌ **ignored** — always the core book's limits |
+| `/order/v2/list` | `acc_no` | ❌ **ignored** — always every account's orders |
+
+Both failures are silent 200s, which is the dangerous shape. `cash/info` would
+hand B2 the core book's buying power as though it were the sleeve's, and
+unscoped `order/v2/list` would attribute a core-book resting sell to the sleeve
+whenever both accounts hold the same name. Order rows carry **no account field
+at all**, so reservations cannot be attributed by account — they are attributed
+by our own `order_id`s, which the post-trade store knows.
+
+**Two open prerequisites before the sleeve can trade.**
+
+- [x] **Funded 2026-09-14: 15,000,000 IDR.** `withdrawable` and `transaction` for
+      `008488L` both read 15,000,000, and the core book's cash fell by exactly
+      that amount (29,746,598.11 → 14,746,598.11), so the transfer is clean and
+      the two balances are genuinely separate.
+- [ ] **Confirm whether the sleeve has a trading limit of its own.** Measured:
+      the limit does *not* follow the cash. `trade_limit` fell 392,013,889.11 →
+      377,013,889.11 — exactly the 15,000,000 transferred out — and `cash/info`
+      reports identical figures for both account numbers because it ignores
+      `acc_no` entirely. So the sleeve is sized as **15M of owned cash**, not a
+      300M facility. This is settled only by attempting an order above 15M in
+      `008488L`, which is B4-gated; until then the conservative reading stands.
+      Recorded as [ADR-0017](../adr/0017-sleeve-is-a-funded-sub-account.md),
+      which also voids `POSITION_NOTIONAL_IDR = 30_000_000` — a per-name order
+      notional twice the size of the entire sleeve, and a second over-charge in
+      every impact figure on top of the coefficient error §4.4 corrected.
+
+> **This likely warrants an ADR amending [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md).**
+> The capital model there reasons about a sleeve funded by a trading limit on the
+> core book; a separate sub-account changes that from arithmetic we perform into
+> a boundary the broker enforces. Not written yet.
+
 ## 4. Track C — measure the ruler first
 
 **Track C gates both other tracks and is not parallel to them.** It is the
@@ -476,7 +556,8 @@ safe without it.
 
 ### B1 — Position & PnL reconciliation *(read-only)*
 
-> **Status: built 2026-09-14, not yet pointed at the real account.** Package
+> **Status: built and live-verified 2026-09-14; being re-scoped to the sleeve
+> account (§3.4).** Package
 > `strategy/account` (client / position / pnl / recon) + `strategy/engine/positions.go`
 > + `strategy/cmd/account-recon`. `go build`, `go vet` clean; 58 tests, `account`
 > at 86.0% coverage, race-clean, no network in tests.
@@ -519,12 +600,24 @@ safe without it.
       instructs. Derived cost basis uses moving-average accounting, matching the
       basis the broker's own `amount_invested` / `price.average` are computed on —
       FIFO would make the two sides incomparable on a partial sell.
+- [ ] **Scope every call to the sleeve account `008488L` (§3.4).** The account
+      number is a required input, not a defaultable one: falling back to the
+      token's own account silently reconciles the core book, which is the exact
+      failure the split exists to prevent. `cash/info` must be typed so it cannot
+      be mistaken for sleeve buying power, and reserved-share attribution must
+      filter by our own `order_id`s, since order rows carry no account field.
 - [ ] **Verify against the real account, end of a session, by hand.** Needs live
       credentials and a session's own fills; nothing below B1 is safe until this
       passes. Invocation: `SB_TRADING_ACCESS_TOKEN=… account-recon --store <path>
-      --sink-kind live`. §10 requires three consecutive clean sessions.
-      **`unsettled_only` is deliberately INFO and does not fail the verdict** — a
-      gate that trips on every routine recent buy is a gate that gets ignored.
+      --acc-no 008488L --sink-kind live`. §10 requires three consecutive clean
+      sessions.
+
+      Scoping to the sleeve is what makes this reachable at all: against the
+      shared account it could never pass (§3.4), and against an empty sleeve a
+      clean MATCH is the *expected* result from day one, before B4 places
+      anything. That is a weaker check than it sounds — MATCH on an empty account
+      proves only that we agree about nothing — so the three sessions that count
+      are three with real fills in them.
 
 > **Why first.** "What do I own and what did it cost" is the precondition for
 > every order decision, every risk check, and every PnL claim. It is also the
@@ -780,7 +873,16 @@ treated as a reason to widen the search again.
 
 ## 10. Verification
 
-- [ ] B1 reconciliation matches the live account by hand for 3 consecutive sessions.
+- [ ] B1 reconciliation matches the live **sleeve** account (`008488L`, §3.4) by
+      hand for 3 consecutive sessions **carrying real fills**. A MATCH on the
+      empty sleeve does not count — it proves only that both sides agree there is
+      nothing there.
+- [x] B1's read path verified against the live account 2026-09-14: all four
+      account endpoints plus the order list parse, and the per-position
+      `amount_invested` sums to exactly the independently-fetched
+      `/portfolio/v2/summary` aggregate. Four contract errors in
+      `docs/reference/` were found and corrected in the process — the settlement
+      identity among them (§3.4).
 - [ ] B2 limits provably reject: an over-cap order, an over-exposure basket, and a
       post-loss-limit order — each with a test.
 - [ ] B3/B4 replay-vs-live parity: the same null portfolio through `ReplaySource`
