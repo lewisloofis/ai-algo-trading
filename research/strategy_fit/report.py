@@ -50,7 +50,9 @@ from strategy_fit.harness import (
     CellResult,
 )
 from strategy_fit.capital_model import ACTIVE_CAPITAL_MODEL, CapitalModel
+from strategy_fit.impact import POSITION_NOTIONAL_IDR, SQRT_IMPACT_COEFF
 from strategy_fit.intraday_walk_forward import MIN_OOS_EFF_N
+from strategy_fit.sleeve_sizing import ACTIVE_SLEEVE_SIZING
 
 
 def render_capital_model_line(model: CapitalModel) -> str:
@@ -611,8 +613,11 @@ def emit_strategy_portfolio(
     lines.append("- **Walk-forward:** fit=120 rows, test=40 rows, roll by test_window. Decay = majority of windows below Sharpe=0 AND hit_rate=0.5.")
     lines.append(
         "- **Impact model (intraday + daily single-name, plan 13):** Square-root Almgren law (round-trip): "
-        "2 × SQRT_IMPACT_COEFF(1.0) × daily_vol_bps × sqrt(participation_rate), "
-        "where participation = POSITION_NOTIONAL_IDR(30M IDR) / ADV. "
+        f"2 × SQRT_IMPACT_COEFF({SQRT_IMPACT_COEFF}) × daily_vol_bps × sqrt(participation_rate), "
+        f"where participation = POSITION_NOTIONAL_IDR({int(POSITION_NOTIONAL_IDR):,} IDR, "
+        f"`{ACTIVE_SLEEVE_SIZING.name}` preset, N={ACTIVE_SLEEVE_SIZING.concurrent_names} concurrent "
+        "names — ADR-0017; the void ADR-0011 30M/name figure this replaced assumed a 300M leverage "
+        "facility the sleeve was never funded by, see strategy_fit/sleeve_sizing.py) / ADV. "
         "Charged at both entry and exit; one-tick spread already in min_edge_to_clear_bps (no double-count). "
         "Daily single-name cells are priced from daily bars (plan 13), using the SAME formula: the "
         "square-root law prices ONE execution and the 2x factor is the entry leg plus the exit leg, so "

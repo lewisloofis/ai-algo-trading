@@ -243,10 +243,19 @@ class TestComputeImpactBps:
         assert high_vol > low_vol, f"high vol must yield more impact: {high_vol} vs {low_vol}"
 
     def test_default_position_notional_constant(self) -> None:
-        """POSITION_NOTIONAL_IDR constant must be positive and in a reasonable range."""
+        """
+        POSITION_NOTIONAL_IDR must equal ACTIVE_SLEEVE_SIZING.per_name_notional_idr
+        (ADR-0017) — a derived value, not a magic-range literal.  The old
+        assertion (1M <= x <= 300M) would happily pass the void 30M/name
+        ADR-0011 figure too; this pins it to the actual sizing descriptor so a
+        regression back to a hardcoded constant is caught.
+        """
+        from strategy_fit.sleeve_sizing import ACTIVE_SLEEVE_SIZING
         assert POSITION_NOTIONAL_IDR > 0
-        # Must be <= 300M IDR (sleeve) and >= 1M (sensible per-name slice)
-        assert 1_000_000 <= POSITION_NOTIONAL_IDR <= 300_000_000
+        assert POSITION_NOTIONAL_IDR == ACTIVE_SLEEVE_SIZING.per_name_notional_idr
+        # The sleeve is measured at 15M IDR total — no single name's slice of
+        # it can legitimately exceed that, unlike the void 30M constant did.
+        assert POSITION_NOTIONAL_IDR <= ACTIVE_SLEEVE_SIZING.equity_idr
 
     def test_sqrt_impact_coeff_constant(self) -> None:
         """SQRT_IMPACT_COEFF must be the documented 1.0."""
@@ -651,3 +660,87 @@ class TestUncapturedSymbolBucketResolution:
         )
         expected = 2.0 * 0.55 * 200.0 * np.sqrt(50e6 / adv)
         assert got == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# Impact-coefficient provenance (ADR-0017)
+# ---------------------------------------------------------------------------
+
+class TestImpactCoeffProvenanceMatchesPricing:
+    """
+    ``resolve_impact_coeff_*`` must report the coefficient that
+    ``compute_impact_bps_*`` ACTUALLY charged.
+
+    The resolvers re-derive the ADV estimate and repeat the per-name →
+    bucket → global lookup rather than being handed the value the pricing
+    path used, so nothing but a test keeps the two in step.  A silent drift
+    would record a coefficient the cell was never priced at — and
+    ``impact_sweep.scale_impact_bps`` rescales every swept cell FROM that
+    recorded base, so a wrong record propagates into every swept figure.
+    That is the same class of defect as reading a module constant for a
+    cell's priced-at size, which ADR-0017 required fixing.
+
+    The assertion is behavioural, not a restatement of the implementation:
+    vol, ADV and notional are identical between the two calls, so the ratio
+    of calibrated to flat impact must equal the ratio of the resolved
+    coefficient to the flat one.
+    """
+
+    @staticmethod
+    def _inject(monkeypatch, coeffs: dict) -> None:
+        import strategy_fit.impact as impact_mod
+        monkeypatch.setattr(impact_mod, "_CALIBRATED_COEFFS", coeffs, raising=False)
+        monkeypatch.setattr(impact_mod, "_COEFFS_LOADED", True, raising=False)
+
+    # Bucket-resolved (empty per_name), so the coefficient depends on the ADV
+    # estimate: a drift in EITHER the estimator or the lookup that changes the
+    # charged coefficient breaks the ratio below.
+    _COEFFS = {
+        "global_default": 1.0,
+        "buckets": {
+            "high_liq": {"coeff": 0.4, "confidence": "confirmed"},
+            "mid_liq": {"coeff": 0.6, "confidence": "confirmed"},
+            "low_liq": {"coeff": 0.8, "confidence": "confirmed"},
+        },
+        "per_name": {},
+    }
+
+    def test_intraday_resolved_coeff_is_the_one_charged(self, monkeypatch) -> None:
+        from strategy_fit.impact import (
+            SQRT_IMPACT_COEFF,
+            compute_impact_bps_from_df,
+            resolve_impact_coeff_from_df,
+        )
+        self._inject(monkeypatch, self._COEFFS)
+        df = _make_intraday_df()
+
+        flat = compute_impact_bps_from_df(df)
+        calibrated = compute_impact_bps_from_df(df, use_calibrated=True, symbol="ZZZZ")
+        resolved = resolve_impact_coeff_from_df(df, use_calibrated=True, symbol="ZZZZ")
+
+        assert flat > 0, "fixture is degenerate; the ratio below would be meaningless"
+        assert calibrated / flat == pytest.approx(resolved / SQRT_IMPACT_COEFF)
+
+    def test_daily_resolved_coeff_is_the_one_charged(self, monkeypatch) -> None:
+        from strategy_fit.impact import (
+            SQRT_IMPACT_COEFF,
+            compute_impact_bps_from_daily_df,
+            resolve_impact_coeff_from_daily_df,
+        )
+        self._inject(monkeypatch, self._COEFFS)
+        dates = [f"2025-01-{d:02d}" for d in range(1, 31)]
+        closes = [1000.0 + (i % 7) * 10 for i in range(30)]
+        df = _make_daily_df(dates, closes, volumes=[500_000.0] * 30)
+
+        flat = compute_impact_bps_from_daily_df(df)
+        calibrated = compute_impact_bps_from_daily_df(df, use_calibrated=True, symbol="ZZZZ")
+        resolved = resolve_impact_coeff_from_daily_df(df, use_calibrated=True, symbol="ZZZZ")
+
+        assert flat > 0, "fixture is degenerate; the ratio below would be meaningless"
+        assert calibrated / flat == pytest.approx(resolved / SQRT_IMPACT_COEFF)
+
+    def test_uncalibrated_resolver_reports_the_flat_coeff(self, monkeypatch) -> None:
+        from strategy_fit.impact import SQRT_IMPACT_COEFF, resolve_impact_coeff_from_df
+        self._inject(monkeypatch, self._COEFFS)
+        df = _make_intraday_df()
+        assert resolve_impact_coeff_from_df(df) == pytest.approx(SQRT_IMPACT_COEFF)

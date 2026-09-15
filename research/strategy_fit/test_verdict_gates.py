@@ -589,3 +589,54 @@ class TestCapitalModelHeaderIsNotHardcoded:
     def test_the_two_models_never_render_the_same_line(self) -> None:
         from strategy_fit.capital_model import LEVERAGED_SLEEVE, OWNED_CASH
         assert self._header(OWNED_CASH) != self._header(LEVERAGED_SLEEVE)
+
+
+# ---------------------------------------------------------------------------
+# Impact-methodology prose must describe the active sizing, not a hardcoded
+# constant (ADR-0017; same class of defect as TestCapitalModelHeaderIsNotHardcoded
+# above and the ADR-0011 capital-model line found in plan 18 §4.4)
+# ---------------------------------------------------------------------------
+
+class TestImpactMethodologyProseIsNotHardcoded:
+    """
+    strategy_fit/report.py:615 used to emit the literal string
+    "where participation = POSITION_NOTIONAL_IDR(30M IDR) / ADV" — a hardcoded
+    figure that stopped being true the moment ADR-0017 rebased the per-name
+    notional to the measured 15M sleeve.  This is the regression test that
+    would have caught it: it changes ACTIVE_SLEEVE_SIZING and asserts the
+    report's prose follows, rather than asserting a fixed string.
+    """
+
+    def test_prose_states_the_active_notional_not_a_hardcoded_one(self, tmp_path) -> None:
+        cells = [_cell()]
+        path = emit_strategy_portfolio(cells=cells, outdir=str(tmp_path))
+        content = open(path).read()
+        from strategy_fit.impact import POSITION_NOTIONAL_IDR
+        assert f"{int(POSITION_NOTIONAL_IDR):,}" in content
+        assert "30M IDR) / ADV" not in content, (
+            "report must not emit the old hardcoded '30M IDR' participation line"
+        )
+
+    def test_prose_follows_active_sleeve_sizing_when_changed(self, tmp_path, monkeypatch) -> None:
+        """Change ACTIVE_SLEEVE_SIZING (as ADR-0017's Open Questions anticipates
+        happening once concurrent-name count is settled) and confirm the
+        report's prose follows it, proving it is read live rather than
+        memoized from import time."""
+        import strategy_fit.report as report_mod
+        from strategy_fit.sleeve_sizing import SLEEVE_N1
+
+        monkeypatch.setattr(report_mod, "ACTIVE_SLEEVE_SIZING", SLEEVE_N1)
+        monkeypatch.setattr(report_mod, "POSITION_NOTIONAL_IDR", SLEEVE_N1.per_name_notional_idr)
+
+        cells = [_cell()]
+        path = emit_strategy_portfolio(cells=cells, outdir=str(tmp_path))
+        content = open(path).read()
+        assert f"{int(SLEEVE_N1.per_name_notional_idr):,}" in content
+        assert SLEEVE_N1.name in content
+
+    def test_prose_names_the_active_preset(self, tmp_path) -> None:
+        from strategy_fit.sleeve_sizing import ACTIVE_SLEEVE_SIZING
+        cells = [_cell()]
+        path = emit_strategy_portfolio(cells=cells, outdir=str(tmp_path))
+        content = open(path).read()
+        assert ACTIVE_SLEEVE_SIZING.name in content

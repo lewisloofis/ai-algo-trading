@@ -66,7 +66,13 @@ from strategy_fit.walk_forward import (
     DEFAULT_TEST_WINDOW,
     DEFAULT_MIN_WINDOWS,
 )
-from strategy_fit.impact import compute_impact_bps_from_df, compute_impact_bps_from_daily_df
+from strategy_fit.impact import (
+    POSITION_NOTIONAL_IDR,
+    compute_impact_bps_from_daily_df,
+    compute_impact_bps_from_df,
+    resolve_impact_coeff_from_daily_df,
+    resolve_impact_coeff_from_df,
+)
 from strategy_fit.intraday_walk_forward import (
     walk_forward_intraday,
     IntradayWalkForwardResult,
@@ -263,9 +269,16 @@ def _run_single_name_cell(
     daily_impact_bps = compute_impact_bps_from_daily_df(
         df, use_calibrated=use_calibrated, symbol=symbol
     )
+    # Provenance (ADR-0017): record the notional and coefficient this cell was
+    # ACTUALLY priced at, on the cell itself — not left to be re-derived later
+    # from whatever the module constants happen to be at that later time. See
+    # CellResult.impact_priced_position_notional_idr / impact_priced_coeff.
+    daily_impact_coeff = resolve_impact_coeff_from_daily_df(
+        df, use_calibrated=use_calibrated, symbol=symbol
+    )
     logger.debug(
-        "daily impact for %s/%s: %.1f bps (calibrated=%s)",
-        symbol, family.name, daily_impact_bps, use_calibrated,
+        "daily impact for %s/%s: %.1f bps (coeff=%.3f, notional=%.0f, calibrated=%s)",
+        symbol, family.name, daily_impact_bps, daily_impact_coeff, POSITION_NOTIONAL_IDR, use_calibrated,
     )
 
     # 3. Out-of-sample persistence split (plan 13).
@@ -310,6 +323,8 @@ def _run_single_name_cell(
             decay_metric=wf.mean_sharpe,
             modelled_impact_bps=daily_impact_bps,
             impact_priced=True,
+            impact_priced_position_notional_idr=POSITION_NOTIONAL_IDR,
+            impact_priced_coeff=daily_impact_coeff,
             oos_eff_n=wf_daily.oos_eff_n,
             oos_split_skip_reason=wf_daily.skip_reason,
         )
@@ -338,6 +353,8 @@ def _run_single_name_cell(
             decay_metric=wf.mean_sharpe,
             modelled_impact_bps=daily_impact_bps,
             impact_priced=True,
+            impact_priced_position_notional_idr=POSITION_NOTIONAL_IDR,
+            impact_priced_coeff=daily_impact_coeff,
             oos_eff_n=wf_daily.oos_eff_n,
             oos_split_skip_reason=wf_daily.skip_reason,
         )
@@ -374,6 +391,8 @@ def _run_single_name_cell(
         best_entry_dow=entry_dow,
         modelled_impact_bps=daily_impact_bps,
         impact_priced=True,
+        impact_priced_position_notional_idr=POSITION_NOTIONAL_IDR,
+        impact_priced_coeff=daily_impact_coeff,
         null_edge_bps=result.get("null_edge_bps"),
         edge_over_null_bps=result.get("edge_over_null_bps"),
         oos_edge_bps=wf_daily.oos_edge_bps,
@@ -638,7 +657,14 @@ def _run_intraday_cell(
     intraday_impact_bps = compute_impact_bps_from_df(
         intraday_df, use_calibrated=use_calibrated, symbol=symbol
     )
-    logger.debug("intraday impact for %s/%s: %.1f bps (calibrated=%s)", symbol, family.name, intraday_impact_bps, use_calibrated)
+    # Provenance (ADR-0017): see the matching comment in _run_single_name_cell.
+    intraday_impact_coeff = resolve_impact_coeff_from_df(
+        intraday_df, use_calibrated=use_calibrated, symbol=symbol
+    )
+    logger.debug(
+        "intraday impact for %s/%s: %.1f bps (coeff=%.3f, notional=%.0f, calibrated=%s)",
+        symbol, family.name, intraday_impact_bps, intraday_impact_coeff, POSITION_NOTIONAL_IDR, use_calibrated,
+    )
 
     # 2. OOS persistence split.
     wf_intraday: IntradayWalkForwardResult = walk_forward_intraday(intraday_df, family_fn)
@@ -657,6 +683,8 @@ def _run_intraday_cell(
             eff_n=result.get("eff_n"),
             modelled_impact_bps=intraday_impact_bps,
             impact_priced=True,
+            impact_priced_position_notional_idr=POSITION_NOTIONAL_IDR,
+            impact_priced_coeff=intraday_impact_coeff,
         )
 
     # Cost gate: for hold=0, financing=0, hurdle = min_edge + impact.
@@ -685,6 +713,8 @@ def _run_intraday_cell(
         best_entry_dow=entry_dow,
         modelled_impact_bps=intraday_impact_bps,
         impact_priced=True,
+        impact_priced_position_notional_idr=POSITION_NOTIONAL_IDR,
+        impact_priced_coeff=intraday_impact_coeff,
         null_edge_bps=result.get("null_edge_bps"),
         edge_over_null_bps=result.get("edge_over_null_bps"),
         oos_edge_bps=wf_intraday.oos_edge_bps,
@@ -1052,7 +1082,9 @@ def main(argv: list[str] | None = None) -> None:
         help=(
             "Run impact sensitivity sweep after the normal grid run and write "
             "impact_sweep.md to outdir.  Sweeps SQRT_IMPACT_COEFF ∈ {0.5, 1.0} × "
-            "POSITION_NOTIONAL_IDR ∈ {15M, 30M, 60M} IDR.  Default: off."
+            "position notional over the MEASURED sleeve (ADR-0017) at N ∈ "
+            "{10, 5, 3, 1} concurrent names ({1.5M, 3M, 5M, 15M} IDR), plus the "
+            "superseded ADR-0011 30M reference point.  Default: off."
         ),
     )
     parser.add_argument(

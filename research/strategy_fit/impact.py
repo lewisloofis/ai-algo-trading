@@ -45,10 +45,25 @@ SQRT_IMPACT_COEFF : float = 1.0
     at 0.5–1.0; 1.0 is the conservative (high-friction) end, appropriate for
     sizing research before live calibration.  plan-13 will refine with live fills.
 
-POSITION_NOTIONAL_IDR : float = 30_000_000
-    Per-name order notional in IDR.  This is a v1 constant: 300M IDR AI sleeve
-    (ADR-0011) divided by ~10 concurrent names as a rough per-name slice.
-    plan-13 will replace this with symbol-specific optimal position sizing.
+POSITION_NOTIONAL_IDR : float
+    Per-name order notional in IDR, DERIVED from
+    ``strategy_fit.sleeve_sizing.ACTIVE_SLEEVE_SIZING.per_name_notional_idr``
+    — see ``strategy_fit/sleeve_sizing.py``.
+
+    .. important::
+        **CHANGED 2026-09-14 (ADR-0017).**  This used to be a literal
+        ``30_000_000.0``, derived as "300M IDR AI sleeve (ADR-0011) / ~10
+        concurrent names".  ADR-0011 was already superseded by ADR-0015
+        before that constant was ever corrected, and neither ADR had
+        measured the sleeve's actual capital.  ADR-0017 measured it: the
+        sleeve is a separate broker sub-account holding **15,000,000 IDR**
+        — HALF the old per-name constant, for the entire account, not one
+        name.  ``30_000_000`` is void: every impact/capacity figure priced
+        against it was priced at a size the account cannot take.  See
+        ``strategy_fit/sleeve_sizing.py`` for the presets and the "open
+        question" (concurrent-name count) this value still depends on, and
+        ``strategy_fit/impact_sweep.py`` for the sweep across sleeve sizes
+        that ADR-0017 requires in place of trusting one assumed number.
 """
 
 from __future__ import annotations
@@ -59,6 +74,8 @@ import os
 
 import numpy as np
 import pandas as pd
+
+from strategy_fit.sleeve_sizing import ACTIVE_SLEEVE_SIZING
 
 logger = logging.getLogger(__name__)
 
@@ -75,14 +92,23 @@ is the most conservative (largest impact estimate) for pre-live sizing research.
 plan-13 will calibrate against live fills once the strategy is deployed.
 """
 
-POSITION_NOTIONAL_IDR: float = 30_000_000.0
+POSITION_NOTIONAL_IDR: float = ACTIVE_SLEEVE_SIZING.per_name_notional_idr
 """
-Per-name order notional in IDR (v1 constant).
+Per-name order notional in IDR, derived from the sleeve's MEASURED equity
+(ADR-0017), not a facility it doesn't use.
 
-Derived as: 300M IDR AI sleeve (ADR-0011) / ~10 concurrent names.  This is a
-simplistic slice; plan-13 will refine sizing with volatility targeting and
-signal confidence.  Documented here so every caller uses a single, auditable
-value.
+CHANGED 2026-09-14 (ADR-0017): previously a literal ``30_000_000.0``, derived
+as "300M IDR AI sleeve (ADR-0011, already superseded by ADR-0015) / ~10
+concurrent names" — a constant fitted to a leverage facility the sleeve was
+never funded by.  ADR-0017 measured the sleeve directly: a separate broker
+sub-account holding 15,000,000 IDR as of 2026-09-14, **half** the old
+constant for the *entire* account.  ``POSITION_NOTIONAL_IDR`` is now derived
+from ``strategy_fit.sleeve_sizing.ACTIVE_SLEEVE_SIZING`` — see that module
+for the presets (by concurrent-name count), which value is active, and why
+the concurrent-name count is an open portfolio-construction question rather
+than a settled input.  The name is kept stable so existing callers (this
+module's own ``compute_impact_bps*`` default arguments, ``impact_sweep.py``)
+don't have to change, only what it derives from.
 """
 
 # Fallback / penalty value returned when impact cannot be computed (degenerate
@@ -414,6 +440,29 @@ def compute_impact_bps_from_df(
     )
 
 
+def resolve_impact_coeff_from_df(
+    intraday_df: pd.DataFrame,
+    *,
+    use_calibrated: bool = False,
+    symbol: str | None = None,
+) -> float:
+    """
+    The Almgren coefficient ``compute_impact_bps_from_df`` would resolve for
+    this DataFrame/symbol — for PROVENANCE only, not a second impact model.
+
+    ``compute_impact_bps`` picks its coefficient internally (either the flat
+    ``SQRT_IMPACT_COEFF`` or ``get_impact_coeff(symbol, adv)`` when
+    ``use_calibrated``) and returns only the resulting bps figure, so a
+    caller that needs to RECORD which coefficient actually priced a cell
+    (see ``strategy_fit.harness.CellResult.impact_priced_coeff``, ADR-0017)
+    has no way to recover it after the fact.  This mirrors that internal
+    resolution exactly, using the same ADV estimate, so the recorded value
+    is guaranteed to match what was actually charged.
+    """
+    adv = compute_adv_notional_idr(intraday_df)
+    return get_impact_coeff(symbol, adv_notional_idr=adv) if use_calibrated else SQRT_IMPACT_COEFF
+
+
 # ---------------------------------------------------------------------------
 # Helpers: daily vol and ADV from a DAILY-bar DataFrame (plan 13)
 # ---------------------------------------------------------------------------
@@ -589,3 +638,21 @@ def compute_impact_bps_from_daily_df(
         use_calibrated=use_calibrated,
         symbol=symbol,
     )
+
+
+def resolve_impact_coeff_from_daily_df(
+    daily_df: pd.DataFrame,
+    *,
+    use_calibrated: bool = False,
+    symbol: str | None = None,
+) -> float:
+    """
+    The Almgren coefficient ``compute_impact_bps_from_daily_df`` would
+    resolve for this DataFrame/symbol — for PROVENANCE only.  See
+    ``resolve_impact_coeff_from_df`` (the intraday counterpart) for the
+    rationale; this uses the daily-bar ADV estimator so the resolved
+    coefficient matches what ``compute_impact_bps_from_daily_df`` actually
+    charged, bucket-for-bucket.
+    """
+    adv = compute_adv_notional_idr_from_daily_bars(daily_df)
+    return get_impact_coeff(symbol, adv_notional_idr=adv) if use_calibrated else SQRT_IMPACT_COEFF
