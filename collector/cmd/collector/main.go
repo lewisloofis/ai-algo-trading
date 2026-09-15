@@ -22,7 +22,7 @@ import (
 	"syscall"
 	"time"
 
-	"collector/internal/calendar"
+	"collector/calendar"
 	"collector/feed"
 	"collector/internal/s3upload"
 	"collector/segment"
