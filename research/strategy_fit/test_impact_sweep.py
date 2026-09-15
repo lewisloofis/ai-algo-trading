@@ -2,9 +2,12 @@
 strategy_fit/test_impact_sweep.py — TDD tests for the impact sensitivity sweep.
 
 Validates strategy_fit/impact_sweep.py:
-  - scale_impact_bps: analytical scaling formula
-  - recompute_cell_at_impact: rebuilds a CellResult with new impact/hurdle/net
-  - sweep_grid: produces a SweepGrid with survivor counts per (coeff, size) point
+  - scale_impact_bps: analytical scaling formula, base explicit (ADR-0017)
+  - recompute_cell_at_impact: rebuilds a CellResult with new impact/hurdle/net,
+    reading the priced-at base OFF THE CELL, not a module global
+  - A cell missing priced-at provenance is refused (not silently rescaled)
+    and surfaced in GridPointResult.unscaled_cells
+  - sweep_grid: produces grid points across the MEASURED sleeve (ADR-0017)
   - FDR pool consistency: daily/event/cross/pairs cells included unchanged
   - Re-entry detection (cell gated at base becomes survivor at lower impact)
   - Base survivor drop (cell passes at base, drops at higher impact)
@@ -37,8 +40,21 @@ def _intraday_cell(
     eff_n: int = 50,
     hit_rate: float = 0.70,
     passes_cost_gate: bool = True,
+    impact_priced_coeff: float | None = SQRT_IMPACT_COEFF,
+    impact_priced_position_notional_idr: float | None = POSITION_NOTIONAL_IDR,
 ) -> CellResult:
-    """Build a minimal intraday CellResult at the base (coeff=1.0, size=30M) point.
+    """Build a minimal intraday CellResult, priced (by default) at TODAY's
+    active (SQRT_IMPACT_COEFF, POSITION_NOTIONAL_IDR) — i.e. as if it came
+    straight out of a real grid run today.  This mirrors what
+    run_strategy_fit.py actually records on every cell (ADR-0017): the
+    priced-at coefficient/notional travel WITH the cell, not a module global
+    re-read later.
+
+    Pass ``impact_priced_coeff`` / ``impact_priced_position_notional_idr``
+    explicitly to simulate a cell priced at a DIFFERENT point (e.g. a
+    legacy-30M-priced cell), or ``None`` for a cell that predates ADR-0017's
+    provenance fields entirely (both default to that column's default of
+    None only if explicitly overridden — see TestMissingProvenance below).
 
     min_edge_hurdle_bps = min_edge_floor_bps + modelled_impact_bps
     net_edge_bps = gross_edge_bps - min_edge_hurdle_bps
@@ -59,6 +75,9 @@ def _intraday_cell(
         passes_cost_gate=passes_cost_gate,
         min_edge_hurdle_bps=hurdle,
         modelled_impact_bps=modelled_impact_bps,
+        impact_priced=True,
+        impact_priced_coeff=impact_priced_coeff,
+        impact_priced_position_notional_idr=impact_priced_position_notional_idr,
     )
 
 
@@ -94,12 +113,22 @@ def _daily_cell(
 # ---------------------------------------------------------------------------
 
 class TestScaleImpactBps:
+    """
+    Every call below supplies base_coeff / base_position_notional_idr
+    explicitly (ADR-0017) — scale_impact_bps no longer reads
+    strategy_fit.impact's module constants itself.  Tests pass the SAME
+    values (SQRT_IMPACT_COEFF, POSITION_NOTIONAL_IDR) that used to be read
+    implicitly, so the numeric expectations are unchanged.
+    """
+
     def test_base_point_returns_unchanged(self) -> None:
-        """At (coeff=SQRT_IMPACT_COEFF, size=POSITION_NOTIONAL_IDR), scaling is 1.0×."""
+        """At (coeff=base_coeff, size=base_position_notional_idr), scaling is 1.0×."""
         from strategy_fit.impact_sweep import scale_impact_bps
         base_impact = 40.0
         scaled = scale_impact_bps(
             impact_base_bps=base_impact,
+            base_coeff=SQRT_IMPACT_COEFF,
+            base_position_notional_idr=POSITION_NOTIONAL_IDR,
             coeff=SQRT_IMPACT_COEFF,
             position_notional_idr=POSITION_NOTIONAL_IDR,
         )
@@ -108,11 +137,13 @@ class TestScaleImpactBps:
         )
 
     def test_half_coeff_halves_impact(self) -> None:
-        """coeff=0.5 (half of 1.0) → impact = base × 0.5."""
+        """coeff=0.5 (half of base_coeff=1.0) → impact = base × 0.5."""
         from strategy_fit.impact_sweep import scale_impact_bps
         base = 80.0
         scaled = scale_impact_bps(
             impact_base_bps=base,
+            base_coeff=SQRT_IMPACT_COEFF,
+            base_position_notional_idr=POSITION_NOTIONAL_IDR,
             coeff=0.5,
             position_notional_idr=POSITION_NOTIONAL_IDR,
         )
@@ -125,6 +156,8 @@ class TestScaleImpactBps:
         base = 60.0
         scaled = scale_impact_bps(
             impact_base_bps=base,
+            base_coeff=SQRT_IMPACT_COEFF,
+            base_position_notional_idr=POSITION_NOTIONAL_IDR,
             coeff=SQRT_IMPACT_COEFF,
             position_notional_idr=POSITION_NOTIONAL_IDR * 2,
         )
@@ -140,6 +173,8 @@ class TestScaleImpactBps:
         base = 60.0
         scaled = scale_impact_bps(
             impact_base_bps=base,
+            base_coeff=SQRT_IMPACT_COEFF,
+            base_position_notional_idr=POSITION_NOTIONAL_IDR,
             coeff=SQRT_IMPACT_COEFF,
             position_notional_idr=POSITION_NOTIONAL_IDR / 2,
         )
@@ -155,6 +190,8 @@ class TestScaleImpactBps:
         base = 40.0
         scaled = scale_impact_bps(
             impact_base_bps=base,
+            base_coeff=SQRT_IMPACT_COEFF,
+            base_position_notional_idr=POSITION_NOTIONAL_IDR,
             coeff=0.5,
             position_notional_idr=POSITION_NOTIONAL_IDR * 2,
         )
@@ -168,10 +205,31 @@ class TestScaleImpactBps:
         from strategy_fit.impact_sweep import scale_impact_bps
         scaled = scale_impact_bps(
             impact_base_bps=0.0,
+            base_coeff=SQRT_IMPACT_COEFF,
+            base_position_notional_idr=POSITION_NOTIONAL_IDR,
             coeff=0.5,
             position_notional_idr=POSITION_NOTIONAL_IDR / 2,
         )
         assert scaled == 0.0, f"zero base impact must stay zero, got {scaled}"
+
+    def test_different_base_from_target_is_not_confused_with_module_constants(self) -> None:
+        """
+        Regression (ADR-0017): the base need not equal ANY current module
+        constant.  A cell priced at a completely arbitrary historical point
+        (e.g. the void legacy 30M/coeff=1.0) must rescale correctly to a
+        target that has nothing to do with today's POSITION_NOTIONAL_IDR.
+        """
+        from strategy_fit.impact_sweep import scale_impact_bps
+        import math
+        scaled = scale_impact_bps(
+            impact_base_bps=100.0,
+            base_coeff=1.0,
+            base_position_notional_idr=30_000_000.0,   # legacy ADR-0011 point
+            coeff=1.0,
+            position_notional_idr=1_500_000.0,          # N=10 sleeve point
+        )
+        expected = 100.0 * math.sqrt(1_500_000.0 / 30_000_000.0)
+        assert abs(scaled - expected) < 1e-6
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +286,9 @@ class TestRecomputeCellAtImpact:
         assert result.passes_cost_gate is None
 
     def test_intraday_cell_recomputes_hurdle_and_net(self) -> None:
-        """Intraday cell with new coeff/size → hurdle and net_edge_bps updated."""
+        """Intraday cell with new coeff/size → hurdle and net_edge_bps updated,
+        relative to its OWN recorded priced-at base (default: today's active
+        SQRT_IMPACT_COEFF / POSITION_NOTIONAL_IDR — see _intraday_cell)."""
         from strategy_fit.impact_sweep import recompute_cell_at_impact, scale_impact_bps
         c = _intraday_cell(
             gross_edge_bps=100.0,
@@ -236,7 +296,13 @@ class TestRecomputeCellAtImpact:
             min_edge_floor_bps=50.0,
         )
         new_c = recompute_cell_at_impact(c, coeff=0.5, position_notional_idr=POSITION_NOTIONAL_IDR)
-        expected_new_impact = scale_impact_bps(40.0, coeff=0.5, position_notional_idr=POSITION_NOTIONAL_IDR)
+        expected_new_impact = scale_impact_bps(
+            40.0,
+            base_coeff=SQRT_IMPACT_COEFF,
+            base_position_notional_idr=POSITION_NOTIONAL_IDR,
+            coeff=0.5,
+            position_notional_idr=POSITION_NOTIONAL_IDR,
+        )
         expected_new_hurdle = 50.0 + expected_new_impact
         expected_new_net = 100.0 - expected_new_hurdle
         assert abs(new_c.modelled_impact_bps - expected_new_impact) < 1e-9
@@ -253,7 +319,7 @@ class TestRecomputeCellAtImpact:
             min_edge_floor_bps=50.0,
             passes_cost_gate=False,
         )
-        # At coeff=0.5 → new_impact=30 → hurdle=80 → net=20 → cost_pass=True
+        # At coeff=0.5, same size as base → new_impact=30 → hurdle=80 → net=20 → cost_pass=True
         new_c = recompute_cell_at_impact(c, coeff=0.5, position_notional_idr=POSITION_NOTIONAL_IDR)
         assert new_c.passes_cost_gate is True, (
             f"At half impact, cell should pass gate; net={new_c.net_edge_bps:.2f}"
@@ -269,19 +335,113 @@ class TestRecomputeCellAtImpact:
         assert c.modelled_impact_bps == 20.0
 
     def test_floor_extraction_is_consistent(self) -> None:
-        """floor = hurdle - impact must be stable: recomputing at base yields original."""
+        """floor = hurdle - impact must be stable: recomputing at the cell's
+        own priced-at base yields the original values back."""
         from strategy_fit.impact_sweep import recompute_cell_at_impact
         c = _intraday_cell(
             gross_edge_bps=120.0,
             modelled_impact_bps=30.0,
             min_edge_floor_bps=60.0,
         )
-        # At base point (coeff=1.0, size=30M), result should match original
         new_c = recompute_cell_at_impact(
             c, coeff=SQRT_IMPACT_COEFF, position_notional_idr=POSITION_NOTIONAL_IDR
         )
         assert abs(new_c.min_edge_hurdle_bps - c.min_edge_hurdle_bps) < 1e-9
         assert abs(new_c.net_edge_bps - c.net_edge_bps) < 1e-9
+
+
+class TestMissingProvenanceIsNotSilentlyRescaled:
+    """
+    ADR-0017: a cell with impact_priced_coeff / impact_priced_position_notional_idr
+    both None (it predates these fields) must be REFUSED, not silently rescaled
+    against an assumed base — see recompute_cell_at_impact's provenance guard.
+    """
+
+    def test_missing_provenance_cell_returned_unchanged(self) -> None:
+        from strategy_fit.impact_sweep import recompute_cell_at_impact
+        c = _intraday_cell(
+            gross_edge_bps=100.0,
+            modelled_impact_bps=40.0,
+            min_edge_floor_bps=50.0,
+            impact_priced_coeff=None,
+            impact_priced_position_notional_idr=None,
+        )
+        new_c = recompute_cell_at_impact(c, coeff=0.5, position_notional_idr=1_500_000.0)
+        assert new_c.modelled_impact_bps == c.modelled_impact_bps
+        assert new_c.min_edge_hurdle_bps == c.min_edge_hurdle_bps
+        assert new_c.net_edge_bps == c.net_edge_bps
+        assert new_c.passes_cost_gate == c.passes_cost_gate
+
+    def test_partial_provenance_is_also_refused(self) -> None:
+        """Only one of the two fields recorded is treated the same as neither —
+        a half-known base is not a known base."""
+        from strategy_fit.impact_sweep import recompute_cell_at_impact
+        c = _intraday_cell(
+            modelled_impact_bps=40.0,
+            min_edge_floor_bps=50.0,
+            impact_priced_coeff=1.0,
+            impact_priced_position_notional_idr=None,
+        )
+        new_c = recompute_cell_at_impact(c, coeff=0.5, position_notional_idr=1_500_000.0)
+        assert new_c.modelled_impact_bps == c.modelled_impact_bps
+
+    def test_missing_provenance_cell_surfaced_in_unscaled_cells(self) -> None:
+        """sweep_grid must surface these cells explicitly, at every grid point."""
+        from strategy_fit.impact_sweep import sweep_grid, SWEEP_COEFFS, SWEEP_SIZES
+        c = _intraday_cell(
+            symbol="LEGACY", family_name="orb",
+            impact_priced_coeff=None,
+            impact_priced_position_notional_idr=None,
+        )
+        result = sweep_grid([c])
+        assert len(result) == len(SWEEP_COEFFS) * len(SWEEP_SIZES)
+        for r in result:
+            assert "LEGACY:orb" in r.unscaled_cells
+
+    def test_full_provenance_cell_not_in_unscaled_cells(self) -> None:
+        from strategy_fit.impact_sweep import sweep_grid
+        c = _intraday_cell(symbol="ITMG", family_name="orb")
+        result = sweep_grid([c])
+        for r in result:
+            assert r.unscaled_cells == []
+
+
+class TestRescaleIndependentOfLiveModuleConstant:
+    """
+    Regression (ADR-0017): rescaling a cell priced at size A to size B must
+    give the SAME answer no matter what strategy_fit.impact.POSITION_NOTIONAL_IDR
+    / SQRT_IMPACT_COEFF happen to equal AT RESCALE TIME.  This is the exact
+    defect the priced-at provenance fields fix: the old scale_impact_bps read
+    those module constants directly and treated their CURRENT value as "what
+    this cell was priced at", which silently breaks the moment sizing becomes
+    configurable.  This test would have FAILED against the old implementation.
+    """
+
+    def test_monkeypatched_module_constants_do_not_change_the_result(self, monkeypatch) -> None:
+        import strategy_fit.impact_sweep as impact_sweep_mod
+        from strategy_fit.impact_sweep import recompute_cell_at_impact
+
+        c = _intraday_cell(
+            gross_edge_bps=100.0,
+            modelled_impact_bps=40.0,
+            min_edge_floor_bps=50.0,
+            impact_priced_coeff=1.0,
+            impact_priced_position_notional_idr=30_000_000.0,  # priced at legacy 30M
+        )
+
+        result_before = recompute_cell_at_impact(c, coeff=1.0, position_notional_idr=15_000_000.0)
+
+        # Simulate "the module constants changed since this cell was priced" —
+        # exactly the scenario ADR-0017 identifies as having broken silently.
+        monkeypatch.setattr(impact_sweep_mod, "POSITION_NOTIONAL_IDR", 999_999.0)
+        monkeypatch.setattr(impact_sweep_mod, "SQRT_IMPACT_COEFF", 0.01)
+
+        result_after = recompute_cell_at_impact(c, coeff=1.0, position_notional_idr=15_000_000.0)
+
+        assert result_before.modelled_impact_bps == result_after.modelled_impact_bps
+        assert result_before.min_edge_hurdle_bps == result_after.min_edge_hurdle_bps
+        assert result_before.net_edge_bps == result_after.net_edge_bps
+        assert result_before.passes_cost_gate == result_after.passes_cost_gate
 
 
 # ---------------------------------------------------------------------------
@@ -314,13 +474,14 @@ class TestSweepGrid:
             ),
         ]
 
-    def test_sweep_returns_six_grid_points(self) -> None:
-        """6 grid points: 2 coeffs × 3 sizes."""
+    def test_sweep_returns_ten_grid_points(self) -> None:
+        """10 grid points: 2 coeffs × 5 sizes (ADR-0017 rebased the size axis
+        to the measured sleeve at N=10/5/3/1 plus the legacy 30M reference)."""
         from strategy_fit.impact_sweep import sweep_grid, SWEEP_COEFFS, SWEEP_SIZES
         assert len(SWEEP_COEFFS) == 2
-        assert len(SWEEP_SIZES) == 3
+        assert len(SWEEP_SIZES) == 5
         result = sweep_grid(self._make_cells())
-        assert len(result) == 6, f"Expected 6 grid points, got {len(result)}"
+        assert len(result) == 10, f"Expected 10 grid points, got {len(result)}"
 
     def test_grid_points_span_correct_parameter_space(self) -> None:
         """Every (coeff, size) combination must appear exactly once."""
@@ -331,7 +492,9 @@ class TestSweepGrid:
         assert params == expected
 
     def test_survivor_count_at_base_matches_normal_run(self) -> None:
-        """At (coeff=1.0, size=30M), survivor count equals what the normal pipeline gives."""
+        """At (coeff=1.0, size=today's active POSITION_NOTIONAL_IDR), survivor
+        count equals what the normal pipeline gives — the fixtures are priced
+        at exactly that point by default (see _intraday_cell)."""
         from strategy_fit.impact_sweep import sweep_grid
         from strategy_fit.run_strategy_fit import apply_fdr_to_grid
         cells = self._make_cells()
@@ -369,36 +532,38 @@ class TestSweepGrid:
             assert r.survivor_count >= 0
 
     def test_re_entry_detected(self) -> None:
-        """A cell gated at (1.0,30M) but passing at (0.5,30M) → re_entry list contains it."""
+        """A cell gated at its own base but passing at half-coeff/same-size → re_entry list contains it."""
         from strategy_fit.impact_sweep import sweep_grid
         cells = self._make_cells()
         result = sweep_grid(cells)
         # ITMG intraday_momentum has base_impact=60, floor=50, gross=100 →
         # hurdle=110 > gross=100 at base → gated.
-        # At coeff=0.5: new_impact=30, hurdle=80, net=20 → passes.
+        # At coeff=0.5, same size: new_impact=30, hurdle=80, net=20 → passes.
         low_impact_point = next(
             r for r in result
             if abs(r.coeff - 0.5) < 1e-9 and abs(r.position_notional_idr - POSITION_NOTIONAL_IDR) < 1.0
         )
         reentries = low_impact_point.reentry_cells
         assert len(reentries) > 0, (
-            f"Expected at least one re-entry at (0.5, 30M); re_entries={reentries}"
+            f"Expected at least one re-entry at (0.5, {POSITION_NOTIONAL_IDR}); re_entries={reentries}"
         )
 
     def test_base_survivor_drop_at_high_impact(self) -> None:
-        """A base survivor that fails at (1.0, 60M) appears in dropped_cells."""
-        from strategy_fit.impact_sweep import sweep_grid
-        # Build a cell that barely passes at base but fails at 2× size
-        # base_impact=40, floor=50 → hurdle=90, gross=95 → net=5, passes
-        # 2× size: new_impact=40*sqrt(2)≈56.6, hurdle=106.6 > gross=95 → fails
+        """A cell priced at the smallest swept size drops once rescaled up to
+        the largest swept size (the legacy 30M reference point)."""
+        from strategy_fit.impact_sweep import sweep_grid, SWEEP_SIZES
         import math
+
+        base_size = min(SWEEP_SIZES)
+        high_size = max(SWEEP_SIZES)
         gross = 95.0
         base_impact = 40.0
         floor = 50.0
-        # Verify it passes at base
+        size_ratio = math.sqrt(high_size / base_size)
+        # Verify it passes at its own priced-at base ...
         assert gross > floor + base_impact
-        # Verify it fails at 2× size
-        assert gross < floor + base_impact * math.sqrt(2)
+        # ... but fails once rescaled up to the largest swept size.
+        assert gross < floor + base_impact * size_ratio
 
         marginal_cell = _intraday_cell(
             symbol="MDKA", family_name="intraday_momentum",
@@ -407,16 +572,17 @@ class TestSweepGrid:
             min_edge_floor_bps=floor,
             passes_cost_gate=True,
             p_value=0.01,
+            impact_priced_coeff=1.0,
+            impact_priced_position_notional_idr=base_size,
         )
-        cells = [marginal_cell]
-        result = sweep_grid(cells)
+        result = sweep_grid([marginal_cell])
         high_size_point = next(
             r for r in result
-            if abs(r.coeff - 1.0) < 1e-9 and abs(r.position_notional_idr - 60_000_000.0) < 1.0
+            if abs(r.coeff - 1.0) < 1e-9 and abs(r.position_notional_idr - high_size) < 1.0
         )
         dropped = high_size_point.dropped_cells
         assert len(dropped) > 0, (
-            f"Expected base survivor to drop at (1.0, 60M); dropped={dropped}"
+            f"Expected base survivor to drop at (1.0, {high_size}); dropped={dropped}"
         )
 
 
@@ -478,6 +644,30 @@ class TestEmitImpactSweep:
         assert any(kw in content for kw in ["exact", "analytical", "no re-fetch", "no API"]), (
             "Report must note that scaling is exact (no API calls needed)"
         )
+
+    def test_emit_surfaces_unscaled_cells_section(self, tmp_path) -> None:
+        """A cell missing priced-at provenance must be called out explicitly in the report."""
+        from strategy_fit.impact_sweep import emit_impact_sweep, sweep_grid
+        cells = [
+            _intraday_cell(
+                symbol="LEGACY", family_name="orb",
+                impact_priced_coeff=None,
+                impact_priced_position_notional_idr=None,
+            ),
+        ]
+        grid = sweep_grid(cells)
+        emit_impact_sweep(grid=grid, cells=cells, outdir=str(tmp_path))
+        content = (tmp_path / "impact_sweep.md").read_text()
+        assert "Not Rescaled" in content
+        assert "LEGACY:orb" in content
+
+    def test_emit_omits_unscaled_cells_section_when_none_missing(self, tmp_path) -> None:
+        from strategy_fit.impact_sweep import emit_impact_sweep, sweep_grid
+        cells = [_intraday_cell(symbol="ITMG", family_name="orb")]
+        grid = sweep_grid(cells)
+        emit_impact_sweep(grid=grid, cells=cells, outdir=str(tmp_path))
+        content = (tmp_path / "impact_sweep.md").read_text()
+        assert "Not Rescaled" not in content
 
 
 # ---------------------------------------------------------------------------

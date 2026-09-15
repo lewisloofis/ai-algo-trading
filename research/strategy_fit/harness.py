@@ -394,6 +394,38 @@ class CellResult:
     0.0" from "impact never priced at all" — a hard prerequisite for a cell
     to contribute to a PASS verdict (see strategy_fit/report.py:compute_verdict).
     """
+    impact_priced_position_notional_idr: float | None = None
+    """
+    The per-name order notional (IDR) ``modelled_impact_bps`` was ACTUALLY
+    priced at — the value of ``strategy_fit.impact.POSITION_NOTIONAL_IDR`` at
+    the moment this cell was computed.  ``None`` when ``impact_priced`` is
+    False (nothing was priced) or for a cell computed before this field
+    existed.
+
+    ADR-0017 (the sleeve is a measured 15M IDR sub-account, not a 300M
+    facility / ~10 names) is the reason this field exists.  Before it,
+    ``strategy_fit/impact_sweep.py`` rescaled a cell's impact by reading
+    ``strategy_fit.impact.POSITION_NOTIONAL_IDR`` — the current MODULE
+    CONSTANT — and treating it as "the size this cell was priced at".  That
+    is only true when the constant hasn't changed since the cell was priced;
+    it is an implicit coupling that happened to hold before sizing became
+    configurable and breaks silently the moment it doesn't.  Recording the
+    priced-at notional ON THE CELL (alongside ``impact_priced_coeff``) lets
+    a rescale be computed relative to what actually happened, not what the
+    module global happens to say right now — see
+    ``strategy_fit.impact_sweep.recompute_cell_at_impact``.
+    """
+    impact_priced_coeff: float | None = None
+    """
+    The Almgren coefficient ``modelled_impact_bps`` was actually priced with
+    — either the flat ``strategy_fit.impact.SQRT_IMPACT_COEFF`` or a
+    per-name/bucket value resolved by ``strategy_fit.impact.get_impact_coeff``
+    when the run used ``use_calibrated=True``.  ``None`` under the same
+    conditions as ``impact_priced_position_notional_idr`` above, and for the
+    same reason: a calibrated cell's coefficient can vary by symbol, so a
+    rescale that assumes a single global coefficient is wrong for exactly the
+    cells calibration was meant to help.
+    """
     # --- Always-long null (beta-vs-alpha) gate ---
     null_edge_bps: float | None = None
     """
