@@ -1,6 +1,6 @@
 # ADR 0017 — The sleeve is a separate funded broker sub-account; its capital is measured, not assumed
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-09-14
 - **Deciders:** Lewis
 - **Tags:** capital, accounts, risk, execution, cost-gate, capacity
