@@ -600,7 +600,7 @@ safe without it.
       instructs. Derived cost basis uses moving-average accounting, matching the
       basis the broker's own `amount_invested` / `price.average` are computed on —
       FIFO would make the two sides incomparable on a partial sell.
-- [ ] **Scope every call to the sleeve account `008488L` (§3.4).** The account
+- [x] **Scope every call to the sleeve account `008488L` (§3.4).** The account
       number is a required input, not a defaultable one: falling back to the
       token's own account silently reconciles the core book, which is the exact
       failure the split exists to prevent. `cash/info` must be typed so it cannot
@@ -626,24 +626,76 @@ safe without it.
 
 ### B2 — Risk layer *(no orders yet)*
 
-- [ ] Port and generalise `strategy/broker.go`'s `checkCaps` into a
+- [x] Port and generalise `strategy/broker.go`'s `checkCaps` into a
       portfolio-level pre-trade check behind the `OrderSink` interface.
-- [ ] Enforce, in code: per-order notional cap, per-day notional cap, max gross
+      *(`strategy/risk.RiskSink` decorates any `engine.OrderSink`. Caps are
+      fractions of injected sleeve equity, never absolute IDR, and
+      `SleeveEquityIDR` is a distinct type — so `cash/info`'s core-book
+      figure, ~25× the sleeve, cannot be passed in silently (ADR-0017).)*
+- [x] Enforce, in code: per-order notional cap, per-day notional cap, max gross
       exposure, max position per name, **daily loss limit**, kill switch.
+      *(Exposure is accounted from order OUTCOMES, not intents: `Submit`
+      reserves under the order id and commits only once the inner sink
+      accepts; a rejected order releases its reservation, and `Cancel`
+      releases the exposure while leaving the day's notional spent. Deriving
+      it from intents is wrong in both directions — a broker-rejected sell
+      frees headroom the real position still holds, and a placed-then-
+      cancelled buy holds headroom forever. Remaining gap, bounded: a cancel
+      racing a partial fill releases the whole reservation, because
+      `OrderSink` carries no fill feedback. Exact positions need B4/B6.)*
 - [ ] Wire [reference 06](../reference/06-pre-trade-rules.md) rules as gates, not
-      advisories.
-- [ ] Kill switch must be trippable **externally** (file/flag), not only from
-      inside the process.
+      advisories. **Partial — this is what still blocks G2/G3.** The rules
+      decidable from the intent alone (positive lots, positive price, valid
+      side, banded tick approximation) are real gates. The endpoint-backed
+      ones — holiday, session phase, tradable, suspension, ARA/ARB band — sit
+      behind the `MarketGate` interface with only `DenyAllGate` implemented,
+      so today they deny everything rather than check anything. Board type
+      (§8) is **not** gated at all: `engine.OrderIntent` carries no
+      `BoardType` field to check, and adding one is an engine change, not a
+      decorator's. A real `MarketGate` is a B4 prerequisite.
+- [x] Kill switch must be trippable **externally** (file/flag), not only from
+      inside the process. *(External file checked every `Submit`, plus an
+      in-process trip on a confirmed daily-loss breach. Fails closed: any
+      `stat` error other than "not exist" trips it — an unreadable kill
+      switch is not a kill switch that failed to fire. No untrip.)*
 
 > Must be complete and tested before B4 is armed. This is ADR-0016 gate G2/G3.
+>
+> **Status: not yet satisfied.** The caps, the kill switch and the structural
+> checks are done and tested (`strategy/risk`, 98% covered). The
+> endpoint-backed reference-06 gates are stubbed deny-by-default, so G2/G3
+> stays open until a real `MarketGate` exists — see the third box above.
 
 ### B3 — `LiveSource`
 
-- [ ] Wrap the existing market-data websocket as `<-chan engine.MarketEvent`.
+- [x] Wrap the existing market-data websocket as `<-chan engine.MarketEvent`.
       `engine.Run` already takes a channel — this is an adapter, not a new engine.
-- [ ] Reconnect/gap semantics identical to the replay path (ADR-0013 parity).
+      *(`engine.LiveSource`; `*feed.WsConn` satisfies the narrow `LiveConn`
+      interface directly, asserted at compile time, so no second WebSocket
+      client exists. `WSDialer` reuses `feed.Session`/`DialWS`/
+      `BuildSubscribe`/`BuildPing` for the real handshake.)*
+- [x] Reconnect/gap semantics identical to the replay path (ADR-0013 parity).
+      *(Same 750ms–3s capped backoff and 60s read deadline as
+      `cmd/collector`; `RECONNECT` emitted at the moment of disconnect,
+      before the backoff wait, as `runWithReconnect` does; the same five-case
+      kind mapping and running_trade batch expansion as `collector/replay`;
+      `RecvNs` stamped at frame arrival before decode. The per-symbol
+      switch_reset dedup map is per CONNECTION, matching where `runOnce`
+      creates its own — carried across reconnects it would swallow a
+      `SWITCH_RESET` the collector writes.)*
 - [ ] Holiday/session awareness via the plan-14 calendar reader
-      (this absorbs roadmap **W4.2**).
+      (this absorbs roadmap **W4.2**). **Partial.** Holiday awareness is
+      done: `LiveSource` refuses to start on a non-trading day with
+      `ErrMarketClosed`, and `strategy-run` exits 0 on it so a scheduler does
+      not read "closed today" as a crash. Two gaps, both B4 prerequisites and
+      both recorded on `LiveSource` itself: the calendar is consulted once at
+      start and **not re-checked on reconnect**, so a process left running
+      across midnight into a holiday keeps streaming; and intraday **session
+      phase** (pre-open / continuous / break / post) is not checked here at
+      all — it belongs to B2's `MarketGate`, which is still `DenyAllGate`.
+      *(Required `collector/internal/calendar` → `collector/calendar`, since
+      Go's `internal/` is module-scoped and `go.work` does not lift it —
+      ADR-0013's sixth promotion.)*
 
 ### B4 — `LiveSink` *(first real money)*
 
