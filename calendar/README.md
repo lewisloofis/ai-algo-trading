@@ -4,7 +4,7 @@ Holiday-aware trading calendar for IDX (Indonesia Stock Exchange). One JSON data
 
 ## Data file
 
-`calendar/idx_holidays.json` — canonical source. Must be kept in sync with `collector/internal/calendar/idx_holidays.json` (the Go embed copy).
+`calendar/idx_holidays.json` — canonical source. Must be kept in sync with `collector/calendar/idx_holidays.json` (the Go embed copy).
 
 ## Yearly refresh procedure
 
@@ -23,7 +23,7 @@ Update `calendar/idx_holidays.json`:
 ### 3. Sync the Go embed copy
 
 ```bash
-cp calendar/idx_holidays.json collector/internal/calendar/idx_holidays.json
+cp calendar/idx_holidays.json collector/calendar/idx_holidays.json
 ```
 
 Both files must be identical. The Go package embeds its local copy via `//go:embed`.
@@ -57,7 +57,7 @@ Compare the printed count against the IDX-published JUMLAH HARI BURSA. They must
 
 ```bash
 cd research && .venv/bin/python -m pytest lib/test_market_calendar.py -v
-cd collector && go test ./internal/calendar/... -v
+cd collector && go test ./calendar/... -v
 ```
 
 ### 6. Check deadlines tracker

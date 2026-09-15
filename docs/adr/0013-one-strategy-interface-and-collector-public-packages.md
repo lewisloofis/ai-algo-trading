@@ -82,11 +82,16 @@ Move, preserving git history:
 | `collector/internal/segment` | `collector/segment` |
 | `collector/internal/sbproto` | `collector/sbproto` |
 | `collector/internal/zstdio` | `collector/zstdio` |
+| `collector/internal/calendar` | `collector/calendar` |
+
+*(Sixth promotion, added 2026-09-15: plan 18 §5 B3's `LiveSource` needs the
+plan-14 calendar reader, crossing the same `internal/` wall a sixth time.)*
 
 `feed`/`replay`/`segment` are the engine's direct dependencies; `sbproto` and
-`zstdio` are their transitive dependencies and must move with them. `calendar`
-and `s3upload` stay under `collector/internal/` — they are not part of the
-execution seam and nothing in `strategy/` needs them.
+`zstdio` are their transitive dependencies and must move with them. `s3upload`
+stays under `collector/internal/` — it is not part of the execution seam and
+nothing in `strategy/` needs it. (`calendar` stayed internal for the same
+reason until the promotion noted above.)
 
 The `strategy/` module declares the dependency explicitly:
 
