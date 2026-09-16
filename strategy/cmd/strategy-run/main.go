@@ -8,14 +8,18 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"collector/calendar"
 	"collector/feed"
@@ -24,14 +28,26 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run is main's body, extracted so that every exit path runs the deferred
+// store close and the run-header finalisation. With log.Fatal inline, an error
+// exit skipped both, leaving the run row at "running" for a run that did in
+// fact report a reason for stopping.
+func run() error {
 	source := flag.String("source", "replay", "event source: replay|live")
 	segmentsGlob := flag.String("segments", "", "glob of .binpb.zst segment files (required for --source replay)")
 	symbolsFlag := flag.String("symbols", "", "comma-separated symbol watchlist (required for --source live)")
 	strategyName := flag.String("strategy", "orb", "strategy id (orb)")
 	sinkName := flag.String("sink", "paper", "order sink (paper)")
 	fillMode := flag.String("fill-mode", "taker", "paper fill mode: taker|mid")
-	storePath := flag.String("store", "", "path to the SQLite post-trade store (required)")
+	storePath := flag.String("store", "", "path to the SQLite post-trade store (required; one file per run)")
 	pacing := flag.String("pacing", "fast", "pacing mode: fast|paced (--source replay only)")
+	statusPath := flag.String("status", "", "path to write the status.json heartbeat (optional)")
+	statusInterval := flag.Duration("status-interval", engine.DefaultStatusInterval, "status.json rewrite period")
 	flag.Parse()
 
 	if *storePath == "" {
@@ -41,18 +57,18 @@ func main() {
 
 	strat, err := newStrategy(*strategyName)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	store, err := engine.OpenStore(*storePath)
 	if err != nil {
-		log.Fatalf("open store: %v", err)
+		return fmt.Errorf("open store: %w", err)
 	}
 	defer store.Close()
 
 	sink, err := newSink(*sinkName, *fillMode)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	ctx := context.Background()
 
@@ -62,21 +78,106 @@ func main() {
 			// Not a failure: the market is simply not open today. Exit 0 so
 			// a scheduler does not mistake "closed today" for a crash (see
 			// engine.ErrMarketClosed's doc — this is the same distinction
-			// plan 14 §1 requires of the collector).
+			// plan 14 §1 requires of the collector). No run row is written:
+			// no run started.
 			fmt.Println("strategy-run: market is closed today — not starting a live run")
-			return
+			return nil
 		}
-		log.Fatal(err)
+		return err
 	}
 
-	counters, err := engine.Run(ctx, src, strat, sink, store, *strategyName)
+	runID, err := engine.NewRunID(time.Now())
 	if err != nil {
-		log.Fatalf("run: %v", err)
+		return err
+	}
+	inputSpec := *segmentsGlob
+	if *source == "live" {
+		inputSpec = *symbolsFlag
+	}
+	if err := store.BeginRun(engine.RunRow{
+		RunID:      runID,
+		StartedNs:  time.Now().UTC().UnixNano(),
+		Source:     *source,
+		Pacing:     replayOnlyPacing(*source, *pacing),
+		FillMode:   *fillMode,
+		SinkKind:   *sinkName,
+		StrategyID: *strategyName,
+		InputSpec:  inputSpec,
+		BinaryHash: binaryHash(),
+	}); err != nil {
+		return err
 	}
 
+	progress := &engine.RunProgress{}
+	status := &engine.StatusWriter{
+		Path:       *statusPath,
+		Interval:   *statusInterval,
+		Progress:   progress,
+		RunID:      runID,
+		Source:     *source,
+		SinkKind:   *sinkName,
+		StrategyID: *strategyName,
+		InputSpec:  inputSpec,
+	}
+	// A status-file write failure is logged, never fatal: losing the ability
+	// to observe a run is not a reason to stop it.
+	stopStatus := status.Start(ctx, func(err error) { log.Printf("status: %v", err) })
+
+	counters, runErr := engine.Run(ctx, src, strat, sink, store, *strategyName, engine.WithProgress(progress))
+
+	// Stop the ticker before the terminal write, or it can overwrite the final
+	// outcome with another "running".
+	stopStatus()
+	outcome := engine.RunOutcomeComplete
+	if runErr != nil {
+		outcome = engine.RunOutcomeError
+	}
+	if err := status.WriteOnce(outcome, runErr); err != nil {
+		log.Printf("status: %v", err)
+	}
+	if err := store.FinishRun(time.Now().UTC().UnixNano(), counters, runErr); err != nil {
+		log.Printf("finish run: %v", err)
+	}
+	if runErr != nil {
+		return fmt.Errorf("run: %w", runErr)
+	}
+
+	fmt.Printf("Run: %s | store: %s\n", runID, *storePath)
 	fmt.Printf("Trades attempted: %d | Fills: %d | Net PnL bps: %.2f\n",
 		counters.OrdersAttempted, counters.Fills, counters.NetPnlBps)
 	fmt.Printf("Round-trips: %d | Total fees: %d IDR\n", counters.RoundTrips, counters.TotalFeesIDR)
+	return nil
+}
+
+// replayOnlyPacing records pacing for a replay and the empty string for live,
+// where the flag has no meaning. Recording "fast" against a live run would
+// claim something about it that is not true.
+func replayOnlyPacing(source, pacing string) string {
+	if source == "replay" {
+		return pacing
+	}
+	return ""
+}
+
+// binaryHash is the SHA-256 of the running executable, so a stored run can be
+// tied to the code that produced it. Returns "" when the binary cannot be
+// read (e.g. `go run`, which runs from a temp path that is then deleted) —
+// empty means unknown and is never substituted with a guess.
+func binaryHash() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	f, err := os.Open(exe)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // newSource builds the MarketEvent channel for the requested --source mode.

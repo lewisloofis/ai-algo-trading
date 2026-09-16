@@ -441,9 +441,13 @@ func TestStoreWALMode(t *testing.T) {
 	}
 }
 
-// TestStoreAppendOnly verifies the append-only property: the PostTradeStore
-// exposes only Insert methods; no Update or Delete path exists in the public
-// API. The test also confirms that INSERT-ONLY operation is enforced by
+// TestStoreAppendOnly verifies the append-only property of the four EVENT
+// tables: the PostTradeStore exposes only Insert methods for decision,
+// order_intent, fill and attribution, and no Delete path at all. (The one
+// UPDATE in the type is FinishRun, which touches only the `run` header table
+// and never an event row — see TestFinishRunTouchesOnlyTheRunTable and
+// PostTradeStore's doc comment for why the header is mutable.)
+// The test also confirms that INSERT-ONLY operation is enforced by
 // attempting a raw UPDATE on the underlying table and verifying the store
 // remains consistent (same row count; the UPDATE itself succeeds in SQLite
 // since no trigger prevents it, but the invariant is upheld at the code level
