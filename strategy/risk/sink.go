@@ -10,8 +10,17 @@ import (
 )
 
 // RiskSink decorates an inner engine.OrderSink with every pre-trade gate
-// from plan 18 §5 B2. It implements engine.OrderSink itself, so it drops
-// into engine.Run in place of the sink it wraps with no other change.
+// from plan 18 §5 B2. It implements engine.OrderSink itself, but
+// engine.Run must be given r.EngineSink(), never a bare *RiskSink — see
+// EngineSink's doc comment in forwarding.go for the full reasoning. In
+// short: engine.Run reaches past OrderSink with two optional-interface
+// type assertions, one for sinks that track book state (observer) and one
+// for sinks that fill synchronously (fillProvider). RiskSink answers the
+// first unconditionally — see Observe's doc comment — but must answer the
+// second only when inner actually fills synchronously; a bare *RiskSink
+// would instead make every wrapped sink look like it does, and engine.Run
+// would read back a fabricated zero-value fill (price 0, lots 0) as if it
+// were real. EngineSink returns a value whose capabilities mirror inner's.
 //
 // Submit runs, in order: the kill switch (in-process and external file);
 // the locally-decidable structural checks (checkStructural); the injected
