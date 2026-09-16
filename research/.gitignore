@@ -3,3 +3,4 @@ out_live/
 data/intraday/
 __pycache__/
 *.pyc
+out_fixture/

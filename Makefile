@@ -8,9 +8,11 @@
 #   make collect
 #   make sbcap ARGS="stat segments/dt=2026-06-17/default/seg-044221.binpb.zst"
 #   make test
+#   make dashboard
+#   make publish-dashboard
 #   make clean
 
-.PHONY: build build-linux-arm64 collect sbcap test clean
+.PHONY: build build-linux-arm64 collect sbcap test dashboard publish-dashboard clean
 
 build:
 	mkdir -p $(CURDIR)/bin
@@ -44,6 +46,48 @@ sbcap: build
 
 test:
 	cd collector && go test ./...
+
+# dashboard regenerates the single static observability page (plan-19).
+# It reads artifacts and writes one file: no server, no metrics daemon, no
+# scrape config. Every input is optional — a panel with nothing to read says
+# what is missing rather than rendering an empty table that looks like a
+# result — so this target is safe to run at any time.
+#
+# Override any path on the command line, e.g.
+#   make dashboard STORE='research/out_live/runs/*.db'
+DASH_PY       ?= $(CURDIR)/research/.venv/bin/python
+DASH_OUT      ?= research/out_live/dashboard.html
+PORTFOLIO     ?= research/out_live/strategy_portfolio.json
+STORE         ?= research/out_live/runs
+STATUS        ?= research/out_live/status.json
+HEALTHCHECK   ?= research/out_live/collector_health.json
+ELIGIBILITY   ?=
+
+dashboard:
+	cd research && $(DASH_PY) -m dashboard \
+		--portfolio $(CURDIR)/$(PORTFOLIO) \
+		--store '$(CURDIR)/$(STORE)' \
+		--status $(CURDIR)/$(STATUS) \
+		--healthcheck $(CURDIR)/$(HEALTHCHECK) \
+		$(if $(ELIGIBILITY),--eligibility $(CURDIR)/$(ELIGIBILITY),) \
+		--out $(CURDIR)/$(DASH_OUT)
+
+# publish-dashboard copies the page to S3 beside the market data, so it is
+# readable without the laptop that generated it (plan-19 Stage 6, optional).
+#
+# Private by default: no public-read ACL, no bucket policy change, no website
+# hosting. The page carries run ids, position sizes and PnL; it is read with
+# credentials, via the console or a presigned URL, exactly like the segments
+# next to it.
+DASH_BUCKET ?= marketdata-047915756052
+DASH_KEY    ?= dashboard/index.html
+
+publish-dashboard: dashboard
+	aws s3 cp $(CURDIR)/$(DASH_OUT) s3://$(DASH_BUCKET)/$(DASH_KEY) \
+		--content-type 'text/html; charset=utf-8' \
+		--cache-control 'no-cache'
+	@echo "Published. Read it with:"
+	@echo "  aws s3 presign s3://$(DASH_BUCKET)/$(DASH_KEY) --expires-in 3600"
 
 clean:
 	rm -rf bin

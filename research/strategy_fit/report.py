@@ -52,6 +52,7 @@ from strategy_fit.harness import (
 from strategy_fit.capital_model import ACTIVE_CAPITAL_MODEL, CapitalModel
 from strategy_fit.impact import POSITION_NOTIONAL_IDR, SQRT_IMPACT_COEFF
 from strategy_fit.intraday_walk_forward import MIN_OOS_EFF_N
+from strategy_fit.portfolio_json import emit_portfolio_json
 from strategy_fit.sleeve_sizing import ACTIVE_SLEEVE_SIZING
 
 
@@ -326,9 +327,13 @@ def emit_strategy_portfolio(
     is_synthetic: bool = True,
 ) -> str:
     """
-    Emit ``strategy_portfolio.md`` to *outdir*.
+    Emit ``strategy_portfolio.md`` to *outdir*, plus the machine-readable
+    ``strategy_portfolio.json`` sidecar beside it.
 
-    Returns the path to the written file.
+    Returns the path to the written markdown file.  The sidecar is written
+    unconditionally from the same *cells* sequence and the same *verdict*, so
+    the two files can never describe different runs; see
+    strategy_fit/portfolio_json.py and plan-19 §3.
 
     Parameters
     ----------
@@ -345,7 +350,9 @@ def emit_strategy_portfolio(
     Returns
     -------
     str
-        Absolute path to the written file.
+        Path to the written ``strategy_portfolio.md``.  (The sidecar path is
+        the same directory's ``strategy_portfolio.json`` — see
+        ``portfolio_json.SIDECAR_FILENAME``.)
     """
     os.makedirs(outdir, exist_ok=True)
     if generated_at is None:
@@ -679,5 +686,16 @@ def emit_strategy_portfolio(
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
         f.write("\n")
+
+    # Sidecar (plan-19 Stage 1). Same cells, same generated_at, same verdict —
+    # the markdown is the human read and the JSON is the diffable one, but they
+    # are one run, not two.
+    emit_portfolio_json(
+        cells=cells,
+        outdir=outdir,
+        generated_at=generated_at,
+        is_synthetic=is_synthetic,
+        verdict=verdict,
+    )
 
     return path

@@ -264,8 +264,30 @@ class CellResult:
     horizon_trading_days : int
         Intended hold in trading days.
     status : str
-        "tested" | "skipped_horizon" | "data_blocked" | "insufficient_n" |
-        "cost_gated" | "decayed".
+        Terminal state of this cell. The full vocabulary the grid actually
+        emits, with the module that owns each value:
+
+        "tested"                 the cell was measured; the gates in
+                                 report.py then decide PASS vs. not.
+        "skipped_horizon"        hold outside the tested band
+                                 (reject_horizon_exceeded, below).
+        "data_blocked"           the history this family needs does not exist
+                                 yet (catalog_meta.FamilyMeta.catalog_status).
+        "insufficient_n"         below MIN_EFF_N after de-overlap.
+        "cost_gated"             net edge did not clear the full hurdle.
+        "decayed"                walk-forward rolling Sharpe below
+                                 walk_forward.DECAY_THRESHOLD_SHARPE.
+        "long_short_infeasible"  structurally long/short, and IDX retail
+                                 accounts cannot short — see
+                                 long_only.STATUS_LONG_SHORT_INFEASIBLE.
+                                 Emitted by cross_sectional and pairs cells.
+        "cointegration_not_found" no cointegrated pair among the candidates
+                                 (families_pairs.py, Engle-Granger
+                                 p > COINT_PVALUE_THRESHOLD).
+
+        The last two were emitted by the grid long before they were written
+        down here; anything consuming this field must treat an unrecognised
+        value as a visible unknown rather than dropping the cell.
     skip_reason : str or None
         Populated when status is not "tested".
     hit_rate : float or None
