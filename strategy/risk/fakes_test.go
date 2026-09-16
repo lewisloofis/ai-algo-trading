@@ -39,7 +39,7 @@ func (s *recordingSink) count() int {
 
 // intent builds a valid, on-tick OrderIntent for tests.
 func intent(symbol, side string, priceIDR int64, lots int) engine.OrderIntent {
-	return engine.OrderIntent{Symbol: symbol, Side: side, PriceIDR: priceIDR, Lots: lots, OrderID: symbol + "-" + side}
+	return engine.OrderIntent{Symbol: symbol, Side: side, PriceIDR: priceIDR, Lots: lots, OrderID: symbol + "-" + side, BoardType: engine.BoardRG}
 }
 
 // permissiveLimits returns Limits whose every cap is 1x sleeve equity — high

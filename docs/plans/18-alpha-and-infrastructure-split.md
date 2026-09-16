@@ -1,6 +1,6 @@
 # Alpha / Infrastructure Split — Two Tracks, One Seam
 
-> **Status:** ✅ Approved · 🔬 Track C complete · 🔨 Track B in progress (B1) · **Owner:** @lewis · **Updated:** 2026-09-14
+> **Status:** ✅ Approved · 🔬 Track C complete · 🔨 Track B in progress (B1–B3 complete and live-verified; G2/G3 satisfied, B4 unblocked) · **Owner:** @lewis · **Updated:** 2026-09-16
 > **Related:** [ADR-0016: alpha and infrastructure are separate tracks](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md) · [ADR-0015: leverage is optional](../adr/0015-leverage-optional-horizon-ceiling-lifted.md) · [ADR-0013: one Strategy interface](../adr/0013-one-strategy-interface-and-collector-public-packages.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [13-capital-allocation-and-capacity.md](./13-capital-allocation-and-capacity.md) · [15-measured-fill-and-impact-calibration.md](./15-measured-fill-and-impact-calibration.md) · [16-strategy-triage-and-prioritization.md](./16-strategy-triage-and-prioritization.md) · [17-execution-and-replay-parity-engine.md](./17-execution-and-replay-parity-engine.md) · [Plans index](./README.md)
 
 > **What this is.** The re-cut of roadmap Waves 3–5 into two independently
@@ -643,16 +643,60 @@ safe without it.
       cancelled buy holds headroom forever. Remaining gap, bounded: a cancel
       racing a partial fill releases the whole reservation, because
       `OrderSink` carries no fill feedback. Exact positions need B4/B6.)*
-- [ ] Wire [reference 06](../reference/06-pre-trade-rules.md) rules as gates, not
-      advisories. **Partial — this is what still blocks G2/G3.** The rules
-      decidable from the intent alone (positive lots, positive price, valid
-      side, banded tick approximation) are real gates. The endpoint-backed
-      ones — holiday, session phase, tradable, suspension, ARA/ARB band — sit
-      behind the `MarketGate` interface with only `DenyAllGate` implemented,
-      so today they deny everything rather than check anything. Board type
-      (§8) is **not** gated at all: `engine.OrderIntent` carries no
-      `BoardType` field to check, and adding one is an engine change, not a
-      decorator's. A real `MarketGate` is a B4 prerequisite.
+- [x] Wire [reference 06](../reference/06-pre-trade-rules.md) rules as gates, not
+      advisories. *(`strategy/market.Gate` is the endpoint-backed
+      `risk.MarketGate`, 93.5% covered, race-clean, structurally read-only
+      under the same build-failing test `strategy/account` uses.
+      `strategy/cmd/market-probe` prints its verdict live and exits 1 only
+      when a source could not be consulted — a deny is not a failure, a
+      blind gate is.)*
+
+      Sourcing, and the one place it is a proxy rather than a check:
+
+      | Field | Source |
+      |---|---|
+      | `NotHoliday` | `collector/calendar`, evaluated in **WIB** — the box runs on UTC and the two disagree about the date between 00:00 and 07:00 |
+      | `MarketOpen` | Exodus `market-time` **and** `market-time/session`; both must say open, either saying closed denies |
+      | `Tradable` | Carina `GET /stock/tradable` |
+      | `NotSuspended` | the same `/stock/tradable` row — **a proxy, not an independent check** |
+      | `WithinBand` | Carina `GET /nego-engine/v1/order-book/{code}` |
+
+      Two rows of reference 06 §10 turned out to be unreachable and are
+      corrected there: §7.1's `StockService.Info` is a private service with
+      no HTTP route (the real route is `GET /stock/tradable`, which the web
+      client uses), and §7.2's `CompanyTradingAction.suspend_state` is on no
+      client-subscribable WS channel at all. So there is **no independent
+      suspension signal to be had**, and the broker's tradability flag
+      carries `market.SuspensionProxyNote` on the value itself rather than
+      only in a doc comment. The residual risk is one-directional: a
+      suspension the flag has not caught yet costs an exchange auto-reject,
+      not a bad fill.
+
+      Every answer is cached with its own TTL (session 15s, tradability 60s,
+      band 5m) and **a stale entry is never served** — past its TTL it is
+      refetched, and a failed refetch reports Unknown, which rejects. That
+      property, the WIB date, the both-sources-must-agree rule and the
+      per-symbol cache isolation were each confirmed by mutating the code
+      and watching the test fail (13 mutations, 13 caught).
+- [x] **Board type (§8) is gated.** `engine.OrderIntent` now carries a
+      `BoardType`, and `risk.checkStructural` admits `BoardRG` only. The
+      zero value is **rejected, not defaulted to RG** — the same reasoning
+      that makes `risk.TriState` a three-state type rather than a bool: a
+      zero value that reads as a confident, correct answer is
+      indistinguishable from a field nobody filled in. The two rejections
+      are deliberately distinct messages, because they are fixed in
+      different places: an unset board is a strategy that never said which
+      venue it meant; a set-but-other board (TN/NG) is a strategy asking for
+      a venue B4's `LiveSink` will not route to. `strategies/orb` declares
+      `BoardRG` and a test pins it, so a strategy that stops declaring one
+      fails in CI rather than at the first live order.
+
+      Not done, and deliberately: the post-trade store does **not** persist
+      the board type. `engine/store.go` creates its schema with
+      `CREATE TABLE IF NOT EXISTS` and has no migration path, so adding a
+      column would either be silently absent on an existing store file or
+      break inserts against one. It needs a migration story of its own, and
+      board type does not affect B1 reconciliation.
 - [x] Kill switch must be trippable **externally** (file/flag), not only from
       inside the process. *(External file checked every `Submit`, plus an
       in-process trip on a confirmed daily-loss breach. Fails closed: any
@@ -661,10 +705,38 @@ safe without it.
 
 > Must be complete and tested before B4 is armed. This is ADR-0016 gate G2/G3.
 >
-> **Status: not yet satisfied.** The caps, the kill switch and the structural
-> checks are done and tested (`strategy/risk`, 98% covered). The
-> endpoint-backed reference-06 gates are stubbed deny-by-default, so G2/G3
-> stays open until a real `MarketGate` exists — see the third box above.
+> **Status, 2026-09-15: the code is there; the live verification is not.**
+> The caps, the kill switch and the structural checks are done and tested
+> (`strategy/risk`, 97% covered), and the endpoint-backed gates now exist
+> (`strategy/market`, 93.5%) with an end-to-end test proving each closed
+> condition stops an order *before* it reaches the inner sink. Two things
+> keep G2/G3 from being ticked outright:
+>
+> **Status, 2026-09-16 09:00 WIB: G2/G3 is satisfied.** `market-probe` was
+> run live in SESSION_1 against a fresh token pair, and all five sources
+> answered:
+>
+> - **BBCA @ 6550 → ALLOW, exit 0.** Every field allow, including
+>   `state_name=STATE_NAME_SESSION_1 market.status=STATUS_OPEN` — which
+>   settles the open question about the two-source corroboration rule, since
+>   a `/market-time` that read CLOSE during a live session would have made
+>   the gate deny everything.
+> - **BBCA @ 8000 → DENY** on `within_band` alone (real band 5450..7675).
+> - **ZZZZ → DENY, exit 1**: `is_tradable=false`, and the band unresolved
+>   (HTTP 500), correctly reported as a blind gate rather than as an absent
+>   constraint.
+> - BNBR, HRTA and PTRO all parse, including BNBR's sub-200 tick band.
+>
+> Two things the run corrected, both now recorded in reference 06 §4: the
+> ARA/ARB values arrive as **bare numbers**, not proto3-JSON strings (the
+> permissive parser accepts both and stays), and `max_requestable_*` is
+> **wider** than the hard band rather than equal to it, so the gate reads
+> `below`/`above` alone.
+>
+> **Still unconfirmed:** the out-of-session case. Yesterday's after-hours
+> run had expired tokens, so a clean `market_open=deny` with exit 0 has not
+> been observed with a valid one — re-run at the 11:30 break or after the
+> 16:00 close.
 
 ### B3 — `LiveSource`
 
@@ -683,16 +755,31 @@ safe without it.
       switch_reset dedup map is per CONNECTION, matching where `runOnce`
       creates its own — carried across reconnects it would swallow a
       `SWITCH_RESET` the collector writes.)*
-- [ ] Holiday/session awareness via the plan-14 calendar reader
-      (this absorbs roadmap **W4.2**). **Partial.** Holiday awareness is
-      done: `LiveSource` refuses to start on a non-trading day with
-      `ErrMarketClosed`, and `strategy-run` exits 0 on it so a scheduler does
-      not read "closed today" as a crash. Two gaps, both B4 prerequisites and
-      both recorded on `LiveSource` itself: the calendar is consulted once at
-      start and **not re-checked on reconnect**, so a process left running
-      across midnight into a holiday keeps streaming; and intraday **session
-      phase** (pre-open / continuous / break / post) is not checked here at
-      all — it belongs to B2's `MarketGate`, which is still `DenyAllGate`.
+- [x] Holiday/session awareness via the plan-14 calendar reader
+      (this absorbs roadmap **W4.2**). `LiveSource` refuses to start on a
+      non-trading day with `ErrMarketClosed`, and `strategy-run` exits 0 on
+      it so a scheduler does not read "closed today" as a crash. The two
+      gaps recorded here on 2026-09-15 are both closed:
+
+      - **The calendar is now re-checked before every reconnect**, not only
+        at start, so a process that runs across midnight into a weekend or
+        holiday stops instead of reconnecting into a closed market. It stops
+        *after* emitting `RECONNECT` (the book really is invalid) and then
+        closes the channel, ending the run the way the end of a replay does.
+        A per-reconnect check is sufficient for a process that never
+        restarts because `liveReadDeadline` (60s) breaks any connection
+        within a minute of the feed going quiet, which routes every
+        long-lived process through the reconnect path well before midnight.
+      - **Both checks evaluate the date in Jakarta** (`calendar.Jakarta`,
+        newly exported as the single definition), not in the host's zone.
+        The collector box runs on UTC, where the two disagree for the seven
+        hours after midnight WIB — 02:00 Saturday in Jakarta is still Friday
+        19:00 UTC, and the unconverted check called that a trading day.
+      - Intraday **session phase** is checked by B2's `MarketGate`
+        (`strategy/market`), which now exists — it is a per-order question,
+        not a per-connection one, so it belongs on the order path rather
+        than here.
+
       *(Required `collector/internal/calendar` → `collector/calendar`, since
       Go's `internal/` is module-scoped and `go.work` does not lift it —
       ADR-0013's sixth promotion.)*
@@ -890,7 +977,7 @@ finality and the meaning of every hurdle downstream — not the calendar.
 |---|---|
 | **Track C** | ✅ **Complete.** C1–C4 done, including the long-horizon half of C4 (§4.4). The ruler is measured: buckets 0.29–0.35 against the assumed 1.0 |
 | **Track A** | A-3 ✅ done and automated (the plan-12 record is the one piece left). A-1 partly reopened by C4 — BNBR and HRTA are live candidates, both caveated. A-2.1 (event-driven, the top-ranked untested family) is the open research question; A-2.2 is `data_blocked` on `MIN_EFF_N` |
-| **Track B** | 🔨 **Started at B1.** Nothing existed before 2026-09-14: `strategy/` was the plan-17 scaffold — engine, replay source, paper sink, store, ORB — with no account client, no risk layer, no reconciliation |
+| **Track B** | 🔨 **B1–B3 complete and live-verified (gate probed in SESSION_1, 2026-09-16).** Nothing existed before 2026-09-14: `strategy/` was the plan-17 scaffold — engine, replay source, paper sink, store, ORB — with no account client, no risk layer, no reconciliation. Every reference-06 rule is now gated, and `LiveSource` re-checks the calendar per reconnect. That run happened on 2026-09-16 and passed, so **ADR-0016 gate G2/G3 is satisfied and B4 is unblocked**. The seam it routes (`target_portfolio.json`) does not exist in code yet — nothing emits target weights and no portfolio-shaped Strategy exists — so that is the next build, ahead of `LiveSink` itself |
 
 **Track B is now the critical path.** Track C measured the impact half of the
 cost model and found it over-charged ~3×; the fill half — queue position, fill
@@ -937,6 +1024,34 @@ treated as a reason to widen the search again.
       identity among them (§3.4).
 - [ ] B2 limits provably reject: an over-cap order, an over-exposure basket, and a
       post-loss-limit order — each with a test.
+- [x] B2's reference-06 gate provably rejects each closed condition —
+      holiday, lunch break, not-tradable, price outside ARA/ARB, and an
+      unreachable endpoint — with the intent never reaching the inner sink
+      (`strategy/market`, `TestRiskSink_WithRealGate_RejectsEveryClosedCondition`).
+      Confirmed non-vacuous by mutating `Gate.State` to always allow and
+      watching all five sub-cases fail.
+- [x] Board type is gated and the zero value rejects
+      (`TestSubmit_BoardTypeIsGated`, `TestBoardTypeRejectionsAreDistinguishable`),
+      and `strategies/orb` is pinned to declaring `BoardRG`
+      (`TestORBDeclaresTheRegularBoard`). Four mutations, four caught.
+- [x] `LiveSource` stops rather than reconnecting when the day rolls over
+      (`TestLiveSource_StopsWhenAReconnectFallsOnANonTradingDay`), still
+      reconnects on a live trading day
+      (`TestLiveSource_KeepsReconnectingWhileTheDayIsStillATradingDay`), and
+      evaluates the date in Jakarta at both the start and the reconnect
+      check. Four mutations, four caught — including deleting the check,
+      forcing it always-true, and dropping the timezone conversion.
+- [x] **`market-probe` run live, inside a trading session, against a real
+      symbol.** Done 2026-09-16 09:00 WIB, SESSION_1: BBCA @ 6550 → ALLOW
+      exit 0; BBCA @ 8000 → DENY on the band alone; ZZZZ → DENY exit 1 with
+      the band unresolved; BNBR/HRTA/PTRO parse. All five wire contracts
+      confirmed against production, and two were corrected by it (reference
+      06 §4).
+- [ ] The same probe run **outside** a session — at the 11:30 break or after
+      the 16:00 close — expecting a clean `market_open=deny` and **exit 0**.
+      The distinction being checked is that a closed market is a normal
+      answer and not an operational failure; the only after-hours run so far
+      used expired tokens, which proves nothing about the deny path.
 - [ ] B3/B4 replay-vs-live parity: the same null portfolio through `ReplaySource`
       + `PaperSink` and through `LiveSource` + `LiveSink` produces the same
       *intents* (fills will differ; intents must not).

@@ -52,6 +52,28 @@ func fromReplay(e replay.MarketEvent) MarketEvent {
 // OrderID identifies an order within a single run.
 type OrderID string
 
+// BoardType is the IDX trading venue an order is routed to
+// (docs/reference/06-pre-trade-rules.md §8). It exists as a field on
+// OrderIntent, rather than as a constant inside the router, because the two
+// are different claims: the router knows which board it sends to, and only
+// the strategy knows which board it meant. Sending an ordinary-share order
+// to TN routes it to a separate book at a different settlement cycle, where
+// it may be accepted and then never match — a failure that is silent on
+// both sides unless the intent carries the strategy's own answer for
+// strategy/risk to check.
+type BoardType string
+
+const (
+	// BoardRG is the regular continuous-auction board: ordinary shares,
+	// T+2. The only board this repo routes to (plan 18 §11), and therefore
+	// the only value strategy/risk admits.
+	BoardRG BoardType = "RG"
+	// BoardTN is the cash/negotiated board (T+0), which rights issues use.
+	BoardTN BoardType = "TN"
+	// BoardNG is the new/emerging-growth board.
+	BoardNG BoardType = "NG"
+)
+
 // OrderIntent is a strategy's request to trade. PriceIDR must already be
 // tick-snapped by the strategy; OrderID is the client-assigned idempotency key.
 type OrderIntent struct {
@@ -60,6 +82,13 @@ type OrderIntent struct {
 	PriceIDR int64
 	Lots     int // 1 lot = 100 shares
 	OrderID  string
+
+	// BoardType must be set explicitly. The zero value is NOT treated as
+	// BoardRG: strategy/risk rejects it, for the same reason risk.TriState
+	// is not a bool — a zero value that reads as a confident, correct
+	// answer is indistinguishable from a field nobody filled in. A
+	// strategy that means the regular board says so.
+	BoardType BoardType
 }
 
 // FillRecord is the result of a simulated execution, handed back to the

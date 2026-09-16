@@ -97,10 +97,16 @@ func (s MarketState) firstReject() string {
 // MarketGate answers the pre-trade questions that require a live endpoint:
 // holiday calendar, session phase, instrument tradability, suspension
 // state, and ARA/ARB price bands (reference 06 §§2-4, 7). This package
-// never calls those endpoints itself — B3/B4 supply a real implementation
-// (backed by the market-data websocket and/or the REST endpoints reference
-// 06 documents); RiskSink only consults the interface and denies on
-// anything but Allow on every field, including a returned error.
+// never calls those endpoints itself; RiskSink only consults the interface
+// and denies on anything but Allow on every field, including a returned
+// error.
+//
+// strategy/market.Gate is the production implementation — it reads the
+// embedded IDX calendar plus four REST endpoints across two hosts, caches
+// each answer for its own TTL, and never serves a stale one. Its package
+// doc carries the sourcing table, including the one field (NotSuspended)
+// that is a proxy rather than an independent check, because no client-
+// reachable suspension feed exists.
 type MarketGate interface {
 	State(ctx context.Context, symbol string, priceIDR int64) (MarketState, error)
 }

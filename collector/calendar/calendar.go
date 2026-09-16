@@ -44,6 +44,20 @@ func Load() (*Calendar, error) {
 	return &Calendar{holidays: h, Provisional: hf.Provisional}, nil
 }
 
+// Jakarta is the exchange's timezone: WIB, UTC+7, no DST — so a fixed zone
+// is exact rather than an approximation.
+//
+// It is exported because "what date is it?" must be answered in Jakarta by
+// every consumer, not in whatever zone the host happens to run in. The
+// collector box runs on UTC, where the two disagree for the seven hours
+// after midnight WIB: at 02:00 Saturday in Jakarta it is still Friday
+// 19:00 UTC, and a caller passing an unconverted time.Now() to
+// IsTradingDay would be told the weekend is a trading day. Callers convert
+// explicitly — cal.IsTradingDay(now.In(calendar.Jakarta)) — rather than
+// this package guessing, because a time.Time that is already a calendar
+// date (as in AddTradingDays' arguments) must not be shifted again.
+var Jakarta = time.FixedZone("WIB", 7*60*60)
+
 // dateKey normalises a time.Time to a "YYYY-MM-DD" key (date only, no TZ shift).
 func dateKey(d time.Time) string {
 	return d.Format("2006-01-02")

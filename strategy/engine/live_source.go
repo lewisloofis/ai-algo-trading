@@ -134,13 +134,21 @@ func waitOrCancel(ctx context.Context, d time.Duration) {
 // cal is required: LiveSource must not silently trade on a day the market is
 // closed (see ErrMarketClosed). dial is required.
 //
-// KNOWN GAP, and a prerequisite for B4's live routing: the calendar is
-// consulted once, at start, and is NOT re-checked on reconnect. A process
-// left running across midnight into a holiday keeps streaming instead of
-// stopping. Nothing should arrive on a closed day, and today no order can be
-// routed from here at all (--sink paper is the only sink), so the exposure is
-// currently nil — but a long-lived process is exactly the shape B4 will have,
-// and at that point this must become a per-reconnect check.
+// The calendar is consulted at start AND before every reconnect, both in
+// Jakarta time (calendar.Jakarta) rather than the host's zone — the
+// collector box runs on UTC, where the two disagree about the date for the
+// seven hours after midnight WIB. When a reconnect falls on a non-trading
+// day the source stops: the RECONNECT control event is still emitted (the
+// book really is invalid), and then the channel closes, ending the run the
+// same way the end of a replay does.
+//
+// Why a per-reconnect check is enough for a process that never restarts:
+// the feed goes silent when the session ends, so liveReadDeadline (60s)
+// breaks the connection within a minute of the last frame, which routes
+// every long-lived process through the reconnect path well before midnight.
+// A connection that stays open and keeps delivering data is, by
+// definition, a session that is still running. This was plan 18 §5 B3's
+// remaining open box and a B4 prerequisite.
 func LiveSource(ctx context.Context, dial Dialer, cal *calendar.Calendar) (<-chan MarketEvent, error) {
 	return liveSource(ctx, dial, cal, defaultLiveSourceOptions())
 }
@@ -152,25 +160,45 @@ func liveSource(ctx context.Context, dial Dialer, cal *calendar.Calendar, opts l
 	if cal == nil {
 		return nil, errors.New("live source: calendar is required (see ErrMarketClosed)")
 	}
-	if !cal.IsTradingDay(opts.now()) {
+	if !isTradingDayNow(cal, opts) {
 		return nil, ErrMarketClosed
 	}
 
 	ch := make(chan MarketEvent, 256)
-	go runLiveSource(ctx, dial, ch, opts)
+	go runLiveSource(ctx, dial, ch, cal, opts)
 	return ch, nil
+}
+
+// isTradingDayNow asks the calendar about the current date IN JAKARTA.
+// Converting here, in the one place both the start check and the
+// per-reconnect check go through, is what keeps the two from drifting
+// apart — and what stops a UTC host from calling Saturday 02:00 WIB a
+// trading day (see calendar.Jakarta).
+func isTradingDayNow(cal *calendar.Calendar, opts liveSourceOptions) bool {
+	return cal.IsTradingDay(opts.now().In(calendar.Jakarta))
 }
 
 // runLiveSource is the reconnect loop: dial, pump events until the
 // connection breaks, emit RECONNECT, back off, repeat — until ctx is
 // cancelled. It mirrors collector/cmd/collector's runWithReconnect.
-func runLiveSource(ctx context.Context, dial Dialer, ch chan<- MarketEvent, opts liveSourceOptions) {
+func runLiveSource(ctx context.Context, dial Dialer, ch chan<- MarketEvent, cal *calendar.Calendar, opts liveSourceOptions) {
 	defer close(ch)
 
 	backoff := opts.minBackoff
 	attempt := 0
 
 	for ctx.Err() == nil {
+		// Re-check the calendar before every connection attempt, not only
+		// at start. A process that runs across midnight into a weekend or
+		// a holiday must stop rather than reconnect into a closed market —
+		// the check is here, at the top of the loop, so no path to dial
+		// can skip it.
+		if !isTradingDayNow(cal, opts) {
+			log.Printf("live source: %s is no longer an IDX trading day — stopping",
+				opts.now().In(calendar.Jakarta).Format("2006-01-02 (Mon)"))
+			return
+		}
+
 		err := runLiveConnOnce(ctx, dial, ch, opts)
 		if ctx.Err() != nil {
 			return

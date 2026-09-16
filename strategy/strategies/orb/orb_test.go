@@ -216,3 +216,49 @@ func TestORBEntryOrderIDTiming(t *testing.T) {
 		t.Fatalf("exit intent price_idr = %d, want 1000 (entry fill price at initial ask)", exitPriceIDR)
 	}
 }
+
+// recordingPaperSink records every intent while still filling it, by
+// embedding the real PaperSink — so engine.Run's fillProvider and observer
+// assertions still find their methods and the run behaves exactly as it
+// otherwise would.
+type recordingPaperSink struct {
+	*engine.PaperSink
+	intents []engine.OrderIntent
+}
+
+func (s *recordingPaperSink) Submit(ctx context.Context, in engine.OrderIntent) (engine.OrderID, error) {
+	s.intents = append(s.intents, in)
+	return s.PaperSink.Submit(ctx, in)
+}
+
+// TestORBDeclaresTheRegularBoard pins the board type on the intents this
+// strategy emits. engine.OrderIntent.BoardType has no safe default —
+// strategy/risk rejects the zero value rather than assuming RG (reference
+// 06 §8) — so a strategy that stops setting it stops trading, and it should
+// fail here rather than at the first live order.
+func TestORBDeclaresTheRegularBoard(t *testing.T) {
+	orOpen := nsAt(2026, 1, 2, 2, 0)
+	breakout := nsAt(2026, 1, 2, 2, 30)
+	eod := nsAt(2026, 1, 2, 8, 49)
+
+	store := openTestStore(t)
+	sink := &recordingPaperSink{PaperSink: engine.NewPaperSink()}
+
+	events := feedCh(
+		liveNs("AAA", 1000, orOpen),
+		liveNs("AAA", 1006, breakout), // entry
+		liveNs("AAA", 1010, eod),      // exit
+	)
+	if _, err := engine.Run(context.Background(), events, New(), sink, store, "orb"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(sink.intents) != 2 {
+		t.Fatalf("recorded %d intents, want 2 (entry + exit) — the assertions below would be vacuous", len(sink.intents))
+	}
+	for i, in := range sink.intents {
+		if in.BoardType != engine.BoardRG {
+			t.Errorf("intent %d (%s %s) BoardType = %q, want %q", i, in.Side, in.Symbol, in.BoardType, engine.BoardRG)
+		}
+	}
+}

@@ -636,3 +636,140 @@ func TestLiveSource_SwitchResetDedupResetsPerConnection(t *testing.T) {
 		}
 	}
 }
+
+// ---------- per-reconnect calendar re-check (plan 18 §5 B3) ----------
+
+// mutableClock is a clock a test can move between reconnect attempts, so
+// "the day changed while the process was running" is something a test can
+// actually stage.
+type mutableClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func newMutableClock(at time.Time) *mutableClock { return &mutableClock{t: at} }
+
+func (c *mutableClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *mutableClock) set(at time.Time) {
+	c.mu.Lock()
+	c.t = at
+	c.mu.Unlock()
+}
+
+// These two instants are the whole point of the test below. Both are
+// expressed in UTC, the zone the collector box actually runs in:
+//
+//	tradingWedUTC   Wed 2026-09-16 05:00Z = 12:00 WIB, mid-session
+//	weekendWIBUTC   Fri 2026-09-18 19:00Z = Sat 02:00 WIB — a weekend in
+//	                Jakarta while the host's own date still says Friday
+var (
+	tradingWedUTC = time.Date(2026, 9, 16, 5, 0, 0, 0, time.UTC)
+	weekendWIBUTC = time.Date(2026, 9, 18, 19, 0, 0, 0, time.UTC)
+)
+
+func TestLiveSource_StopsWhenAReconnectFallsOnANonTradingDay(t *testing.T) {
+	if tradingWedUTC.In(calendar.Jakarta).Weekday() != time.Wednesday {
+		t.Fatalf("fixture drift: %s is a %s in WIB", tradingWedUTC, tradingWedUTC.In(calendar.Jakarta).Weekday())
+	}
+	if weekendWIBUTC.Weekday() != time.Friday || weekendWIBUTC.In(calendar.Jakarta).Weekday() != time.Saturday {
+		t.Fatalf("fixture drift: %s is %s locally / %s in WIB — the test needs the two to disagree",
+			weekendWIBUTC, weekendWIBUTC.Weekday(), weekendWIBUTC.In(calendar.Jakarta).Weekday())
+	}
+
+	clock := newMutableClock(tradingWedUTC)
+	dialer := &fakeDialer{fn: func(call int) (LiveConn, error) {
+		if call > 0 {
+			t.Errorf("dial called %d time(s): the source must not reconnect into a closed market", call+1)
+		}
+		return newFakeConn(fakeFrame{err: errors.New("simulated disconnect")}), nil
+	}}
+
+	rec := newSleepRecorder()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := liveSource(ctx, dialer.dial, loadCalendar(t), testOpts(clock.now, rec.sleep))
+	if err != nil {
+		t.Fatalf("liveSource: %v", err)
+	}
+
+	// Wait for the disconnect to be reported before touching the clock.
+	// Without this the test races the loop's FIRST calendar check and can
+	// stop the source before it ever dials — which would still "pass" the
+	// closure assertion while testing nothing about reconnecting. Observing
+	// RECONNECT proves a dial happened; from there the loop is blocked in
+	// rec.sleep until recvDuration releases it, so the clock change is
+	// guaranteed to land before the next check.
+	evts := drain(t, ch, 1, 2*time.Second)
+	if evts[0].Control == nil || evts[0].Control.Event != "RECONNECT" {
+		t.Fatalf("event = %+v, want RECONNECT", evts[0])
+	}
+	clock.set(weekendWIBUTC)
+	if d := recvDuration(t, rec.ch, 2*time.Second); d != liveReconnectMin {
+		t.Errorf("backoff = %s, want %s", d, liveReconnectMin)
+	}
+
+	assertClosed(t, ch, 2*time.Second)
+	if dialer.callCount() != 1 {
+		t.Errorf("dial call count = %d, want 1", dialer.callCount())
+	}
+}
+
+// TestLiveSource_KeepsReconnectingWhileTheDayIsStillATradingDay is the
+// other half, and the one that would catch a check that is simply always
+// false: a disconnect on a trading day must still reconnect.
+func TestLiveSource_KeepsReconnectingWhileTheDayIsStillATradingDay(t *testing.T) {
+	clock := newMutableClock(tradingWedUTC)
+	dialer := &fakeDialer{fn: func(call int) (LiveConn, error) {
+		return newFakeConn(fakeFrame{err: errors.New("simulated disconnect")}), nil
+	}}
+
+	rec := newSleepRecorder()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := liveSource(ctx, dialer.dial, loadCalendar(t), testOpts(clock.now, rec.sleep))
+	if err != nil {
+		t.Fatalf("liveSource: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		evts := drain(t, ch, 1, 2*time.Second)
+		if evts[0].Control == nil || evts[0].Control.Event != "RECONNECT" {
+			t.Fatalf("iter %d: event = %+v, want RECONNECT", i, evts[0])
+		}
+		// Move time forward within the same trading day.
+		clock.set(tradingWedUTC.Add(time.Duration(i+1) * time.Minute))
+		recvDuration(t, rec.ch, 2*time.Second)
+	}
+
+	cancel()
+	assertClosed(t, ch, 2*time.Second)
+	if got := dialer.callCount(); got < 3 {
+		t.Errorf("dial call count = %d, want at least 3 — the re-check must not stop a live trading day", got)
+	}
+}
+
+// TestLiveSource_StartCheckUsesTheJakartaDate pins the start half of the
+// same conversion: a host whose own date says Friday must still refuse to
+// start when it is already Saturday at the exchange.
+func TestLiveSource_StartCheckUsesTheJakartaDate(t *testing.T) {
+	dialer := &fakeDialer{fn: func(int) (LiveConn, error) {
+		t.Error("dial must not be called: it is Saturday in Jakarta")
+		return nil, nil
+	}}
+
+	_, err := liveSource(context.Background(), dialer.dial, loadCalendar(t),
+		testOpts(func() time.Time { return weekendWIBUTC }, instantSleep))
+	if !errors.Is(err, ErrMarketClosed) {
+		t.Fatalf("err = %v, want ErrMarketClosed", err)
+	}
+	if dialer.callCount() != 0 {
+		t.Errorf("dial call count = %d, want 0", dialer.callCount())
+	}
+}

@@ -60,20 +60,26 @@ func isOnApproxTickIDR(priceIDR int64) bool {
 //     check is that it is not zero or negative (reference 06 §6's
 //     "quantity_shares % lot_size == 0 and shares > 0", reduced to its
 //     Lots-typed equivalent).
+//
 //   - PriceIDR must be positive.
+//
 //   - Side must be "buy" or "sell" (engine.OrderIntent's only documented
 //     values); anything else is rejected rather than silently forwarded.
+//
 //   - PriceIDR must fall on a valid tick under isOnApproxTickIDR.
 //
-// Board type (reference 06 §8) is a reference-06 rule this package does
-// NOT gate: engine.OrderIntent carries no BoardType field to check against
-// — the whole strategy/engine path currently only ever emits regular-board
-// (RG) orders (strategy/broker.go hardcodes "board_type": "RG" in its
-// payload), so there is nothing on the intent to validate. Adding a
-// BoardType field to OrderIntent would let this package gate it, but that
-// is an engine.go/strategy.go change, out of scope for a decorating sink
-// that is meant to leave engine.Run and its types untouched — flagged in
-// this package's delivery report rather than worked around silently.
+//   - BoardType must be engine.BoardRG (reference 06 §8). Two distinct
+//     rejections, because they are different mistakes: an UNSET board is a
+//     strategy that never said which venue it meant, and a set-but-other
+//     board (TN, NG, or anything else) is a strategy asking for a venue
+//     this system cannot route to — B4's LiveSink sends RG, as
+//     strategy/broker.go's payload already does. Silently defaulting the
+//     zero value to RG would route an order the strategy believed was going
+//     to the cash board onto the regular book, where the only symptom is a
+//     fill the strategy did not expect (or, the other way round, an order
+//     that rests forever against a book it will never match in). The check
+//     is one comparison; the failure it prevents is invisible from both
+//     ends.
 func checkStructural(intent engine.OrderIntent) error {
 	if intent.Lots <= 0 {
 		return fmt.Errorf("%w: lots %d must be positive", ErrInvalidIntent, intent.Lots)
@@ -88,6 +94,13 @@ func checkStructural(intent engine.OrderIntent) error {
 	}
 	if !isOnApproxTickIDR(intent.PriceIDR) {
 		return fmt.Errorf("%w: price %d IDR is not on a valid tick (%s)", ErrInvalidIntent, intent.PriceIDR, approxTickLimitationNote)
+	}
+	switch intent.BoardType {
+	case engine.BoardRG:
+	case "":
+		return fmt.Errorf("%w: board type is unset — a strategy must name the venue it means, and the zero value is not %q (reference 06 §8)", ErrInvalidIntent, engine.BoardRG)
+	default:
+		return fmt.Errorf("%w: board type %q is not routable — this system sends %q only (reference 06 §8)", ErrInvalidIntent, intent.BoardType, engine.BoardRG)
 	}
 	return nil
 }

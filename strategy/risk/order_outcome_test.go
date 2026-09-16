@@ -36,11 +36,11 @@ func exposureSink(t *testing.T, inner engine.OrderSink, equityIDR float64) *Risk
 
 // buy3M is a 3,000,000 IDR buy: 3,000 IDR x 10 lots x 100 shares.
 func buy3M(orderID string) engine.OrderIntent {
-	return engine.OrderIntent{Symbol: "AAAA", Side: "buy", PriceIDR: 3000, Lots: 10, OrderID: orderID}
+	return engine.OrderIntent{Symbol: "AAAA", Side: "buy", PriceIDR: 3000, Lots: 10, OrderID: orderID, BoardType: engine.BoardRG}
 }
 
 func sell3M(orderID string) engine.OrderIntent {
-	return engine.OrderIntent{Symbol: "AAAA", Side: "sell", PriceIDR: 3000, Lots: 10, OrderID: orderID}
+	return engine.OrderIntent{Symbol: "AAAA", Side: "sell", PriceIDR: 3000, Lots: 10, OrderID: orderID, BoardType: engine.BoardRG}
 }
 
 // An order the broker rejects never reached the market, so it must not hold

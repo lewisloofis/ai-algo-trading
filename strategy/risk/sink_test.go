@@ -3,6 +3,7 @@ package risk
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -414,5 +415,77 @@ func TestMarketState_FirstReject_EachField(t *testing.T) {
 				t.Errorf("firstReject() = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// --- board type (reference 06 §8) -------------------------------------------
+
+// TestSubmit_BoardTypeIsGated covers the last reference-06 rule to be wired
+// (plan 18 §5 B2). The two rejection cases are separate mistakes: an unset
+// board is a strategy that never said which venue it meant; a set-but-other
+// board is a strategy asking for a venue this system does not route to.
+// Both must reject, and neither may reach the inner sink.
+func TestSubmit_BoardTypeIsGated(t *testing.T) {
+	cases := []struct {
+		name  string
+		board engine.BoardType
+		want  bool // accepted?
+	}{
+		{"regular board is the one we route", engine.BoardRG, true},
+		{"unset is not an implicit RG", "", false},
+		{"cash/negotiated board", engine.BoardTN, false},
+		{"new-growth board", engine.BoardNG, false},
+		{"anything else", engine.BoardType("rg"), false}, // case-sensitive on purpose: the wire value is "RG"
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := &recordingSink{}
+			sink, err := NewRiskSink(inner, SleeveEquityIDR(15_000_000), permissiveLimits(), allowGate{}, fixedPnL{pnl: 0}, "", nil)
+			if err != nil {
+				t.Fatalf("NewRiskSink: %v", err)
+			}
+
+			in := intent("BBCA", "buy", 1000, 1)
+			in.BoardType = tc.board
+
+			_, err = sink.Submit(context.Background(), in)
+			if tc.want {
+				if err != nil {
+					t.Fatalf("Submit(%q) = %v, want accepted", tc.board, err)
+				}
+				if inner.count() != 1 {
+					t.Errorf("inner sink saw %d orders, want 1", inner.count())
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidIntent) {
+				t.Fatalf("Submit(%q) err = %v, want ErrInvalidIntent", tc.board, err)
+			}
+			if inner.count() != 0 {
+				t.Errorf("inner sink saw %d orders for board %q, want 0", inner.count(), tc.board)
+			}
+		})
+	}
+}
+
+// TestBoardTypeRejectionsAreDistinguishable: "you forgot to set it" and
+// "we cannot route that" need different messages, because they are fixed in
+// different places — the strategy versus the plan.
+func TestBoardTypeRejectionsAreDistinguishable(t *testing.T) {
+	unset := intent("BBCA", "buy", 1000, 1)
+	unset.BoardType = ""
+	other := intent("BBCA", "buy", 1000, 1)
+	other.BoardType = engine.BoardTN
+
+	errUnset := checkStructural(unset)
+	errOther := checkStructural(other)
+	if errUnset == nil || errOther == nil {
+		t.Fatalf("both must reject: unset=%v other=%v", errUnset, errOther)
+	}
+	if !strings.Contains(errUnset.Error(), "unset") {
+		t.Errorf("unset board error = %q, want it to say the field was never set", errUnset)
+	}
+	if !strings.Contains(errOther.Error(), "not routable") {
+		t.Errorf("other board error = %q, want it to say the venue is not routable", errOther)
 	}
 }

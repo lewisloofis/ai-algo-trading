@@ -20,7 +20,7 @@ const ORBBreakoutPct float64 = 0.005
 // IDX session 2 closes at 15:49 WIB = 08:49 UTC. Any liveprice tick at or
 // after this UTC hour:minute triggers an end-of-day exit.
 const sessionCloseHourUTC = 8
-const sessionCloseMinUTC  = 49
+const sessionCloseMinUTC = 49
 
 // isSessionEnd reports whether t is at or after the IDX session-2 close.
 func isSessionEnd(t time.Time) bool {
@@ -140,11 +140,12 @@ func (s *Strategy) enter(ctx context.Context, symbol, side string, refPx float64
 	// SubmitOrder and must see the ID to record the fill price in st.entryPx.
 	st.entryOrder = id
 	intent := engine.OrderIntent{
-		Symbol:   symbol,
-		Side:     side,
-		PriceIDR: int64(refPx),
-		Lots:     1,
-		OrderID:  id,
+		Symbol:    symbol,
+		Side:      side,
+		PriceIDR:  int64(refPx),
+		Lots:      1,
+		OrderID:   id,
+		BoardType: engine.BoardRG,
 	}
 	if _, err := eng.SubmitOrder(ctx, intent); err != nil {
 		st.entryOrder = ""
@@ -158,11 +159,12 @@ func (s *Strategy) exit(ctx context.Context, symbol string, st *symbolState, eng
 	side := "sell"
 	id := s.newOrderID(symbol)
 	intent := engine.OrderIntent{
-		Symbol:   symbol,
-		Side:     side,
-		PriceIDR: st.entryPx,
-		Lots:     1,
-		OrderID:  id,
+		Symbol:    symbol,
+		Side:      side,
+		PriceIDR:  st.entryPx,
+		Lots:      1,
+		OrderID:   id,
+		BoardType: engine.BoardRG,
 	}
 	if _, err := eng.SubmitOrder(ctx, intent); err != nil {
 		return

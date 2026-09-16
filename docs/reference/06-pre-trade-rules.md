@@ -12,6 +12,17 @@ surfaces as a trade.
 > public IDX specification — it is reverse-engineered from the three official
 > clients and the Protobuf contracts in `sb-protos`. Each claim cites a source.
 
+> **Implemented by [`strategy/market`](../../strategy/market)** (plan 18 §5 B2),
+> which answers §§2–4 and §7 as `risk.MarketGate` and denies on anything it
+> cannot confirm. `strategy/cmd/market-probe` prints that answer live.
+>
+> **Two rows of §10 were wrong and are corrected below** (2026-09-15, found while
+> building that gate — the same class of contract error B1 found in doc 05):
+> §7.1's `StockService.Info` has no REST route, and §7.2's `CompanyTradingAction`
+> is not on any channel a client can subscribe to. Neither is reachable; the
+> replacement for the first is `GET /stock/tradable`, and the second has no
+> replacement.
+
 ---
 
 ## Table of Contents
@@ -45,9 +56,11 @@ Run these checks in order before submitting any order:
           (for regular board; nego orders also allowed during NEGOTIATION)
 
 [ ] 3. Instrument is tradable and not suspended
-        REST: StockService.Info → data.is_tradable == true
-        ITCH stream: Company.tradable != 0 AND SuspendState == UNSUSPENDED
-          (CompanyTradingAction.suspend_state in the live feed)
+        REST: GET /stock/tradable?stock_codes=BBCA  (Carina, trading token)
+              → data[].is_tradable == true            ← the only reachable check
+        NOT reachable from a client, contrary to earlier revisions of §7:
+              StockService.Info (private service, no HTTP route)
+              CompanyTradingAction.suspend_state (not on any WS channel)
 
 [ ] 4. Price is within ARA/ARB bands
         GET /nego-engine/v1/order-book/{asset_code}
@@ -277,6 +290,31 @@ auto_reject_price.below <= order_price <= auto_reject_price.above
 Orders at exactly the boundary are valid. ARA/ARB resets each morning; refetch
 at session start and again if the instrument is halted and then unhalted.
 
+> **Measured live, 2026-09-16 09:00 WIB (SESSION_1), via `market-probe --parsed`:**
+>
+> | Symbol | `below` (ARB) | `above` (ARA) | `max_requestable_below` | `max_requestable_above` |
+> |---|---|---|---|---|
+> | BBCA | 5450 | 7675 | 3360 | 13225 |
+> | PTRO | 4400 | 6200 | 2710 | 10675 |
+> | HRTA | 1830 | 2680 | 1135 | 5225 |
+> | BNBR | 79 | 124 | 50 | 280 |
+>
+> Two corrections to the schema section above, both from that run:
+>
+> 1. **The values arrive as bare JSON numbers, not strings.** The proto types
+>    are `uint64`, and proto3's JSON mapping permits the string form, so a
+>    parser should accept both — but numbers are what this gateway emits
+>    today.
+> 2. **`max_requestable_*` is WIDER than the hard band, not equal to it** —
+>    contrary to the example body above, which shows the two matching. What
+>    the wider pair means is not established here, so `strategy/market` gates
+>    on `below`/`above` alone: those are documented as the hard auto-reject
+>    bounds, and they are the tighter of the two.
+>
+> An unknown asset code answers **HTTP 500** (`SYSTEM_ERROR`), not 404 — so
+> "no such symbol" is indistinguishable from a server fault and must be
+> treated as unresolved rather than as an absent constraint.
+
 ---
 
 ## 5. Tick size (fraksi harga)
@@ -397,7 +435,27 @@ flagged with exchange notations that restrict trading. Check all three signals.
 
 ### 7.1 `is_tradable` flag (REST)
 
-The TRM private stock service exposes a lightweight tradability check:
+**Use `GET /stock/tradable?stock_codes={CODE}`** on Carina, with the trading
+token. It answers a row per requested code:
+
+```json
+{ "data": [ { "stock_code": "BBCA", "is_tradable": true,
+              "is_sharia_tradable": true, "is_margin_tradable": true } ] }
+```
+
+Source: `sb-web/src/lib/api/trade.ts:103-107` (`checkStockTradable`) and
+`sb-web/src/global/Securities/types/api/stockTradable.ts`. A response that
+omits the code you asked about is *not* `is_tradable: false` — it is an
+unanswered question, and `strategy/market` treats the two differently.
+
+> **Correction (2026-09-15).** The rest of this section described the TRM
+> **private** stock service, which a client cannot call: every RPC in
+> `securities/trm/core/stock/private/v2/stock.proto` lacks a
+> `google.api.http` annotation, so the gRPC gateway exposes no REST path for
+> it. It is kept below because it documents the field semantics the public
+> route returns, not because it is callable.
+
+The TRM private stock service defines the same check:
 
 ```proto
 // sb-protos/proto/securities/trm/core/stock/private/v2/stock.proto:87-99
@@ -417,6 +475,12 @@ message InfoResponse {
 submit. `special_notations` carries IDX notation codes (e.g. `"X"` for
 suspension pending corporate action, `"S"` for shares collateral) that may
 impose restrictions.
+
+> **Measured live, 2026-09-16:** `GET /stock/tradable` answers a row even for
+> a code that does not exist (`ZZZZ` → `is_tradable: false`), so the flag
+> conflates "suspended", "not permitted for this account" and "no such
+> symbol". All three deny, so the conflation is safe for gating — but it
+> means the flag cannot be used to decide whether a symbol is real.
 
 There is also a batch-tradability endpoint in the same service:
 `TradableRequest` / `TradableResponse` at
@@ -452,9 +516,24 @@ enum SuspendState {
 ```
 
 A `SUSPEND_STATE_SUSPENDED` message means the stock has been halted by IDX.
-Orders submitted against a halted book are auto-rejected. Track the latest
-`CompanyTradingAction` per `(stock_code, board_type)` and block order
-submission when `suspend_state == SUSPENDED`.
+Orders submitted against a halted book are auto-rejected.
+
+> **Correction (2026-09-15): this message never reaches a client.**
+> `CompanyTradingAction` is an ITCH/datafeed-internal message. The subscribe
+> contract (`WebsocketChannel` in
+> `securities/transactional/datafeed/v1/websocket.proto`) offers liveprice,
+> runningTrade(+Batch), orderBook, bestBidOffer, iepiev, intraday, watchlist,
+> isHotlist, marketMover and orderQueue — no trading-action or company-status
+> channel — and the inbound oneof has no such variant either
+> ([02-websocket-streaming.md §5](./02-websocket-streaming.md) lists all 15).
+> "Track the latest `CompanyTradingAction`" is therefore not implementable.
+>
+> **Consequence for any pre-trade gate:** there is no independent suspension
+> signal. `strategy/market` uses §7.1's broker tradability flag as the
+> suspension proxy and labels it as one on the value itself
+> (`market.SuspensionProxyNote`). The residual risk is one-directional: a
+> suspension the broker flag has not caught yet produces an exchange
+> auto-reject, not a bad fill.
 
 The `Company` message in the same file also carries an `int32 tradable` field
 at line 105, which the datafeed consumer populates from the ITCH snapshot.
@@ -516,6 +595,15 @@ Doc 03 uses `board_type` in all order payloads and the smart-order
 `market_board` field (`MARKET_BOARD_REGULER` / `MARKET_BOARD_TUNAI`)
 mirrors the same distinction.
 
+> **How this repo gates it.** `engine.OrderIntent` carries a `BoardType`
+> that the strategy must set, and `risk.checkStructural` admits `RG` only.
+> The field exists because the strategy and the router make *different*
+> claims: the router knows which board it sends to, the strategy knows which
+> one it meant, and a mismatch is silent on both sides — a TN order on the
+> regular book may be accepted and never match. The unset zero value is
+> rejected rather than read as `RG`, so "nobody filled this in" cannot
+> masquerade as a correct answer.
+
 ---
 
 ## 9. What is NOT represented here
@@ -543,18 +631,18 @@ them locally:
 
 ## 10. Data-source summary
 
-| Rule | How to fetch | Protocol |
-|---|---|---|
-| Holiday check | `GET /holidays/active` | REST (backoffice gateway) |
-| Market open/closed | `GET /company-price-feed/market-time` | REST |
-| Session phase | `GET /company-price-feed/market-time/session?datetime=` | REST |
-| Market cycle allocation | Trading-info endpoint, feature `FEATURE_MARKET_CYCLE` | REST |
-| ARA / ARB price bands | `GET /nego-engine/v1/order-book/{code}` | REST (Carina) |
-| Instrument tradability | `StockService.Info` or `StockService.Tradable` (TRM private) | REST |
-| Suspension state | `CompanyTradingAction` messages | ITCH / datafeed stream |
-| Tick size | `PriceTickSizeTable` + `OrderBookDirectory.price_tick_size_table_id` | ITCH stream |
-| Lot size | `OrderBookDirectory.shares_per_lot` or `Company.round_lot_size` | ITCH / datafeed stream |
-| Board type | Hardcoded per instrument type (`RG` / `TN`) | Client constant |
+| Rule | How to fetch | Host / session | Reachable? |
+|---|---|---|---|
+| Holiday check | `GET /holidays/active` | backoffice gateway | ⚠️ gateway access unverified — `strategy/market` reads the curated `calendar/idx_holidays.json` (plan 14, ADR-0012) instead |
+| Market open/closed | `GET /company-price-feed/market-time` | Exodus / main token | ✅ |
+| Session phase | `GET /company-price-feed/market-time/session` | Exodus / main token | ✅ — the `?datetime=` parameter is optional and `sb-web` omits it; omitting it avoids an undocumented-timezone bug |
+| Market cycle allocation | Trading-info endpoint, feature `FEATURE_MARKET_CYCLE` | Carina / trading token | not used |
+| ARA / ARB price bands | `GET /nego-engine/v1/order-book/{code}` | Carina / trading token | ✅ — `uint64` fields arrive JSON-encoded as **strings** under the proto3 JSON mapping; parse both |
+| Instrument tradability | `GET /stock/tradable?stock_codes=` | Carina / trading token | ✅ (corrected — `StockService.Info` is a private service with no HTTP route) |
+| Suspension state | `CompanyTradingAction` messages | ITCH / datafeed-internal | ❌ **not on any client-subscribable channel** — see §7.2 |
+| Tick size | `PriceTickSizeTable` + `OrderBookDirectory.price_tick_size_table_id` | ITCH stream | ❌ not on a client channel; `risk.isOnApproxTickIDR` uses the §5 banded approximation |
+| Lot size | `OrderBookDirectory.shares_per_lot` or `Company.round_lot_size` | ITCH / datafeed stream | `engine.OrderIntent.Lots` is already a lot count, so the rule is typed rather than checked |
+| Board type | Hardcoded per instrument type (`RG` / `TN`) | Client constant | ✅ gated — `engine.OrderIntent.BoardType`, admitted only as `RG` by `risk.checkStructural`; the unset zero value is rejected rather than defaulted |
 
 Prev: [Order Placement ←](./03-order-placement.md) ·
 Index: [README](../README.md)
