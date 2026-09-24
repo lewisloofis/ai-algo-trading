@@ -28,6 +28,23 @@ type observer interface {
 	Observe(e engine.MarketEvent)
 }
 
+// asyncSink mirrors engine's asyncSink: sinks whose fills arrive out of band
+// on a channel — a live order router — rather than synchronously from
+// Submit. Declared structurally identical to engine's own unexported
+// interface for the same duck-typing reason fillProvider and observer are
+// above: engine.Run:
+//
+//	if as, ok := sink.(asyncSink); ok { fills = as.Fills() }
+type asyncSink interface {
+	Fills() <-chan engine.AsyncFill
+}
+
+// sinkKinder mirrors engine's sinkKinder: a sink naming itself for the
+// store's sink_kind column (see engine.IntentRow.SinkKind).
+type sinkKinder interface {
+	SinkKind() string
+}
+
 // Observe forwards e to the inner sink when inner tracks book state
 // (implements observer), and is a no-op otherwise. It lives on *RiskSink
 // itself, unconditionally, because forwarding a market event has no
@@ -74,10 +91,10 @@ func (r *RiskSink) EngineSink() engine.OrderSink {
 }
 
 // fillForwardingSink is what EngineSink returns when inner implements
-// fillProvider. Embedding *RiskSink promotes Submit, Cancel, and Observe
-// unchanged; LastFill is the only method this type adds, and it forwards
-// straight to inner so engine.Run reads back inner's real fill rather than
-// anything RiskSink itself could fabricate.
+// fillProvider. Embedding *RiskSink promotes Submit, Cancel, Observe, Fills,
+// and SinkKind unchanged; LastFill is the only method this type adds, and it
+// forwards straight to inner so engine.Run reads back inner's real fill
+// rather than anything RiskSink itself could fabricate.
 type fillForwardingSink struct {
 	*RiskSink
 	inner fillProvider
@@ -85,4 +102,33 @@ type fillForwardingSink struct {
 
 func (f *fillForwardingSink) LastFill() engine.FillRecord {
 	return f.inner.LastFill()
+}
+
+// Fills forwards inner's async fill channel when inner reports fills out of
+// band (asyncSink), and returns nil otherwise. This is declared
+// unconditionally on *RiskSink — unlike LastFill/EngineSink above — because
+// it has none of that pairing's zero-value hazard: a nil channel is simply
+// never ready in engine.Run's select (see engine.Run's comment on its
+// `fills` variable), which is a true and complete answer for "this sink has
+// no async fills", not a fabricated one. There is no equivalent of reading
+// back a confident-but-wrong zero-value FillRecord here.
+func (r *RiskSink) Fills() <-chan engine.AsyncFill {
+	if as, ok := r.inner.(asyncSink); ok {
+		return as.Fills()
+	}
+	return nil
+}
+
+// SinkKind forwards inner's declared kind, defaulting to "paper" when inner
+// does not implement sinkKinder. Also unconditional, and also free of a
+// zero-value hazard: "paper" is engine's own documented default for any sink
+// that does not name itself (see engine.IntentRow.SinkKind and
+// engine.Run's sinkKind resolution), so returning it here repeats an
+// existing, correct default rather than inventing a new confident-but-wrong
+// answer the way an unconditional LastFill would.
+func (r *RiskSink) SinkKind() string {
+	if sk, ok := r.inner.(sinkKinder); ok {
+		return sk.SinkKind()
+	}
+	return "paper"
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"collector/feed"
 	"strategy/engine"
@@ -246,5 +247,92 @@ func TestRiskSink_EngineSink_GatesStillRun(t *testing.T) {
 	}
 	if inner.count() != 0 {
 		t.Errorf("inner sink received %d Submit calls through EngineSink(), want 0 — the decorator must not have become transparent", inner.count())
+	}
+}
+
+// asyncSubmitOnSecond submits one order on the second event, like
+// submitOnSecond above, but also signals a channel synchronously from
+// OnFill so a test driving engine.Run on its own goroutine can wait for a
+// fill to be fully applied (store write, attribution pairing, and the
+// callback itself) without a sleep.
+type asyncSubmitOnSecond struct {
+	seen      int
+	submitErr error
+	filled    chan engine.FillRecord
+}
+
+func (s *asyncSubmitOnSecond) OnEvent(ctx context.Context, e engine.MarketEvent, eng engine.Engine) {
+	s.seen++
+	if s.seen != 2 {
+		return
+	}
+	_, s.submitErr = eng.SubmitOrder(ctx, engine.OrderIntent{
+		Symbol: e.Symbol, Side: "buy", PriceIDR: 100, Lots: 1,
+		OrderID: "o1", BoardType: engine.BoardRG,
+	})
+}
+
+func (s *asyncSubmitOnSecond) OnFill(ctx context.Context, f engine.FillRecord) {
+	s.filled <- f
+}
+
+// TestRiskSink_ForwardsAsyncFillsAndSinkKind drives an async inner sink
+// through RiskSink.EngineSink() and the real engine.Run: the intent must
+// still pass every gate, the fill must come back out through EngineSink()
+// (i.e. RiskSink.Fills(), since asyncRecordingSink is not a fillProvider so
+// EngineSink returns the bare RiskSink — see EngineSink's doc comment), and
+// the store's sink_kind must be the inner sink's own, not "paper".
+func TestRiskSink_ForwardsAsyncFillsAndSinkKind(t *testing.T) {
+	store := newTestStore(t)
+	inner := newAsyncRecordingSink("fake-live")
+	rs, err := NewRiskSink(inner, SleeveEquityIDR(15_000_000), permissiveLimits(), allowGate{}, fixedPnL{}, "", nil)
+	if err != nil {
+		t.Fatalf("NewRiskSink: %v", err)
+	}
+	strat := &asyncSubmitOnSecond{filled: make(chan engine.FillRecord)}
+	src := make(chan engine.MarketEvent)
+
+	done := make(chan struct{})
+	var runErr error
+	go func() {
+		_, runErr = engine.Run(context.Background(), src, strat, rs.EngineSink(), store, "fwd-async")
+		close(done)
+	}()
+
+	src <- liveEvent("AAA", 100, 1)
+	src <- liveEvent("AAA", 100, 2) // triggers SubmitOrder through the gates
+
+	inner.push(engine.AsyncFill{
+		Symbol: "AAA", Side: "buy", RecvNs: 10,
+		Fill: engine.FillRecord{OrderID: "o1", FillPriceIDR: 100, FillLots: 1, FeeIDR: 15},
+	})
+	<-strat.filled // wait for the fill to be fully applied
+
+	close(src)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	if runErr != nil {
+		t.Fatalf("Run: %v", runErr)
+	}
+	if strat.submitErr != nil {
+		t.Fatalf("SubmitOrder failed: %v", strat.submitErr)
+	}
+
+	var kind string
+	if err := store.QueryRow(`SELECT sink_kind FROM fill WHERE order_id = 'o1'`).Scan(&kind); err != nil {
+		t.Fatalf("no fill row reached the store: %v", err)
+	}
+	if kind != "fake-live" {
+		t.Errorf("fill sink_kind = %q, want fake-live — RiskSink.SinkKind did not forward to the async inner sink", kind)
+	}
+	var intentKind string
+	if err := store.QueryRow(`SELECT sink_kind FROM order_intent WHERE order_id = 'o1'`).Scan(&intentKind); err != nil {
+		t.Fatalf("no intent row reached the store: %v", err)
+	}
+	if intentKind != "fake-live" {
+		t.Errorf("intent sink_kind = %q, want fake-live", intentKind)
 	}
 }

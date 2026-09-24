@@ -121,6 +121,22 @@ The web client also maps the raw string values `"open"` / `"close"` to these
 enum variants (`sb-web/src/typings/market.ts:72-78`), so normalise before
 comparing.
 
+> ⚠️ **Confirmed live, 2026-09-16 12:49 WIB: `market.status` is necessary but
+> nowhere near sufficient — it does NOT go to CLOSE during the lunch break.**
+> Probed inside the break, `/market-time` returned
+> `{"market":{"status":"STATUS_OPEN"}}` while `/market-time/session` returned
+> `state_name=STATE_NAME_BREAK`, `state_start_time=12:00:00`,
+> `state_end_time=13:29:59`. So this field answers *"is today a trading
+> day the market opened at all"*, not *"are regular orders accepted right
+> now"*. A gate that reads it alone accepts orders straight into the break,
+> where IDX will reject them.
+>
+> The load-bearing source for "can I send a regular order this instant" is
+> **`state_name` from §2.2's session endpoint**, which is what
+> `strategy/market`'s `Gate` reads. Keep `market.status` as the corroborating
+> second source (a `/market-time` reading CLOSE during a live session must
+> still deny), never as the primary one.
+
 ### 2.2 Session detail (REST)
 
 ```

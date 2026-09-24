@@ -95,3 +95,34 @@ func (f fixedPnL) DailyPnLIDR(ctx context.Context) (float64, error) {
 type mutablePnL struct{ pnl float64 }
 
 func (m *mutablePnL) DailyPnLIDR(ctx context.Context) (float64, error) { return m.pnl, nil }
+
+// asyncRecordingSink is a test fake inner sink whose fills arrive out of
+// band, like a live order router, rather than synchronously from Submit. It
+// exists so tests can drive RiskSink.Fills/SinkKind forwarding through the
+// real engine.Run without strategy/live, which wires a real router behind
+// the same seam.
+type asyncRecordingSink struct {
+	fillsCh chan engine.AsyncFill
+	kind    string
+}
+
+func newAsyncRecordingSink(kind string) *asyncRecordingSink {
+	return &asyncRecordingSink{fillsCh: make(chan engine.AsyncFill), kind: kind}
+}
+
+func (s *asyncRecordingSink) Submit(ctx context.Context, intent engine.OrderIntent) (engine.OrderID, error) {
+	return engine.OrderID(intent.OrderID), nil
+}
+
+func (s *asyncRecordingSink) Cancel(ctx context.Context, id engine.OrderID) error { return nil }
+
+// Fills implements the engine package's unexported asyncSink duck type.
+func (s *asyncRecordingSink) Fills() <-chan engine.AsyncFill { return s.fillsCh }
+
+// SinkKind implements the engine package's unexported sinkKinder duck type.
+func (s *asyncRecordingSink) SinkKind() string { return s.kind }
+
+// push delivers one fill to whichever engine.Run is reading Fills(), through
+// RiskSink's forwarding. The channel is unbuffered, so the send only
+// completes once Run's select has received it.
+func (s *asyncRecordingSink) push(af engine.AsyncFill) { s.fillsCh <- af }

@@ -6,8 +6,10 @@ import (
 )
 
 // insertFilledOrder writes one order_intent + fill pair under sinkKind,
-// seeding the store the way a real Run would.
-func insertFilledOrder(t *testing.T, store *PostTradeStore, seq *int64, sinkKind, symbol, side string, priceIDR int64, lots int, feeIDR int64, recvNs int64) {
+// seeding the store the way a real Run would, and returns the order id it
+// generated so a caller can reference it (e.g. as an AttributionRow's
+// EntryOrderID).
+func insertFilledOrder(t *testing.T, store *PostTradeStore, seq *int64, sinkKind, symbol, side string, priceIDR int64, lots int, feeIDR int64, recvNs int64) string {
 	t.Helper()
 	*seq++
 	orderID := symbol + "-" + side + "-" + strconv.FormatInt(*seq, 10)
@@ -24,6 +26,7 @@ func insertFilledOrder(t *testing.T, store *PostTradeStore, seq *int64, sinkKind
 	}); err != nil {
 		t.Fatalf("InsertFill: %v", err)
 	}
+	return orderID
 }
 
 func TestDerivedPositions_SingleBuy(t *testing.T) {
@@ -189,5 +192,193 @@ func TestAttributionsByStrategy_FiltersAndOrders(t *testing.T) {
 	}
 	if got[0].Symbol != "AAA" || got[1].Symbol != "CCC" {
 		t.Errorf("got symbols [%s, %s], want [AAA, CCC] in seq order", got[0].Symbol, got[1].Symbol)
+	}
+}
+
+func TestRealizedPnLIDRByDate_SumsMatchingRow(t *testing.T) {
+	store := newTestStore(t)
+	var seq int64
+	entryOrderID := insertFilledOrder(t, store, &seq, "live", "BBCA", "buy", 9000, 10, 13500, 100)
+
+	seq++
+	if err := store.InsertAttribution(AttributionRow{
+		Seq: seq, Symbol: "BBCA", StrategyID: "s1",
+		EntryRecvNs: 100, ExitRecvNs: 200,
+		GrossPnlBps: 100, NetPnlBps: 80,
+		EntryOrderID: entryOrderID, ExitOrderID: "exit1",
+		HoldCalendarDays: 1, AsOfDate: "2026-09-15",
+	}); err != nil {
+		t.Fatalf("InsertAttribution: %v", err)
+	}
+
+	got, err := store.RealizedPnLIDRByDate("live", "2026-09-15")
+	if err != nil {
+		t.Fatalf("RealizedPnLIDRByDate: %v", err)
+	}
+	// notional = 9000 IDR * 10 lots * 100 shares/lot = 9,000,000 IDR
+	// 80 bps of that = 72,000 IDR
+	if want := int64(72000); got != want {
+		t.Errorf("RealizedPnLIDRByDate = %d, want %d", got, want)
+	}
+}
+
+func TestRealizedPnLIDRByDate_SumsMultipleRoundTrips(t *testing.T) {
+	store := newTestStore(t)
+	var seq int64
+	e1 := insertFilledOrder(t, store, &seq, "live", "BBCA", "buy", 9000, 10, 13500, 100)
+	e2 := insertFilledOrder(t, store, &seq, "live", "TLKM", "buy", 3000, 5, 2250, 300)
+
+	seq++
+	if err := store.InsertAttribution(AttributionRow{
+		Seq: seq, Symbol: "BBCA", StrategyID: "s1", EntryRecvNs: 100, ExitRecvNs: 200,
+		GrossPnlBps: 100, NetPnlBps: 80, EntryOrderID: e1, ExitOrderID: "x1",
+		HoldCalendarDays: 1, AsOfDate: "2026-09-15",
+	}); err != nil {
+		t.Fatalf("InsertAttribution 1: %v", err)
+	}
+	seq++
+	if err := store.InsertAttribution(AttributionRow{
+		Seq: seq, Symbol: "TLKM", StrategyID: "s1", EntryRecvNs: 300, ExitRecvNs: 400,
+		GrossPnlBps: -50, NetPnlBps: -60, EntryOrderID: e2, ExitOrderID: "x2",
+		HoldCalendarDays: 1, AsOfDate: "2026-09-15",
+	}); err != nil {
+		t.Fatalf("InsertAttribution 2: %v", err)
+	}
+
+	got, err := store.RealizedPnLIDRByDate("live", "2026-09-15")
+	if err != nil {
+		t.Fatalf("RealizedPnLIDRByDate: %v", err)
+	}
+	// row 1: 9000*10*100=9,000,000 notional, 80bps -> 72,000
+	// row 2: 3000*5*100=1,500,000 notional, -60bps -> -9,000
+	if want := int64(72000 - 9000); got != want {
+		t.Errorf("RealizedPnLIDRByDate = %d, want %d", got, want)
+	}
+}
+
+func TestRealizedPnLIDRByDate_ExcludesOtherDates(t *testing.T) {
+	store := newTestStore(t)
+	var seq int64
+	entryOrderID := insertFilledOrder(t, store, &seq, "live", "BBCA", "buy", 9000, 10, 13500, 100)
+	seq++
+	if err := store.InsertAttribution(AttributionRow{
+		Seq: seq, Symbol: "BBCA", StrategyID: "s1", EntryRecvNs: 100, ExitRecvNs: 200,
+		GrossPnlBps: 100, NetPnlBps: 80, EntryOrderID: entryOrderID, ExitOrderID: "x1",
+		HoldCalendarDays: 1, AsOfDate: "2026-09-14",
+	}); err != nil {
+		t.Fatalf("InsertAttribution: %v", err)
+	}
+
+	got, err := store.RealizedPnLIDRByDate("live", "2026-09-15")
+	if err != nil {
+		t.Fatalf("RealizedPnLIDRByDate: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("RealizedPnLIDRByDate = %d, want 0 (attribution row is dated 2026-09-14)", got)
+	}
+}
+
+func TestRealizedPnLIDRByDate_FiltersBySinkKind(t *testing.T) {
+	store := newTestStore(t)
+	var seq int64
+	// Entry fill recorded under "paper" — a paper run's closed trip must
+	// never be counted against a live session's loss limit.
+	entryOrderID := insertFilledOrder(t, store, &seq, "paper", "BBCA", "buy", 9000, 10, 13500, 100)
+	seq++
+	if err := store.InsertAttribution(AttributionRow{
+		Seq: seq, Symbol: "BBCA", StrategyID: "s1", EntryRecvNs: 100, ExitRecvNs: 200,
+		GrossPnlBps: 100, NetPnlBps: 80, EntryOrderID: entryOrderID, ExitOrderID: "x1",
+		HoldCalendarDays: 1, AsOfDate: "2026-09-15",
+	}); err != nil {
+		t.Fatalf("InsertAttribution: %v", err)
+	}
+
+	got, err := store.RealizedPnLIDRByDate("live", "2026-09-15")
+	if err != nil {
+		t.Fatalf("RealizedPnLIDRByDate: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("RealizedPnLIDRByDate(live) = %d, want 0 (entry fill is sink_kind=paper)", got)
+	}
+}
+
+func TestRealizedPnLIDRByDate_OpenPositionContributesNothing(t *testing.T) {
+	store := newTestStore(t)
+	var seq int64
+	// A fill with no closing attribution row: an open position, which must
+	// contribute nothing to realized PnL — that is the unrealized half's job.
+	insertFilledOrder(t, store, &seq, "live", "BBCA", "buy", 9000, 10, 13500, 100)
+
+	got, err := store.RealizedPnLIDRByDate("live", "2026-09-15")
+	if err != nil {
+		t.Fatalf("RealizedPnLIDRByDate: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("RealizedPnLIDRByDate = %d, want 0 (no closed round-trip)", got)
+	}
+}
+
+func TestRealizedPnLIDRByDate_NoAttributionsReturnsZero(t *testing.T) {
+	store := newTestStore(t)
+	got, err := store.RealizedPnLIDRByDate("live", "2026-09-15")
+	if err != nil {
+		t.Fatalf("RealizedPnLIDRByDate: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("RealizedPnLIDRByDate = %d, want 0 on an empty store", got)
+	}
+}
+
+// TestRealizedPnLIDRByDate_DisambiguatesSharedOrderIDByRecvNs guards the join
+// key choice: joining on entry_order_id alone would sum every fill ever
+// recorded under that order_id. Here two fill rows share one order_id (as a
+// live order's partial-then-final fills would) at different recv_ns; only
+// the one matching the attribution's entry_recv_ns must be counted.
+func TestRealizedPnLIDRByDate_DisambiguatesSharedOrderIDByRecvNs(t *testing.T) {
+	store := newTestStore(t)
+	var seq int64
+	const orderID = "BBCA-buy-shared"
+
+	seq++
+	if err := store.InsertIntent(IntentRow{
+		Seq: seq, RecvNs: 100, StrategyID: "test", Symbol: "BBCA", Side: "buy",
+		PriceIDR: 9000, Lots: 10, OrderID: orderID, SinkKind: "live",
+	}); err != nil {
+		t.Fatalf("InsertIntent: %v", err)
+	}
+	seq++
+	if err := store.InsertFill(FillRow{
+		Seq: seq, RecvNs: 100, OrderID: orderID, FillPriceIDR: 9000, FillLots: 10,
+		FeeIDR: 13500, SinkKind: "live",
+	}); err != nil {
+		t.Fatalf("InsertFill (entry): %v", err)
+	}
+	seq++
+	// A second fill sharing the same order_id at a different recv_ns — must
+	// NOT be folded into the entry leg's notional.
+	if err := store.InsertFill(FillRow{
+		Seq: seq, RecvNs: 150, OrderID: orderID, FillPriceIDR: 9100, FillLots: 5,
+		FeeIDR: 6825, SinkKind: "live",
+	}); err != nil {
+		t.Fatalf("InsertFill (unrelated, shared order_id): %v", err)
+	}
+
+	seq++
+	if err := store.InsertAttribution(AttributionRow{
+		Seq: seq, Symbol: "BBCA", StrategyID: "s1", EntryRecvNs: 100, ExitRecvNs: 200,
+		GrossPnlBps: 100, NetPnlBps: 80, EntryOrderID: orderID, ExitOrderID: "x1",
+		HoldCalendarDays: 1, AsOfDate: "2026-09-15",
+	}); err != nil {
+		t.Fatalf("InsertAttribution: %v", err)
+	}
+
+	got, err := store.RealizedPnLIDRByDate("live", "2026-09-15")
+	if err != nil {
+		t.Fatalf("RealizedPnLIDRByDate: %v", err)
+	}
+	// Only the recv_ns=100 fill (10 lots @ 9000) should count:
+	// notional = 9,000,000, 80bps -> 72,000.
+	if want := int64(72000); got != want {
+		t.Errorf("RealizedPnLIDRByDate = %d, want %d (must not double-count the shared order_id's other fill)", got, want)
 	}
 }

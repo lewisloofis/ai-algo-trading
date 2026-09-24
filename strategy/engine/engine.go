@@ -46,6 +46,26 @@ type observer interface {
 	Observe(e MarketEvent)
 }
 
+// asyncSink is implemented by sinks whose fills arrive out of band — a live
+// order router, whose executions come back from the broker on their own
+// schedule, rather than synchronously from Submit like PaperSink. Run
+// multiplexes this channel alongside the market-event stream; see the
+// comment on the `fills` variable in Run for why a sink that does not
+// implement this (every sink built before this seam existed) needs no
+// special case.
+type asyncSink interface {
+	Fills() <-chan AsyncFill
+}
+
+// sinkKinder is implemented by a sink that names itself for the store's
+// sink_kind column (see IntentRow.SinkKind). A sink that does not implement
+// it — PaperSink, and every sink that predates this interface — records
+// "paper", the hardcoded value every intent and fill row carried before
+// sink_kind became a real per-sink property.
+type sinkKinder interface {
+	SinkKind() string
+}
+
 // openLeg is an entry fill awaiting its closing fill, used to build attribution.
 type openLeg struct {
 	side     string
@@ -83,13 +103,23 @@ type engineHandle struct {
 	stratID string
 	recvNs  int64
 	state   *runState
+
+	// sinkKind is resolved once per Run (see sinkKinder) and stamped onto
+	// every intent and fill row this handle writes, whether the fill came
+	// back synchronously from Submit or later from the sink's Fills()
+	// channel — both paths report the same sink, so both must record the
+	// same kind.
+	sinkKind string
 }
 
 func (h *engineHandle) Now() time.Time { return h.clock.Now() }
 
-// SubmitOrder logs the intent, submits to the sink, and on a successful fill
-// logs the fill, pairs it into an attribution round-trip, and delivers it to
-// the strategy via OnFill — all synchronously on the event-loop goroutine.
+// SubmitOrder logs the intent, submits to the sink, and — only for a sink
+// that fills synchronously (fillProvider) — applies the resulting fill
+// before returning. A sink whose fills arrive later on Fills() returns here
+// with no fill at all; Run's select loop applies that fill through the same
+// applyFill method once it arrives, so the two paths converge on identical
+// bookkeeping rather than each maintaining their own.
 func (h *engineHandle) SubmitOrder(ctx context.Context, intent OrderIntent) (OrderID, error) {
 	st := h.state
 	st.counters.OrdersAttempted++
@@ -104,7 +134,7 @@ func (h *engineHandle) SubmitOrder(ctx context.Context, intent OrderIntent) (Ord
 		PriceIDR:   intent.PriceIDR,
 		Lots:       intent.Lots,
 		OrderID:    intent.OrderID,
-		SinkKind:   "paper",
+		SinkKind:   h.sinkKind,
 	}); err != nil {
 		return "", err
 	}
@@ -116,10 +146,31 @@ func (h *engineHandle) SubmitOrder(ctx context.Context, intent OrderIntent) (Ord
 
 	fp, ok := h.sink.(fillProvider)
 	if !ok {
+		// Nothing to apply yet: either the sink never fills (unlikely, but
+		// not this method's business to assume) or it fills asynchronously
+		// and will report through Fills() instead — see Run.
 		return id, nil
 	}
-	fill := fp.LastFill()
+	if err := h.applyFill(ctx, intent.Symbol, intent.Side, fp.LastFill()); err != nil {
+		return "", err
+	}
+	return id, nil
+}
 
+// applyFill records one execution — counters, the fill row, attribution
+// pairing, and the Strategy.OnFill callback — and is the single
+// implementation both SubmitOrder's synchronous fillProvider path and Run's
+// asynchronous Fills() path call. A live fill and a paper fill are booked
+// through the exact same sequence of steps; duplicating this per path would
+// let one silently drift from the other (a missed counter, a skipped store
+// insert) with nothing to catch it.
+//
+// Both call sites run applyFill from the event-loop goroutine — SubmitOrder
+// directly, and Run's select loop for an async fill — so Strategy.OnFill
+// keeps its documented single-goroutine contract regardless of which path
+// produced the execution.
+func (h *engineHandle) applyFill(ctx context.Context, symbol, side string, fill FillRecord) error {
+	st := h.state
 	st.counters.Fills++
 	st.counters.TotalFeesIDR += fill.FeeIDR
 
@@ -133,17 +184,17 @@ func (h *engineHandle) SubmitOrder(ctx context.Context, intent OrderIntent) (Ord
 		FeeIDR:       fill.FeeIDR,
 		SlippageBps:  fill.SlippageBps,
 		NetPnlIDR:    sql.NullInt64{},
-		SinkKind:     "paper",
+		SinkKind:     h.sinkKind,
 	}); err != nil {
-		return "", err
+		return err
 	}
 
-	if err := h.recordRoundTrip(intent.Symbol, intent.Side, fill); err != nil {
-		return "", err
+	if err := h.recordRoundTrip(symbol, side, fill); err != nil {
+		return err
 	}
 
 	h.strat.OnFill(ctx, fill)
-	return id, nil
+	return nil
 }
 
 // recordRoundTrip pairs an entry fill with its later closing fill. The first
@@ -226,10 +277,61 @@ func Run(ctx context.Context, src <-chan MarketEvent, strat Strategy, sink Order
 	st := &runState{open: make(map[string]*openLeg), progress: cfg.progress}
 	st.publish(0)
 
+	// sinkKind is resolved once for the whole run, not per intent or fill:
+	// it is a property of which sink this run wired up, and every row the
+	// run writes must agree on it. "paper" is the pre-existing hardcoded
+	// default for any sink that does not name itself via sinkKinder.
+	sinkKind := "paper"
+	if sk, ok := sink.(sinkKinder); ok {
+		sinkKind = sk.SinkKind()
+	}
+
+	// fills is nil unless sink reports its executions out of band
+	// (asyncSink) — a live order router rather than PaperSink. A nil
+	// channel is never ready in a select, so the fills case below simply
+	// never fires for every sink that predates this seam; that is exactly
+	// the correct paper-path behaviour, not a special case to guard against.
+	var fills <-chan AsyncFill
+	if as, ok := sink.(asyncSink); ok {
+		fills = as.Fills()
+	}
+
+	newHandle := func(recvNs int64) *engineHandle {
+		return &engineHandle{
+			sink:     sink,
+			store:    store,
+			clock:    replayClock{ns: recvNs},
+			strat:    strat,
+			stratID:  stratID,
+			recvNs:   recvNs,
+			state:    st,
+			sinkKind: sinkKind,
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return finalize(st), ctx.Err()
+
+		case af, ok := <-fills:
+			if !ok {
+				// The sink closed its Fills channel (e.g. on Close() during
+				// shutdown). That is not the run ending — the market-event
+				// channel alone decides that — so stop selecting on this
+				// one and keep going.
+				fills = nil
+				continue
+			}
+			// Applied on this goroutine, exactly like a synchronous fill,
+			// so Strategy.OnFill's single-goroutine contract holds
+			// regardless of which path produced the execution.
+			h := newHandle(af.RecvNs)
+			if err := h.applyFill(ctx, af.Symbol, af.Side, af.Fill); err != nil {
+				return finalize(st), err
+			}
+			st.publish(af.RecvNs)
+
 		case evt, ok := <-src:
 			if !ok {
 				return finalize(st), nil
@@ -251,15 +353,7 @@ func Run(ctx context.Context, src <-chan MarketEvent, strat Strategy, sink Order
 				return finalize(st), err
 			}
 
-			h := &engineHandle{
-				sink:    sink,
-				store:   store,
-				clock:   replayClock{ns: evt.RecvNs},
-				strat:   strat,
-				stratID: stratID,
-				recvNs:  evt.RecvNs,
-				state:   st,
-			}
+			h := newHandle(evt.RecvNs)
 			strat.OnEvent(ctx, evt, h)
 			st.publish(evt.RecvNs)
 		}

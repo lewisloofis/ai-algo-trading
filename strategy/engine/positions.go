@@ -187,3 +187,66 @@ func (s *PostTradeStore) AttributionsByStrategy(strategyID string) ([]Attributio
 	}
 	return out, nil
 }
+
+// RealizedPnLIDRByDate re-denominates one trading day's realized PnL into
+// whole IDR, for sinkKind's rows only. asOfDate must be a Jakarta (WIB)
+// calendar date string as produced by JakartaDate — the exchange's date, not
+// the host's: a UTC host disagrees with WIB for the seven hours after
+// Jakarta midnight, so a host-local date would silently misfile a trade
+// against the wrong trading day (see JakartaDate's own doc comment, which
+// carries the same reasoning for as_of_date generally).
+//
+// account.ComputeRealizedPnL deliberately reports realized PnL in basis
+// points only, because AttributionRow carries no IDR field — inventing one
+// there would let a second PnL figure drift from what the fill simulator
+// actually recorded. This is the honest bridge to IDR instead: it
+// re-denominates the bps the store already has against the entry leg's
+// actual notional (fill_price_idr * fill_lots * 100 shares/lot), rather than
+// recomputing PnL from prices in a second place.
+//
+// An open position contributes nothing here — attribution rows exist only
+// for CLOSED round-trips. That is not a bug; it is the division of labour
+// with the unrealized half, which must come from the broker's live
+// portfolio figures instead (see account.DailyPnL).
+//
+// The join is on (entry_order_id, entry_recv_ns), not entry_order_id alone.
+// recordRoundTrip's openLeg is replaced wholesale by any later same-side
+// fill sharing that order_id (see its doc comment), so entry_recv_ns is what
+// actually pins down which single fill row the leg's price/lots/fee came
+// from; joining on entry_order_id alone would sum every fill ever recorded
+// under that order_id and overstate the notional if more than one exists
+// (today's PaperSink only ever produces one fill per order, but nothing in
+// this schema guarantees that for a live, partially-filled order).
+//
+// sink_kind is read off the fill row, filtering both the join and the
+// result to it: a paper run's rows must never be counted against a live
+// session's loss limit, and the attribution table itself carries no
+// sink_kind column to filter on directly.
+func (s *PostTradeStore) RealizedPnLIDRByDate(sinkKind, asOfDate string) (int64, error) {
+	rows, err := s.db.Query(`
+		SELECT a.net_pnl_bps, f.fill_price_idr, f.fill_lots
+		FROM attribution a
+		JOIN fill f ON f.order_id = a.entry_order_id AND f.recv_ns = a.entry_recv_ns
+		WHERE a.as_of_date = ? AND f.sink_kind = ?
+	`, asOfDate, sinkKind)
+	if err != nil {
+		return 0, fmt.Errorf("realized pnl idr by date: query: %w", err)
+	}
+	defer rows.Close()
+
+	var sumIDR float64
+	for rows.Next() {
+		var netPnlBps float64
+		var fillPriceIDR int64
+		var fillLots int
+		if err := rows.Scan(&netPnlBps, &fillPriceIDR, &fillLots); err != nil {
+			return 0, fmt.Errorf("realized pnl idr by date: scan: %w", err)
+		}
+		notionalIDR := float64(fillPriceIDR) * float64(fillLots) * sharesPerLot
+		sumIDR += netPnlBps / 10000 * notionalIDR
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("realized pnl idr by date: iterate: %w", err)
+	}
+	return int64(math.Round(sumIDR)), nil
+}

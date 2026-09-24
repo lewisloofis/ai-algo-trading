@@ -3,8 +3,16 @@
 // an OrderSink, and records every decision, intent, and fill into an
 // append-only SQLite post-trade store.
 //
-// Live order routing (CarinaSink) is deliberately absent here; only the replay
-// + paper-sink path exists.
+// An OrderSink is not required to fill synchronously from Submit. PaperSink
+// does — it fills before Submit returns and reports back through the
+// unexported fillProvider assertion — but a sink may instead report its
+// executions later, out of band, on its own schedule: see AsyncFill and
+// Run's handling of the unexported asyncSink and sinkKinder assertions in
+// engine.go. This is the seam plan 18 §5 B4's live order router
+// (strategy/live) plugs into: Run does not know or care whether a fill came
+// from PaperSink's book simulation or a broker's fill feed, only that both
+// are applied to the strategy on the same event-loop goroutine, through the
+// same bookkeeping, and recorded under the sink's own declared SinkKind.
 package engine
 
 import (

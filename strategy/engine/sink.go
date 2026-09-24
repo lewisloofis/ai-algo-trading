@@ -190,3 +190,21 @@ func (p *PaperSink) LastFill() FillRecord { return p.last }
 
 // Cancel is a no-op for the paper sink: fills are immediate, so nothing is open.
 func (p *PaperSink) Cancel(ctx context.Context, id OrderID) error { return nil }
+
+// AsyncFill is one execution reported by a sink whose fills do not arrive
+// synchronously from Submit — a live order router, whose fills come back from
+// the broker seconds or minutes later, rather than PaperSink, which fills
+// before Submit returns.
+//
+// It carries Symbol and Side because the engine's attribution pairing needs
+// both and, unlike the synchronous path, there is no OrderIntent in hand at
+// the moment the fill lands. RecvNs is the execution's own timestamp (Unix
+// nanoseconds) and is required: stamping a fill with the last market event's
+// time would file a 15:03 execution under whatever the feed last said, which
+// is the one thing attribution and B6's cost measurement cannot tolerate.
+type AsyncFill struct {
+	Symbol string
+	Side   string // "buy" or "sell"
+	RecvNs int64
+	Fill   FillRecord
+}
