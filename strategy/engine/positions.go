@@ -158,6 +158,51 @@ func (s *PostTradeStore) OrderIDs(sinkKind string) (map[string]struct{}, error) 
 	return ids, nil
 }
 
+// AttemptedWindows returns, for every order_intent row recorded under
+// strategyID and sinkKind, "<jakarta-date>|<symbol>" — one entry per
+// distinct pair. This is the store's answer to "which (trading day, symbol)
+// pairs has this strategy already attempted", keyed in exactly the format
+// strategies/rebalance.Strategy's own internal attempted map uses (window +
+// "|" + symbol, where window is a Jakarta calendar date for a DailyAt
+// schedule — see rebalance.Options.Attempted's doc comment): a caller seeds
+// that field directly from this result with no reformatting.
+//
+// It exists for plan 18 §5 B4's restart-durability gap: ui_refs and the
+// strategy's own "already attempted this window" bookkeeping are in-memory
+// and a crash discards them, so a same-day restart could otherwise resubmit
+// an order that already reached the broker. order_intent already records
+// symbol and recv_ns for every attempt — win or lose, filled or rejected —
+// so no new column or table is needed to answer this; it only needed a
+// reader. Note engine/store.go's own convention is ONE STORE FILE PER RUN
+// (StorePathConvention): after a restart, "today's attempts" live in the
+// PRIOR run's store file, not the new run's own (which starts empty) — a
+// caller recovering state after a crash must read this from the earlier
+// file(s), not the one it is about to write to.
+func (s *PostTradeStore) AttemptedWindows(strategyID, sinkKind string) (map[string]bool, error) {
+	rows, err := s.db.Query(
+		`SELECT DISTINCT symbol, recv_ns FROM order_intent WHERE strategy_id = ? AND sink_kind = ?`,
+		strategyID, sinkKind,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("attempted windows: query: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]bool)
+	for rows.Next() {
+		var symbol string
+		var recvNs int64
+		if err := rows.Scan(&symbol, &recvNs); err != nil {
+			return nil, fmt.Errorf("attempted windows: scan: %w", err)
+		}
+		out[JakartaDate(recvNs)+"|"+symbol] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("attempted windows: iterate: %w", err)
+	}
+	return out, nil
+}
+
 // AttributionsByStrategy returns every completed round-trip recorded for
 // strategyID, in entry order. The attribution table carries strategy_id but
 // not sink_kind (see the schema in store.go); a caller reconciling against

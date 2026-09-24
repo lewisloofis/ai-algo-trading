@@ -138,6 +138,88 @@ func TestSubmit_UIRefStableAcrossRetrySameClientID_DiffersAcrossIDs(t *testing.T
 	}
 }
 
+// TestSubmit_UIRefStableAcrossFreshSinkSameDay is the restart-durability
+// proof at the Sink level (plan 18 §5 B4 gap): a FRESH Sink — empty
+// s.uiRefs, exactly what a crash-and-restart produces — must mint the SAME
+// ui_ref for the same client order id on the same trading day as the Sink
+// that submitted it before the crash. Without this, a same-day restart's
+// resubmission carries a brand-new ui_ref and Carina's own idempotency
+// guard cannot catch it.
+func TestSubmit_UIRefStableAcrossFreshSinkSameDay(t *testing.T) {
+	var uiRefs []string
+	srv := routeServer(t, map[string]http.HandlerFunc{
+		pathBuy: func(w http.ResponseWriter, r *http.Request) {
+			body := readBody(t, r)
+			uiRefs = append(uiRefs, body["ui_ref"].(string))
+			jsonHandler(http.StatusOK, `{"data":{"order_id":"1"}}`)(w, r)
+		},
+	})
+	sameClock := func() time.Time { return time.Unix(1_700_000_000, 0) } // same instant -> same trading day
+
+	before, err := NewSink(Options{Client: newTestClient(t, srv), Clock: sameClock})
+	if err != nil {
+		t.Fatalf("NewSink (before): %v", err)
+	}
+	if _, err := before.Submit(context.Background(), testIntent("rebalance-TINS-2026-09-24", 1)); err != nil {
+		t.Fatalf("Submit (before crash): %v", err)
+	}
+
+	// "Restart": a brand-new Sink, empty maps, same underlying client/server.
+	after, err := NewSink(Options{Client: newTestClient(t, srv), Clock: sameClock})
+	if err != nil {
+		t.Fatalf("NewSink (after): %v", err)
+	}
+	if _, err := after.Submit(context.Background(), testIntent("rebalance-TINS-2026-09-24", 1)); err != nil {
+		t.Fatalf("Submit (after restart): %v", err)
+	}
+
+	if len(uiRefs) != 2 {
+		t.Fatalf("got %d ui_refs, want 2", len(uiRefs))
+	}
+	if uiRefs[0] != uiRefs[1] {
+		t.Errorf("ui_ref differs across a same-day restart: %q (before) vs %q (after) — a restart would double-submit", uiRefs[0], uiRefs[1])
+	}
+}
+
+// TestSubmit_UIRefDiffersAcrossDaysForSameClientID is the defense-in-depth
+// counterpart: a client order id that is NOT itself day-scoped (like
+// strategies/orb's counter-based ids) must still get a different ui_ref on
+// a different trading day, or a legitimate new order would collide with
+// yesterday's at Carina's idempotency guard.
+func TestSubmit_UIRefDiffersAcrossDaysForSameClientID(t *testing.T) {
+	var uiRefs []string
+	srv := routeServer(t, map[string]http.HandlerFunc{
+		pathBuy: func(w http.ResponseWriter, r *http.Request) {
+			body := readBody(t, r)
+			uiRefs = append(uiRefs, body["ui_ref"].(string))
+			jsonHandler(http.StatusOK, `{"data":{"order_id":"1"}}`)(w, r)
+		},
+	})
+
+	day1, err := NewSink(Options{Client: newTestClient(t, srv), Clock: func() time.Time { return time.Date(2026, 9, 24, 9, 0, 0, 0, time.UTC) }})
+	if err != nil {
+		t.Fatalf("NewSink (day1): %v", err)
+	}
+	if _, err := day1.Submit(context.Background(), testIntent("orb-BBCA-1", 1)); err != nil {
+		t.Fatalf("Submit (day1): %v", err)
+	}
+
+	day2, err := NewSink(Options{Client: newTestClient(t, srv), Clock: func() time.Time { return time.Date(2026, 9, 25, 9, 0, 0, 0, time.UTC) }})
+	if err != nil {
+		t.Fatalf("NewSink (day2): %v", err)
+	}
+	if _, err := day2.Submit(context.Background(), testIntent("orb-BBCA-1", 1)); err != nil {
+		t.Fatalf("Submit (day2): %v", err)
+	}
+
+	if len(uiRefs) != 2 {
+		t.Fatalf("got %d ui_refs, want 2", len(uiRefs))
+	}
+	if uiRefs[0] == uiRefs[1] {
+		t.Errorf("ui_ref collided across two different trading days for the same client order id: %q", uiRefs[0])
+	}
+}
+
 func TestSubmit_DuplicateOrderIsAdoptedNotFailed(t *testing.T) {
 	srv := routeServer(t, map[string]http.HandlerFunc{
 		pathBuy: jsonHandler(http.StatusConflict, `{"message":"ErrorDuplicateOrder"}`),

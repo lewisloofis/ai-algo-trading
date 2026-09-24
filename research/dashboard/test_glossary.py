@@ -69,7 +69,7 @@ def test_go_struct_docs_read_the_post_trade_schema():
 
 
 def test_go_struct_docs_cover_every_row_struct():
-    for struct in ("DecisionRow", "IntentRow", "FillRow", "AttributionRow", "RunRow"):
+    for struct in ("DecisionRow", "IntentRow", "FillRow", "AttributionRow", "RunRow", "RejectRow"):
         docs = go_struct_docs(STORE_GO, struct)
         assert docs, f"{struct} has no documented fields"
 

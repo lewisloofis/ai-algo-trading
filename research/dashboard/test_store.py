@@ -123,6 +123,68 @@ def test_decision_funnel_counts_each_drop_off(make_store):
     assert f.intents_unfilled == 1
 
 
+def test_schema_extraction_includes_order_reject():
+    assert "CREATE TABLE IF NOT EXISTS order_reject" in go_schema_sql()
+
+
+def test_reads_order_reject_rows(make_store):
+    path = make_store(
+        rejects=[
+            {"seq": 1, "symbol": "TINS", "side": "buy", "reason": "risk: cap exceeded", "sink_kind": "live"},
+        ],
+    )
+    data = store.read_store(path)
+    assert len(data.rejects) == 1
+    r = data.rejects[0]
+    assert r.symbol == "TINS"
+    assert r.reason == "risk: cap exceeded"
+    assert r.sink_kind == "live"
+    assert r.run_id == "r1"
+
+
+def test_a_store_without_order_reject_reads_fine(make_store):
+    """
+    Tolerate an old store predating this table (plan 18 §5 Task 3): no
+    crash, just an empty list — the same discipline
+    test_legacy_store_without_run_id_still_reads pins for run_id.
+    """
+    path = make_store(schema=LEGACY_SCHEMA, attributions=[])
+    data = store.read_store(path)
+    assert data.rejects == []
+
+
+def test_decision_funnel_counts_rejects(make_store):
+    path = make_store(
+        decisions=[{"seq": 1}],
+        intents=[{"seq": 2, "order_id": "o1"}, {"seq": 3, "order_id": "o2"}],
+        fills=[{"seq": 4, "order_id": "o1"}],
+        rejects=[{"seq": 5, "order_id": "o2", "reason": "risk: cap exceeded"}],
+    )
+    funnels = store.read_store(path).funnels
+    assert len(funnels) == 1
+    f = funnels[0]
+    assert f.rejects == 1
+
+
+def test_decision_funnel_rejects_defaults_to_zero_without_the_table(make_store):
+    """
+    A store built on the current schema minus order_reject only (not the
+    full LEGACY_SCHEMA, which also predates run_id and cannot take
+    decisions/intents with it — see test_a_store_without_order_reject_reads_fine
+    for the run_id-predating case). Derived from go_schema_sql() itself so
+    this stays accurate as the real schema evolves.
+    """
+    import re
+
+    schema_without_reject = re.sub(
+        r"CREATE TABLE IF NOT EXISTS order_reject.*?;\n", "", go_schema_sql(), flags=re.DOTALL
+    )
+    assert "order_reject" not in schema_without_reject
+    path = make_store(schema=schema_without_reject, decisions=[{"seq": 1}], intents=[{"seq": 2, "order_id": "o1"}])
+    funnels = store.read_store(path).funnels
+    assert funnels[0].rejects == 0
+
+
 def test_read_stores_unions_several_files(make_store):
     a = make_store("a.db", runs=[{"run_id": "r1"}], attributions=[{"seq": 1, "run_id": "r1"}])
     b = make_store("b.db", runs=[{"run_id": "r2"}], attributions=[{"seq": 1, "run_id": "r2"}])

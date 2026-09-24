@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"collector/calendar"
 	"strategy/engine"
 )
 
@@ -180,7 +181,13 @@ func (s *Sink) Submit(ctx context.Context, intent engine.OrderIntent) (engine.Or
 	s.mu.Lock()
 	uiRef, seen := s.uiRefs[intent.OrderID]
 	if !seen {
-		uiRef = NewUIRef()
+		// DeterministicUIRef, not NewUIRef: see its doc comment. Keying on
+		// the client order id and today's trading day means a same-day
+		// restart's resubmission (a fresh Sink, empty s.uiRefs) mints the
+		// IDENTICAL ui_ref this process would have, so Carina's own
+		// idempotency guard — not this map, which a crash just erased — is
+		// what actually stops the double-submit.
+		uiRef = DeterministicUIRef(intent.OrderID, s.tradingDay())
 		s.uiRefs[intent.OrderID] = uiRef
 	}
 	s.mu.Unlock()
@@ -228,6 +235,18 @@ func (s *Sink) Submit(ctx context.Context, intent engine.OrderIntent) (engine.Or
 	s.mu.Unlock()
 
 	return engine.OrderID(intent.OrderID), nil
+}
+
+// tradingDay renders s.clock() as a Jakarta ("2006-01-02") calendar date —
+// the same zone engine.LiveSource's holiday check and market.Gate's session
+// check use, and for the same reason: the box this runs on may be UTC,
+// which disagrees with WIB for the seven hours after Jakarta midnight. Used
+// only to derive a deterministic ui_ref (see DeterministicUIRef); it is not
+// a trading-calendar lookup and does not need one — a Saturday's "trading
+// day" string is a harmless, unambiguous input for a Submit that should not
+// be happening then anyway.
+func (s *Sink) tradingDay() string {
+	return s.clock().In(calendar.Jakarta).Format("2006-01-02")
 }
 
 // resolveDuplicate adopts the order Carina says already exists for this

@@ -218,6 +218,7 @@ _SOURCES: tuple[tuple[str, str, str, str, str], ...] = (
     ("cell", "strategy_fit/harness.py — CellResult", "py", HARNESS_PY, "CellResult"),
     ("decision", "strategy/engine/store.go — DecisionRow", "go", STORE_GO, "DecisionRow"),
     ("order_intent", "strategy/engine/store.go — IntentRow", "go", STORE_GO, "IntentRow"),
+    ("order_reject", "strategy/engine/store.go — RejectRow", "go", STORE_GO, "RejectRow"),
     ("fill", "strategy/engine/store.go — FillRow", "go", STORE_GO, "FillRow"),
     ("attribution", "strategy/engine/store.go — AttributionRow", "go", STORE_GO, "AttributionRow"),
     ("run", "strategy/engine/store.go — RunRow", "go", STORE_GO, "RunRow"),

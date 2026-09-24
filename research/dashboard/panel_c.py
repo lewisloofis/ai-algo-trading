@@ -31,7 +31,7 @@ from typing import Sequence
 
 from lib.stats import required_effective_n
 
-from dashboard.store import Attribution, DecisionFunnel, StoreData
+from dashboard.store import Attribution, DecisionFunnel, RejectRow, StoreData
 from dashboard.strategy_map import (
     EXCLUDED_STRATEGY_IDS,
     StrategyJoin,
@@ -181,6 +181,36 @@ def summarise(rows: Sequence[Attribution]) -> list[StrategyPnL]:
 
 
 @dataclass(frozen=True)
+class RejectSummary:
+    """One (strategy_id, sink_kind, reason) group from the order_reject table."""
+
+    strategy_id: str
+    sink_kind: str
+    reason: str
+    count: int
+
+
+def summarise_rejects(rows: Sequence[RejectRow]) -> list[RejectSummary]:
+    """
+    Group order_reject rows by (strategy_id, sink_kind, reason) and count
+    them — a COUNT over stored rows (test_no_new_metrics.py's own
+    exception), not a metric. Calibration traffic is excluded the same way
+    every other Panel C total excludes it (ADR-0016 §6): a rejection under
+    the reserved strategy_id is calibration noise, not a strategy's own
+    risk-gate history.
+    """
+    kept = [r for r in rows if not is_excluded(r.strategy_id)]
+    counts: dict[tuple[str, str, str], int] = {}
+    for r in kept:
+        key = (r.strategy_id, r.sink_kind, r.reason)
+        counts[key] = counts.get(key, 0) + 1
+    return [
+        RejectSummary(strategy_id=sid, sink_kind=sink_kind, reason=reason, count=n)
+        for (sid, sink_kind, reason), n in sorted(counts.items())
+    ]
+
+
+@dataclass(frozen=True)
 class PanelC:
     rows: list[StrategyPnL]
     funnels: list[DecisionFunnel]
@@ -193,6 +223,14 @@ class PanelC:
     excluded_ids: tuple[str, ...]
     has_live: bool
     """True if any row came from a live sink. False means every number is replay."""
+    rejects: list[RejectSummary]
+    """
+    Rejections grouped by (strategy_id, sink_kind, reason) — see
+    summarise_rejects. Empty for a store that predates the order_reject
+    table (dashboard/store.py tolerates its absence) and for a store that
+    genuinely recorded none; the two are not distinguished here, matching
+    DecisionFunnel.rejects' own doc comment.
+    """
 
 
 def build_panel_c(data: StoreData) -> PanelC:
@@ -207,4 +245,5 @@ def build_panel_c(data: StoreData) -> PanelC:
         excluded_round_trips=len(excluded),
         excluded_ids=tuple(sorted(EXCLUDED_STRATEGY_IDS)),
         has_live=any(r.sink_kind == "live" for r in rows),
+        rejects=summarise_rejects(data.rejects),
     )

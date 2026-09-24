@@ -84,6 +84,19 @@ CREATE TABLE IF NOT EXISTS attribution (
     run_id TEXT NOT NULL DEFAULT '',
     as_of_date TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS order_reject (
+    seq INTEGER PRIMARY KEY,
+    recv_ns INTEGER NOT NULL,
+    run_id TEXT NOT NULL DEFAULT '',
+    strategy_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    price_idr INTEGER NOT NULL,
+    lots INTEGER NOT NULL,
+    order_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    sink_kind TEXT NOT NULL DEFAULT 'paper'
+);
 CREATE TABLE IF NOT EXISTS run (
     run_id TEXT PRIMARY KEY,
     started_ns INTEGER NOT NULL,
@@ -172,6 +185,50 @@ type IntentRow struct {
 	// fill, a live value once live routing exists. Replay PnL and live PnL
 	// must never be summed into one number, and this is the column that
 	// prevents it.
+	SinkKind string
+	// RunID identifies the run that wrote this row.
+	RunID string
+}
+
+// RejectRow is one intent the sink refused — a risk gate (cap, kill switch,
+// market gate), a broker 4xx via a live sink, or the paper sink's ErrNoBook.
+// It is engine.SubmitOrder's mirror of IntentRow: every SubmitOrder call
+// writes exactly one of IntentRow (always, before the sink is even asked)
+// and, only when the sink's Submit call then errors, one RejectRow — so a
+// reader can join the two on order_id to see "attempted but never placed"
+// as a first-class fact rather than an absence (see IntentRow.Seq vs.
+// FillRow.Seq: before this table existed, that gap was invisible — the
+// store recorded that an order was attempted and, separately, whether it
+// filled, but never why it did not).
+type RejectRow struct {
+	// Seq is the run-scoped monotonic sequence number (see DecisionRow.Seq).
+	Seq int64
+	// RecvNs is the receive timestamp of the event that produced the
+	// rejected intent.
+	RecvNs int64
+	// StrategyID is the strategy that submitted the rejected intent.
+	StrategyID string
+	// Symbol is the IDX ticker the rejected intent named.
+	Symbol string
+	// Side is "buy" or "sell".
+	Side string
+	// PriceIDR is the limit price the rejected intent carried, in whole IDR.
+	PriceIDR int64
+	// Lots is the rejected intent's size in lots (1 lot = 100 shares).
+	Lots int
+	// OrderID is the intent's own client-assigned identifier — the same
+	// value IntentRow.OrderID carries for the attempt this row explains.
+	OrderID string
+	// Reason is the sink's error, verbatim (err.Error()): which gate fired
+	// (risk.ErrCapExceeded, risk.ErrMarketUnknown, risk.ErrKillSwitchTripped,
+	// ...), a broker's classified rejection, or engine.ErrNoBook. Free text,
+	// not an enum — the sinks that produce it are not this package's own,
+	// and a reader that needs to group by cause parses the sentinel prefix
+	// rather than this package inventing a second taxonomy of the same
+	// errors.
+	Reason string
+	// SinkKind records which sink refused the intent (see
+	// IntentRow.SinkKind).
 	SinkKind string
 	// RunID identifies the run that wrote this row.
 	RunID string
@@ -463,6 +520,20 @@ func (s *PostTradeStore) InsertIntent(r IntentRow) error {
 	)
 	if err != nil {
 		return fmt.Errorf("insert intent: %w", err)
+	}
+	return nil
+}
+
+// InsertOrderReject appends one order_reject row. Like the other four event
+// tables, this is append-only: seq is the primary key and a duplicate is
+// rejected rather than overwritten.
+func (s *PostTradeStore) InsertOrderReject(r RejectRow) error {
+	_, err := s.db.Exec(
+		`INSERT INTO order_reject (seq, recv_ns, run_id, strategy_id, symbol, side, price_idr, lots, order_id, reason, sink_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.Seq, r.RecvNs, s.runID, r.StrategyID, r.Symbol, r.Side, r.PriceIDR, r.Lots, r.OrderID, r.Reason, r.SinkKind,
+	)
+	if err != nil {
+		return fmt.Errorf("insert order reject: %w", err)
 	}
 	return nil
 }

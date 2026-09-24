@@ -82,6 +82,29 @@ type Options struct {
 	// restart), not to express "no opening position" (which needs no
 	// entry at all).
 	Initial map[string]int
+
+	// Attempted seeds which (window, symbol) pairs must be treated as
+	// already attempted, keyed exactly as this package's own internal
+	// bookkeeping keys them: window + "|" + symbol (window is whatever
+	// Schedule.Window returns — a Jakarta calendar date for DailyAt). A nil
+	// map means nothing is pre-seeded, matching every caller before this
+	// field existed.
+	//
+	// This exists for plan 18 §5 B4's restart-durability gap: OnEvent
+	// already guarantees at most one SubmitOrder attempt per (window,
+	// symbol) within a process's lifetime, whatever the outcome
+	// (TestIdempotentWithinWindow) — but that bookkeeping is the plain
+	// in-memory `attempted` map below, which a crash discards. A caller
+	// that restarts this strategy mid-day can make that same guarantee
+	// durable by seeding Attempted from
+	// engine.PostTradeStore.AttemptedWindows(strategyID, sinkKind), which
+	// returns keys in exactly this format from the prior run's own store
+	// file (see that function's doc comment for why "the prior run's",
+	// not "this run's own"). Without it, a restart would re-attempt every
+	// symbol in the still-open window, and a strategy that already placed
+	// (or was already rejected for) an order today would place a second
+	// one under a fresh order id.
+	Attempted map[string]bool
 }
 
 // orderMeta is what OnFill needs to resolve a fill back to a symbol and a
@@ -117,7 +140,6 @@ type Strategy struct {
 	attempted map[string]bool    // dedup key: window + "|" + symbol
 	orders    map[string]orderMeta
 
-	nextID  int
 	rejects int
 }
 
@@ -144,13 +166,20 @@ func New(opts Options) (*Strategy, error) {
 		confirmed[symbol] = lots
 	}
 
+	attempted := make(map[string]bool, len(opts.Attempted))
+	for key, v := range opts.Attempted {
+		if v {
+			attempted[key] = true
+		}
+	}
+
 	return &Strategy{
 		portfolio: opts.Portfolio,
 		schedule:  opts.Schedule,
 		lastPrice: make(map[string]float64),
 		confirmed: confirmed,
 		inFlight:  make(map[string]int),
-		attempted: make(map[string]bool),
+		attempted: attempted,
 		orders:    make(map[string]orderMeta),
 	}, nil
 }
@@ -280,7 +309,7 @@ func (s *Strategy) rebalanceOne(ctx context.Context, eng engine.Engine, window, 
 		lots = -delta
 	}
 
-	orderID := s.newOrderID(symbol)
+	orderID := s.newOrderID(symbol, window)
 	intent := engine.OrderIntent{
 		Symbol:    symbol,
 		Side:      side,
@@ -331,12 +360,25 @@ func (s *Strategy) OnFill(ctx context.Context, f engine.FillRecord) {
 	s.confirmed[meta.symbol] += meta.lots
 }
 
-// newOrderID mints a unique, human-readable order id. Matches
-// strategies/orb's own newOrderID in spirit: monotonic per-strategy
-// counter, symbol embedded for readability in store dumps and logs.
-func (s *Strategy) newOrderID(symbol string) string {
-	s.nextID++
-	return fmt.Sprintf("rebalance-%s-%d", symbol, s.nextID)
+// newOrderID mints the client order id for one (symbol, window) rebalance
+// attempt, human-readable for store dumps and logs.
+//
+// Deliberately a pure function of (symbol, window) — NOT a process-local
+// counter, which is what this used to be (a monotonic nextID, matching
+// strategies/orb's own newOrderID). A counter restarts at 0 on every
+// process start, so a same-day crash-and-restart minted the SAME id
+// ("rebalance-TINS-1") for what OnEvent's own attempted-key logic already
+// treats as at most one attempt — except the counter's restart silently
+// defeated the very durability that guarantee depends on. Keying on window
+// instead makes the id itself restart-stable: the same logical action gets
+// the same id whether attempted twice in one process or once each on
+// either side of a crash, which is what lets strategy/live derive a
+// restart-stable ui_ref from it too (live.DeterministicUIRef) and Carina's
+// own idempotency guard catch a resubmission that slips past
+// Options.Attempted for any reason. See plan 18 §5 B4's restart-durability
+// gap.
+func (s *Strategy) newOrderID(symbol, window string) string {
+	return fmt.Sprintf("rebalance-%s-%s", symbol, window)
 }
 
 // sharesPerLot mirrors strategy/engine/sink.go's and

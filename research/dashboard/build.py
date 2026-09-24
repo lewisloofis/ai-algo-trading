@@ -485,11 +485,19 @@ _C_FUNNEL_COLS = (
     Column("order_intent.order_id", "Intents", numeric=True),
     Column("fill.fill_lots", "Fills", numeric=True),
     Column("order_intent.order_id", "Submitted−filled", numeric=True),
+    Column("order_reject.order_id", "Rejected", numeric=True),
+)
+
+_C_REJECT_COLS = (
+    Column("order_reject.strategy_id", "Strategy"),
+    Column("order_reject.sink_kind", "Sink"),
+    Column("order_reject.reason", "Reason"),
+    Column("order_reject.order_id", "Count", numeric=True),
 )
 
 
 def render_panel_c(panel: panel_c.PanelC, runs: Sequence[store.RunHeader]) -> tuple[str, set[str]]:
-    used = {c.key for c in _C_COLS + _C_RISK_COLS + _C_FUNNEL_COLS if c.glossary}
+    used = {c.key for c in _C_COLS + _C_RISK_COLS + _C_FUNNEL_COLS + _C_REJECT_COLS if c.glossary}
     out = ['<h2 id="panel-c">C · Per-strategy profitability — what did each algo earn?</h2>']
 
     if not panel.rows and not panel.funnels and not runs:
@@ -610,11 +618,35 @@ def render_panel_c(panel: panel_c.PanelC, runs: Sequence[store.RunHeader]) -> tu
                     num(f.intents),
                     num(f.fills),
                     num(f.intents_unfilled),
+                    num(f.rejects),
                 ]
                 for f in panel.funnels
             ],
         )
     )
+
+    if panel.rejects:
+        out.append("<h3>Rejections</h3>")
+        out.append(
+            '<p class="sub">Every intent a risk gate, the market gate, or the broker refused — '
+            "grouped by reason, so a rejection storm is visible as a count, not just a smaller "
+            "fill total.</p>"
+        )
+        out.append(
+            table(
+                _C_REJECT_COLS,
+                [
+                    [
+                        f"<code>{esc(r.strategy_id)}</code>",
+                        pill("ok" if r.sink_kind == "live" else "warn", r.sink_kind),
+                        esc(r.reason),
+                        num(r.count),
+                    ]
+                    for r in panel.rejects
+                ],
+            )
+        )
+
     out.append(_runs_table(runs))
     return "\n".join(out), used
 

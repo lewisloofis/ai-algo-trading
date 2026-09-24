@@ -81,6 +81,24 @@ class Attribution:
 
 
 @dataclass(frozen=True)
+class RejectRow:
+    """One row of the `order_reject` table — an intent the sink refused."""
+
+    run_id: str
+    seq: int
+    recv_ns: int
+    strategy_id: str
+    symbol: str
+    side: str
+    price_idr: int
+    lots: int
+    order_id: str
+    reason: str
+    sink_kind: str
+    store_path: str
+
+
+@dataclass(frozen=True)
 class DecisionFunnel:
     """
     Counts along decision -> order_intent -> fill for one run.
@@ -96,6 +114,16 @@ class DecisionFunnel:
     signals: int
     intents: int
     fills: int
+    rejects: int = 0
+    """
+    Count of order_reject rows for this (run_id, strategy_id) — an intent
+    the sink refused (a risk gate, a broker rejection, or the paper sink's
+    ErrNoBook; see engine.RejectRow.reason for which). Defaults to 0 for a
+    store written before the order_reject table existed, not just for a
+    run that genuinely had none — read_store cannot tell those two apart
+    from a missing table alone, and 0 is the correct rendering either way
+    (nothing to show).
+    """
 
     @property
     def signals_not_submitted(self) -> int:
@@ -106,8 +134,10 @@ class DecisionFunnel:
     def intents_unfilled(self) -> int:
         """
         Submitted intents with no fill: rejected by a risk gate, refused for
-        want of a book (ErrNoBook), or rejected by the broker. The store does
-        not yet record WHICH — that is the next thing this column needs.
+        want of a book (ErrNoBook), or rejected by the broker — or simply
+        not yet filled. `rejects` (above) now names WHICH, when the
+        order_reject table is present; this column stays as the raw
+        submitted-minus-filled gap for stores that predate it.
         """
         return max(self.intents - self.fills, 0)
 
@@ -119,6 +149,7 @@ class StoreData:
     runs: list[RunHeader] = field(default_factory=list)
     attributions: list[Attribution] = field(default_factory=list)
     funnels: list[DecisionFunnel] = field(default_factory=list)
+    rejects: list[RejectRow] = field(default_factory=list)
     paths: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -192,6 +223,25 @@ def read_store(path: str) -> StoreData:
                         hold_calendar_days=r["hold_calendar_days"],
                         as_of_date=(_get(r, "as_of_date", "") if has_as_of else ""),
                         sink_kind=sink_by_order.get(r["entry_order_id"], "unknown"),
+                        store_path=path,
+                    )
+                )
+
+        if _has_table(conn, "order_reject"):
+            for r in conn.execute("SELECT * FROM order_reject ORDER BY seq"):
+                data.rejects.append(
+                    RejectRow(
+                        run_id=_get(r, "run_id", LEGACY_RUN_ID) or LEGACY_RUN_ID,
+                        seq=r["seq"],
+                        recv_ns=r["recv_ns"],
+                        strategy_id=r["strategy_id"],
+                        symbol=r["symbol"],
+                        side=r["side"],
+                        price_idr=r["price_idr"],
+                        lots=r["lots"],
+                        order_id=r["order_id"],
+                        reason=r["reason"],
+                        sink_kind=r["sink_kind"],
                         store_path=path,
                     )
                 )
@@ -282,7 +332,18 @@ def _read_funnels(conn: sqlite3.Connection) -> list[DecisionFunnel]:
                 )
             }
 
-    keys = set(decisions) | set(intents) | set(fills)
+    rejects: dict[tuple[str, str], int] = {}
+    if _has_table(conn, "order_reject"):
+        reject_run = "run_id" if "run_id" in _columns(conn, "order_reject") else "''"
+        rejects = {
+            (r["rid"], r["strategy_id"]): r["n"]
+            for r in conn.execute(
+                f"SELECT {reject_run} AS rid, strategy_id, COUNT(*) AS n "
+                "FROM order_reject GROUP BY rid, strategy_id"
+            )
+        }
+
+    keys = set(decisions) | set(intents) | set(fills) | set(rejects)
     out = []
     for run_id, strategy_id in sorted(keys):
         n, signals = decisions.get((run_id, strategy_id), (0, 0))
@@ -294,6 +355,7 @@ def _read_funnels(conn: sqlite3.Connection) -> list[DecisionFunnel]:
                 signals=signals or 0,
                 intents=intents.get((run_id, strategy_id), 0),
                 fills=fills.get((run_id, strategy_id), 0),
+                rejects=rejects.get((run_id, strategy_id), 0),
             )
         )
     return out
@@ -317,6 +379,7 @@ def read_stores(patterns: Sequence[str]) -> StoreData:
         merged.runs.extend(one.runs)
         merged.attributions.extend(one.attributions)
         merged.funnels.extend(one.funnels)
+        merged.rejects.extend(one.rejects)
         merged.paths.extend(one.paths)
     return merged
 

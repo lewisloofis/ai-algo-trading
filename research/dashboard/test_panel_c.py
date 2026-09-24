@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from dashboard import panel_c, store
-from dashboard.store import Attribution, StoreData
+from dashboard.store import Attribution, RejectRow, StoreData
 from dashboard.strategy_map import UnmappedStrategyError
 
 
@@ -216,3 +216,55 @@ class TestEmptyStore:
         panel = panel_c.build_panel_c(StoreData())
         assert panel.rows == []
         assert panel.excluded_round_trips == 0
+        assert panel.rejects == []
+
+
+def reject(**overrides) -> RejectRow:
+    base = dict(
+        run_id="r1",
+        seq=1,
+        recv_ns=1_000,
+        strategy_id="orb",
+        symbol="AAA",
+        side="buy",
+        price_idr=1000,
+        lots=1,
+        order_id="o1",
+        reason="risk: cap exceeded",
+        sink_kind="paper",
+        store_path="/tmp/run.db",
+    )
+    base.update(overrides)
+    return RejectRow(**base)
+
+
+class TestRejections:
+    """Task 3: the SQLite audit trail for rejections, surfaced on Panel C."""
+
+    def test_no_rejects_is_an_empty_list_not_an_error(self):
+        panel = panel_c.build_panel_c(StoreData(rejects=[]))
+        assert panel.rejects == []
+
+    def test_rejects_are_grouped_by_strategy_sink_and_reason(self):
+        rows = [
+            reject(seq=1, reason="risk: cap exceeded"),
+            reject(seq=2, reason="risk: cap exceeded"),
+            reject(seq=3, reason="risk: market state unknown"),
+            reject(seq=4, strategy_id="rebalance", sink_kind="live", reason="risk: cap exceeded"),
+        ]
+        summary = panel_c.summarise_rejects(rows)
+        by_key = {(s.strategy_id, s.sink_kind, s.reason): s.count for s in summary}
+        assert by_key[("orb", "paper", "risk: cap exceeded")] == 2
+        assert by_key[("orb", "paper", "risk: market state unknown")] == 1
+        assert by_key[("rebalance", "live", "risk: cap exceeded")] == 1
+
+    def test_calibration_rejects_are_excluded_like_everything_else(self):
+        rows = [reject(strategy_id="calibration"), reject(seq=2, strategy_id="orb")]
+        summary = panel_c.summarise_rejects(rows)
+        assert [s.strategy_id for s in summary] == ["orb"]
+
+    def test_build_panel_c_includes_rejects(self):
+        data = StoreData(rejects=[reject()])
+        panel = panel_c.build_panel_c(data)
+        assert len(panel.rejects) == 1
+        assert panel.rejects[0].count == 1

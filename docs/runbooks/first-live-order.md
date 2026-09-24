@@ -1,12 +1,11 @@
 # Runbook: First Live Order — Account Attribution and the Sleeve's Trading Limit
 
-> **Status: cannot be fully executed yet.** Order placement itself is
-> **NOT YET WIRED** into any `strategy/cmd` binary as of 2026-09-24 — see §1.
-> This runbook documents everything that CAN be run today (preconditions, gate
-> probe, pre/post position snapshots, the arm sequence) in full, and documents
-> the order-placement steps in exact detail so they are ready to execute the
-> moment a Layer-2 mechanism (§1) exists. Do not improvise flags or commands
-> beyond what is listed here; where nothing exists yet, this file says so.
+> **Status, 2026-09-24: WIRED.** `strategy-run --sink live` now exists
+> (`strategy/cmd/strategy-run/main.go`) — see §1 for the exact command line.
+> Order placement can be executed following this runbook end to end. The
+> "Layer 1 / Layer 2" split below is kept as written because it still
+> describes what is read-only vs. what places a real order; only the
+> "NOT YET WIRED" framing is stale and is corrected in §1.
 
 ## 0. What this settles, and why it needs a real order
 
@@ -37,29 +36,69 @@ accounts. That is this runbook.
 | `market-probe` (pre-trade gate check) | **Wired, safe to run today.** GET-only. `strategy/cmd/market-probe` |
 | Position snapshot, one account at a time | **Wired.** `strategy/cmd/account-recon` (`PortfolioList` + `OpenOrders`, reconciled against a post-trade store) |
 | Cash / withdrawable balance snapshot | **NOT YET WIRED as a CLI.** No binary in `strategy/cmd/` calls `account.Client.Withdrawable` or `PortfolioSummary`. See §3 for how to obtain it anyway (the package itself is read-only and safe). |
-| Double-arm gate (`ALGO_LIVE` / `ALGO_CONFIRM`) | **Implemented**, in `strategy/live/armed.go` (`ArmingFromEnv`), but nothing in `strategy/cmd` reads it yet — see next row. |
-| Placing a real order | **NOT YET WIRED.** `strategy/live` (`Client`, `Sink`, the poller, `Baseline`/`ReconcileTerminal`) is code-complete but is not imported by any file under `strategy/cmd/` (`grep -rl "strategy/live" strategy/cmd` returns nothing). `strategy/cmd/strategy-run`'s `--sink` flag accepts only `"paper"` (`strategy-run/main.go:newSink` errors on anything else) — `--sink live` does not exist. This is plan 18 §5 B4, and every box under B4 is unchecked. |
+| Double-arm gate (`ALGO_LIVE` / `ALGO_CONFIRM`) | **Implemented and wired.** `strategy/live/armed.go` (`ArmingFromEnv`) is read by `strategy-run`'s `--sink live` path (`newInnerSink` → `live.NewClient`); an unarmed process refuses to construct the sink at all. |
+| Placing a real order | **WIRED, 2026-09-24.** `strategy-run --sink live` constructs `strategy/live.Sink` via `live.NewClient` and always wraps it in `strategy/risk.RiskSink` (limits, kill switch, the real endpoint-backed market gate) before it reaches `engine.Run` — see the exact command line below. `Baseline()` runs at startup and `ReconcileTerminal()` at shutdown, with any divergence logged loudly (not silently dropped). |
 
-Because order placement is not wired, this runbook is written in two layers:
+Because order placement now goes through one real binary, this runbook is
+still written in two layers, but Layer 2 is now executable:
 
-- **Layer 1 — executable today.** §2 (preconditions), §3 (pre-snapshot), §4
-  (arm). All read-only or local configuration; zero order risk.
-- **Layer 2 — blocked on wiring.** §5–§8 (place, confirm, cancel, diff) and §9
-  (the trading-limit probe). Documented in full so whoever builds the missing
-  piece can execute immediately, without re-deriving the request shape.
-  Two ways Layer 2 could be unblocked — **neither is built by this task**:
-  1. `strategy-run --sink live`, wired to `strategy/live.NewSink` behind
-     `engine.Run` — the real B4 deliverable, which also gets `strategy/risk`'s
-     gates (B2) in front of every order for free.
-  2. A small standalone diagnostic command that constructs `strategy/live.Client`
-     directly and calls `Place` / `Detail` / `Cancel` once, with no
-     `engine.Run` or `RiskSink` in the loop. This is smaller and faster to
-     build, but **bypasses every B2 gate** — appropriate only as a one-shot,
-     hand-supervised diagnostic, never left running, and never a substitute
-     for actually building B4.
+- **Layer 1 — read-only or local configuration.** §2 (preconditions), §3
+  (pre-snapshot), §4 (arm). Zero order risk.
+- **Layer 2 — places real orders.** §5–§8 (place, confirm, cancel, diff) and
+  §9 (the trading-limit probe). Executed via `strategy-run --sink live`, one
+  invocation per attempt (this binary places whatever its strategy decides to
+  place for one rebalance window — see below for how to point it at a single,
+  minimal order).
 
-  Whichever is built, re-read this runbook against it before using it — do not
-  assume flag names not written here.
+  **The exact command line** (fill in the bracketed values; do not improvise
+  flags beyond what is listed here — `strategy-run -h` is the source of
+  truth if this drifts):
+
+  ```
+  ALGO_LIVE=true ALGO_CONFIRM=<verbatim live.LiveConfirmPhrase, copied from strategy/live/armed.go — never retyped from memory> \
+  SB_ACCESS_TOKEN=<fresh Exodus token> \
+  SB_TRADING_ACCESS_TOKEN=<fresh Carina trading token> \
+  strategy-run \
+    --source live --symbols <SYMBOL> \
+    --sink live --account 008488L \
+    --equity-idr <sleeve withdrawable balance from §3, in whole IDR> \
+    --strategy rebalance --target-portfolio <path to a target_portfolio.json sized for the smallest possible order — see §5> \
+    --store runs/<YYYY-MM-DD>-<n>.db \
+    --prior-stores 'runs/<YYYY-MM-DD>-*.db' \
+    --kill-switch-file <path to a file you can create by hand to trip the kill switch mid-run>
+  ```
+
+  Notes on flags that are easy to get wrong:
+
+  - `--prior-stores` is **required** with `--sink live`. It must glob every
+    earlier store file from the same trading day; on restart after a crash,
+    the intents recorded there are not resubmitted. Matching nothing is fine
+    on the day's first run. Use a fresh `--store` file per run (one store
+    file per run is the store's own convention).
+
+  - `--source live` is required for `--sink live` — `strategy-run` refuses
+    `--sink live` with `--source replay` outright (never place a real order
+    against replayed data).
+  - `--account` has no default. An empty value is refused at startup rather
+    than silently falling back to whichever account the trading token's own
+    login addresses — see plan 18 §3.4.
+  - `--equity-idr` also has no default and is **not** fetched automatically:
+    pass the exact `withdrawable` figure from §3's pre-snapshot. This is
+    deliberate — `strategy/risk`'s own doc comment requires the caller to
+    source sleeve equity explicitly, never from an endpoint this binary
+    trusts on its own.
+  - Every `--source live` run — `--sink paper` or `--sink live` — is wrapped
+    in `risk.RiskSink` with the real market gate. There is no way to run
+    `--source live` ungated; use `--sink paper --source live` first as a
+    shadow run if you want to see the gates fire without placing anything.
+  - `--strategy rebalance --target-portfolio <path>` is what actually decides
+    what gets bought/sold and at what size — see §5 for how to hand-write a
+    minimal one-symbol, one-lot target portfolio for the diagnostic steps
+    below rather than pointing this at a real strategy's output.
+  - `--kill-switch-file` is optional but strongly recommended for a first
+    live order: creating the file (`touch <path>`) mid-run trips the kill
+    switch before the next `Submit` call, on top of the manual
+    `live.Client.Cancel` §6 already requires you to know.
 
 ## 2. Preconditions
 
@@ -89,12 +128,13 @@ Because order placement is not wired, this runbook is written in two layers:
       armed there is no simulate-only mode. Every `Place` call from this point
       is a real order with real money.
 - [ ] **A stop mechanism is understood before starting**, even though it is
-      manual here: whichever Layer-2 mechanism is used (§1), know in advance
-      how to cancel an order by hand (`live.Client.Cancel`) within seconds of
-      submission. If the diagnostic runs through the real `engine.Run` +
-      `RiskSink` path (Layer 2, option 1), the external kill-switch file
-      (`strategy/risk/killswitch.go`) is also available, but it stops *new*
-      submissions, not an order already resting — cancellation is still manual.
+      manual here: know in advance how to cancel an order by hand
+      (`live.Client.Cancel`) within seconds of submission.
+      `strategy-run --sink live` runs through the real `engine.Run` +
+      `RiskSink` path, so the external kill-switch file
+      (`strategy/risk/killswitch.go`, `--kill-switch-file`) is also available
+      — but it stops *new* submissions, not an order already resting;
+      cancellation of a resting order is still manual.
 
 ## 3. Pre-snapshot both accounts
 
@@ -153,9 +193,10 @@ exact-number comparison, not an eyeballed summary.
    even though it is not a credential in the sense of granting access by
    itself.
 3. Confirm arming succeeded before relying on it: `live.ArmingFromEnv().Armed()`
-   must report `true`. Whatever Layer-2 mechanism you are using will otherwise
-   refuse to construct (`live.NewClient` returns `ErrNotArmed` — checked
-   *first*, before `accNo` or tokens are even inspected).
+   must report `true`. `strategy-run --sink live` will otherwise refuse to
+   construct the live sink at all (`live.NewClient` returns `ErrNotArmed` —
+   checked *first*, before `accNo` or tokens are even inspected), and exits
+   with that error before touching the network.
 4. From here on: no dry run. Every step below places or attempts to place a
    real order.
 
@@ -174,11 +215,14 @@ an order that cannot fill.
 | Order type | `PLATFORM_ORDER_TYPE_LIMIT_DAY` | the only type `strategy/live` ever sends (`strategy/live/orders.go`) — never FAK/market |
 | GTC | `false` | day order |
 
-Request shape (`strategy/live.PlaceRequest`, `strategy/live/orders.go`):
+Request shape (`strategy/live.PlaceRequest`, `strategy/live/orders.go`) —
+this is what `strategy-run --sink live` constructs internally
+(`live.Sink.Submit`), shown here so the operator knows what to expect on the
+wire, not something to build by hand:
 
 ```go
 live.PlaceRequest{
-    UIRef:     <minted per strategy/live/uiref.go:NewUIRef>,
+    UIRef:     <minted per strategy/live/uiref.go:DeterministicUIRef>,
     Symbol:    "BBCA",
     Side:      "buy",
     PriceIDR:  <far-from-market, tick-valid>,
@@ -187,11 +231,21 @@ live.PlaceRequest{
 }
 ```
 
-Submit through whichever Layer-2 mechanism exists (§1). Record, in WIB:
-submission time, and the broker order id `Place` returns. That id is
-Carina's own numeric id, **not** the client id (`UIRef`/`OrderID`) the rest of
-this codebase keys on — see `strategy/live/doc.go`'s section on why the two
-must never be swapped.
+**Getting `strategy-run` to submit exactly this one order.** The `rebalance`
+strategy sizes an order from `target_notional / (tick-snapped price *
+100 shares)`, not from a literal lot count, so hand-write a minimal
+one-symbol `target_portfolio.json` (plan 18 §3.1 shape) whose
+`base_notional_idr` is approximately one lot's notional at the symbol's
+current price (e.g. `price * 100 * 1.0` for `weight: 1.0`) — this sizes to
+1 lot exactly via the same floor-division `rebalance.go` always uses, so
+there is no separate "size override" flag. Point `--target-portfolio` at it
+and run the command line in §1, with `--symbols <SYMBOL>` matching the
+portfolio's one target and a `--store` path fresh for this attempt.
+
+Record, in WIB: submission time, and the broker order id `Place` returns.
+That id is Carina's own numeric id, **not** the client id (`UIRef`/
+`OrderID`) the rest of this codebase keys on — see `strategy/live/doc.go`'s
+section on why the two must never be swapped.
 
 ## 6. Confirm resting, then cancel
 
@@ -340,12 +394,13 @@ independently confirm," which this runbook's execution is that confirmation.
   `[ ] B1 reconciliation matches the live sleeve account (008488L, §3.4) by
   hand for 3 consecutive sessions carrying real fills` requires — necessary,
   not sufficient, for that box.
-- Does **not** by itself tick any B4 box in §5, and does not tick
-  `[ ] B3/B4 replay-vs-live parity` — B4 (idempotency keys, order state
-  machine, retained double-arm inside the real pipeline) remains unbuilt as a
-  wired sink regardless of this runbook's outcome; a Layer-2-option-2
-  standalone diagnostic (§1) explicitly does not constitute B4 being built,
-  since it bypasses `strategy/risk`'s gates entirely.
+- Does **not** by itself tick `[ ] B3/B4 replay-vs-live parity` in plan 18
+  §5 — that is a parity claim about behaviour across many runs, not
+  something one diagnostic order settles. `strategy-run --sink live` wiring
+  itself (Carina order routing behind `engine.OrderSink`, always wrapped in
+  `RiskSink`, restart-durable client ids/ui_refs) is done, as is
+  `Baseline`/`ReconcileTerminal` being called; B5 (execution algo — slicing,
+  participation caps) is separate and still unbuilt.
 - Directly resolves plan §3.4's two open items and `strategy/live/doc.go`'s
   open question. Neither is its own checkbox in §10 today, but both are named
   preconditions before B4 can be trusted with anything beyond the smallest

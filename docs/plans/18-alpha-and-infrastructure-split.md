@@ -802,17 +802,25 @@ safe without it.
 > into any `strategy/cmd` binary**, so no real order can be placed yet; the
 > first-order procedure is `docs/runbooks/first-live-order.md`.
 
-- [ ] Carina order routing behind `engine.OrderSink`, replacing the single-symbol
-      fire-and-forget `broker.go` path. *`live.Sink` implements it; `strategy-run
-      --sink live` does not exist yet.*
+- [x] Carina order routing behind `engine.OrderSink`, replacing the single-symbol
+      fire-and-forget `broker.go` path. *Wired 2026-09-24: `strategy-run --sink
+      live --account … --prior-stores …`, always behind `risk.RiskSink`; refuses
+      `--source replay`. Not yet exercised against production.*
 - [ ] Idempotency keys; order state machine (new → acked → partial → filled /
       cancelled / rejected); cancel/replace; timeout handling. *State machine and
-      timeouts done. Idempotency holds within a process but **not across a
-      restart**: `ui_ref`s are in-memory and client order ids restart from 1, so a
-      same-day crash-and-restart can double-submit. Blocks anything beyond
-      smallest-size orders.*
-- [ ] Reconcile every terminal state back to B1. *`Baseline`/`ReconcileTerminal`
-      exist and are tested but nothing calls them outside tests. The realized-PnL
+      timeouts done. Restart durability added 2026-09-24: client ids are
+      deterministic per (symbol, window), `ui_ref`s per (client id, trading day),
+      and `--prior-stores` (mandatory for live) seeds already-attempted windows
+      from the day's earlier store files —
+      `TestRestartDurability_CrashThenRestart_DoesNotDoubleSubmit` proves one POST
+      across a crash and restart against a fake Carina. Open: whether Carina
+      itself deduplicates on a repeated `ui_ref` is unverified, and a restart
+      does not rebuild `RiskSink`'s in-memory exposure for an order placed but
+      not yet filled.*
+- [ ] Reconcile every terminal state back to B1. *`strategy-run` calls
+      `Baseline` at startup and `ReconcileTerminal` at shutdown, logging any
+      divergence; rejected intents now land in the store's `order_reject` table
+      and on the dashboard. The realized-PnL
       feeding the daily loss limit keeps only the last partial fill's leg
       (`engine.recordRoundTrip`), so a multi-partial order understates it.*
 - [x] Retain the existing double-arm: `ALGO_LIVE=true` **and** the verbatim

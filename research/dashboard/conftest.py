@@ -46,6 +46,7 @@ def make_store(tmp_path):
         intents=(),
         fills=(),
         attributions=(),
+        rejects=(),
         schema: str | None = None,
     ) -> str:
         path = str(tmp_path / name)
@@ -92,6 +93,16 @@ def make_store(tmp_path):
                 {"recv_ns": 1, "fill_price_idr": 1000, "fill_lots": 1, "fee_idr": 1,
                  "slippage_bps": 0.0, "net_pnl_idr": None, "sink_kind": "paper",
                  "run_id": "r1", **f},
+            )
+        for j in rejects:
+            conn.execute(
+                "INSERT INTO order_reject (seq, recv_ns, run_id, strategy_id, symbol, side,"
+                " price_idr, lots, order_id, reason, sink_kind)"
+                " VALUES (:seq, :recv_ns, :run_id, :strategy_id, :symbol, :side, :price_idr,"
+                " :lots, :order_id, :reason, :sink_kind)",
+                {"recv_ns": 1, "run_id": "r1", "strategy_id": "orb", "symbol": "AAA",
+                 "side": "buy", "price_idr": 1000, "lots": 1, "order_id": "o1",
+                 "reason": "risk: cap exceeded", "sink_kind": "paper", **j},
             )
         for a in attributions:
             conn.execute(

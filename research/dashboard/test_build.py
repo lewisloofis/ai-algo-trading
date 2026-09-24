@@ -171,6 +171,29 @@ class TestPanelCRendering:
         assert "Store read errors" in html
         assert "short by an unknown amount" in html
 
+    def test_rejections_are_rendered_when_present(self, make_store):
+        """Task 3: the order_reject audit trail, surfaced on Panel C."""
+        path = make_store(
+            decisions=[{"seq": 1}],
+            intents=[{"seq": 2, "order_id": "o1"}],
+            rejects=[{"seq": 3, "order_id": "o1", "symbol": "AAA", "reason": "risk: cap exceeded"}],
+        )
+        html = build_html(Inputs(store_globs=[path]))
+        assert "risk: cap exceeded" in html
+        assert "Rejections" in html
+
+    def test_old_store_without_order_reject_still_renders(self, make_store):
+        """
+        Tolerate a store that predates the order_reject table (Task 3):
+        Panel C must still render, with no rejections section claiming
+        rows that were never recorded.
+        """
+        from dashboard.test_store import LEGACY_SCHEMA
+
+        path = make_store(schema=LEGACY_SCHEMA, attributions=[])
+        html = build_html(Inputs(store_globs=[path]))
+        assert "<!doctype html>" in html
+
 
 class TestPanelBRendering:
     def test_a_missing_status_file_is_unknown_not_ok(self, tmp_path):

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"collector/calendar"
@@ -141,6 +142,26 @@ func (h *engineHandle) SubmitOrder(ctx context.Context, intent OrderIntent) (Ord
 
 	id, err := h.sink.Submit(ctx, intent)
 	if err != nil {
+		// The intent row above already recorded the attempt; this records
+		// why it went no further — a risk gate, a broker rejection, or (for
+		// PaperSink) ErrNoBook. Before this table existed, that reason lived
+		// only in the returned error, which a caller could drop on the
+		// floor; see RejectRow's doc comment.
+		st.seq++
+		if rejErr := h.store.InsertOrderReject(RejectRow{
+			Seq:        st.seq,
+			RecvNs:     h.recvNs,
+			StrategyID: h.stratID,
+			Symbol:     intent.Symbol,
+			Side:       intent.Side,
+			PriceIDR:   intent.PriceIDR,
+			Lots:       intent.Lots,
+			OrderID:    intent.OrderID,
+			Reason:     err.Error(),
+			SinkKind:   h.sinkKind,
+		}); rejErr != nil {
+			return "", fmt.Errorf("submit order: sink rejected (%w) and recording the rejection also failed: %v", err, rejErr)
+		}
 		return "", err
 	}
 
