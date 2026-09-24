@@ -733,10 +733,19 @@ safe without it.
 > **wider** than the hard band rather than equal to it, so the gate reads
 > `below`/`above` alone.
 >
-> **Still unconfirmed:** the out-of-session case. Yesterday's after-hours
-> run had expired tokens, so a clean `market_open=deny` with exit 0 has not
-> been observed with a valid one — re-run at the 11:30 break or after the
-> 16:00 close.
+> **Out-of-session case confirmed, 2026-09-16 12:49 WIB** (the lunch break,
+> with a freshly minted token pair): `market_open=deny` on BBCA/BNBR/HRTA/
+> PTRO, **exit 0**, and every other field `allow` — so the deny came from
+> the session-phase check alone, not from a gate that had gone blind. See
+> §10's checkbox for the full run.
+>
+> That run also settles a question the in-session run could not: the
+> `/market-time` envelope reports `market.status=STATUS_OPEN` *during the
+> lunch break*, while `/session` reports `state_name=STATE_NAME_BREAK`.
+> `market.status` therefore answers "is the market open today", not "are
+> orders accepted right now" — a gate reading it alone would send orders
+> into the break. `market.Gate` reads `state_name`, which this run confirms
+> is the load-bearing source. Recorded in reference 06 §4.
 
 ### B3 — `LiveSource`
 
@@ -786,13 +795,29 @@ safe without it.
 
 ### B4 — `LiveSink` *(first real money)*
 
+> **Status 2026-09-24:** `strategy/live` is code-complete and reviewed (three
+> bugs fixed, each with a RED→GREEN test: fill bookkeeping committed before
+> delivery, duplicate-resolution adopting a pre-existing — possibly core-book
+> — order, and a failed timeout-cancel never retrying). It is **not yet wired
+> into any `strategy/cmd` binary**, so no real order can be placed yet; the
+> first-order procedure is `docs/runbooks/first-live-order.md`.
+
 - [ ] Carina order routing behind `engine.OrderSink`, replacing the single-symbol
-      fire-and-forget `broker.go` path.
+      fire-and-forget `broker.go` path. *`live.Sink` implements it; `strategy-run
+      --sink live` does not exist yet.*
 - [ ] Idempotency keys; order state machine (new → acked → partial → filled /
-      cancelled / rejected); cancel/replace; timeout handling.
-- [ ] Reconcile every terminal state back to B1.
-- [ ] Retain the existing double-arm: `ALGO_LIVE=true` **and** the verbatim
-      `ALGO_CONFIRM` phrase (ADR-0016 gate G4).
+      cancelled / rejected); cancel/replace; timeout handling. *State machine and
+      timeouts done. Idempotency holds within a process but **not across a
+      restart**: `ui_ref`s are in-memory and client order ids restart from 1, so a
+      same-day crash-and-restart can double-submit. Blocks anything beyond
+      smallest-size orders.*
+- [ ] Reconcile every terminal state back to B1. *`Baseline`/`ReconcileTerminal`
+      exist and are tested but nothing calls them outside tests. The realized-PnL
+      feeding the daily loss limit keeps only the last partial fill's leg
+      (`engine.recordRoundTrip`), so a multi-partial order understates it.*
+- [x] Retain the existing double-arm: `ALGO_LIVE=true` **and** the verbatim
+      `ALGO_CONFIRM` phrase (ADR-0016 gate G4). *`live.NewClient` refuses to
+      construct unless armed; no dry-run fallback.*
 - [ ] Absorbs plan 17 §6.2, §6.4, §6.5.
 
 ### B5 — Execution algo
@@ -1022,8 +1047,10 @@ treated as a reason to widen the search again.
       `/portfolio/v2/summary` aggregate. Four contract errors in
       `docs/reference/` were found and corrected in the process — the settlement
       identity among them (§3.4).
-- [ ] B2 limits provably reject: an over-cap order, an over-exposure basket, and a
-      post-loss-limit order — each with a test.
+- [x] B2 limits provably reject: an over-cap order, an over-exposure basket, and a
+      post-loss-limit order — each with a test. Done 2026-09-24 in
+      `strategy/risk/limits_verification_test.go`; each confirmed non-vacuous by
+      disabling its check in `risk/sink.go` and watching the test fail.
 - [x] B2's reference-06 gate provably rejects each closed condition —
       holiday, lunch break, not-tradable, price outside ARA/ARB, and an
       unreachable endpoint — with the intent never reaching the inner sink
@@ -1047,11 +1074,19 @@ treated as a reason to widen the search again.
       the band unresolved; BNBR/HRTA/PTRO parse. All five wire contracts
       confirmed against production, and two were corrected by it (reference
       06 §4).
-- [ ] The same probe run **outside** a session — at the 11:30 break or after
+- [x] The same probe run **outside** a session — at the 11:30 break or after
       the 16:00 close — expecting a clean `market_open=deny` and **exit 0**.
-      The distinction being checked is that a closed market is a normal
-      answer and not an operational failure; the only after-hours run so far
-      used expired tokens, which proves nothing about the deny path.
+      Done 2026-09-16 12:49 WIB, inside the lunch break: `market_open=deny`
+      on BBCA/BNBR/HRTA/PTRO citing `state_name=STATE_NAME_BREAK`
+      (12:00:00-13:29:59), **exit 0 on both runs**. What makes it a real
+      verification rather than a blind gate denying by accident: every
+      *other* source answered `allow` on the same run (`is_tradable=true`,
+      ARB 5450 <= 6550 <= ARA 7675), so the deny is isolated to the
+      session-phase check. A first attempt at 12:48 hit an expired trading
+      token, returned three `unknown` fields and exited 1 — the correct
+      blind-gate behaviour, and exactly why an expired-token run proves
+      nothing either way; the token was re-minted and the probe re-run
+      inside the same break.
 - [ ] B3/B4 replay-vs-live parity: the same null portfolio through `ReplaySource`
       + `PaperSink` and through `LiveSource` + `LiveSink` produces the same
       *intents* (fills will differ; intents must not).
@@ -1086,6 +1121,11 @@ treated as a reason to widen the search again.
       is attributable to the coefficient change and to nothing else.
 - [ ] B6 divergence check against Track C's coefficients in all three buckets.
 - [ ] Kill switch trips from outside the process and is observed to stop orders.
+      *Test-level evidence 2026-09-24:
+      `TestKillSwitch_TrippedByExternalProcess_StopsOrders` has a separate OS
+      process create the kill file and the next `RiskSink.Submit` is rejected
+      without reaching the inner sink. Stays open until exercised against a
+      running `strategy-run`.*
 
 ## 11. Out of scope
 
