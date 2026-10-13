@@ -458,10 +458,12 @@ func TestShutdownContextIsLiveAndBounded(t *testing.T) {
 	}
 }
 
-// TestLoadPriorState_PositionsAreScopedToAccount: a prior store holding fills
-// from two accounts' runs seeds the strategy with only --account's position.
-// Account numbers are synthetic.
-func TestLoadPriorState_PositionsAreScopedToAccount(t *testing.T) {
+// TestLoadPriorState_ReadsPositionsForAccount: a prior store whose runs were
+// recorded under --account seeds the strategy with their positions. (A store
+// holding another account's fills is refused outright — see
+// TestLoadPriorState_RefusesFillsUnderAnotherAccount.) Account numbers are
+// synthetic.
+func TestLoadPriorState_ReadsPositionsForAccount(t *testing.T) {
 	dir := t.TempDir()
 	s, err := engine.OpenStore(filepath.Join(dir, "prior.db"))
 	if err != nil {
@@ -469,8 +471,8 @@ func TestLoadPriorState_PositionsAreScopedToAccount(t *testing.T) {
 	}
 	seq := int64(0)
 	for _, r := range []struct{ run, account, symbol string }{
-		{"run-sleeve", "TEST-SLEEVE", "GOTO"},
-		{"run-core", "TEST-CORE", "BBCA"},
+		{"run-sleeve-1", "TEST-SLEEVE", "GOTO"},
+		{"run-sleeve-2", "TEST-SLEEVE", "BBCA"},
 	} {
 		if err := s.BeginRun(engine.RunRow{RunID: r.run, StartedNs: 1, Source: "live", FillMode: "taker", SinkKind: "live", StrategyID: "s", InputSpec: r.symbol, Account: r.account}); err != nil {
 			t.Fatalf("BeginRun: %v", err)
@@ -493,8 +495,8 @@ func TestLoadPriorState_PositionsAreScopedToAccount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadPriorState: %v", err)
 	}
-	if len(positions) != 1 || positions["GOTO"] != 2 {
-		t.Fatalf("positions = %v, want only GOTO: 2 lots", positions)
+	if len(positions) != 2 || positions["GOTO"] != 2 || positions["BBCA"] != 2 {
+		t.Fatalf("positions = %v, want GOTO: 2 and BBCA: 2 lots", positions)
 	}
 }
 
@@ -619,5 +621,32 @@ func TestReconcileErr(t *testing.T) {
 	}
 	if err := reconcileErr(live.Divergence{}); err != nil {
 		t.Fatalf("clean divergence: %v", err)
+	}
+}
+
+// TestLoadPriorState_RefusesFillsUnderAnotherAccount: a prior store whose live
+// fills were recorded under a different account string (a typo, a case
+// difference) must stop the run, not silently contribute zero positions.
+func TestLoadPriorState_RefusesFillsUnderAnotherAccount(t *testing.T) {
+	dir := t.TempDir()
+	s, err := engine.OpenStore(filepath.Join(dir, "prior.db"))
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	if err := s.BeginRun(engine.RunRow{RunID: "r", StartedNs: 1, Source: "live", FillMode: "taker", SinkKind: "live", StrategyID: "s", InputSpec: "GOTO", Account: "test-sleeve"}); err != nil {
+		t.Fatalf("BeginRun: %v", err)
+	}
+	if err := s.InsertIntent(engine.IntentRow{Seq: 1, RecvNs: 1, StrategyID: "s", Symbol: "GOTO", Side: "buy", PriceIDR: 27, Lots: 1, OrderID: "o", SinkKind: "live"}); err != nil {
+		t.Fatalf("InsertIntent: %v", err)
+	}
+	if err := s.InsertFill(engine.FillRow{Seq: 2, RecvNs: 1, OrderID: "o", FillPriceIDR: 27, FillLots: 1, SinkKind: "live"}); err != nil {
+		t.Fatalf("InsertFill: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, _, err := loadPriorState(filepath.Join(dir, "*.db"), "s", "live", "TEST-SLEEVE"); err == nil {
+		t.Fatal("loadPriorState accepted a prior store whose fills are under another account")
 	}
 }

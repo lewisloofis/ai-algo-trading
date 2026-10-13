@@ -550,6 +550,18 @@ func loadPriorState(glob, strategyID, sinkKind, account string) (map[string]bool
 			attempted[k] = true
 		}
 
+		accounts, err := s.FillAccounts(sinkKind)
+		if err != nil {
+			s.Close()
+			return nil, nil, fmt.Errorf("fill accounts %s: %w", path, err)
+		}
+		for _, a := range accounts {
+			if a != account {
+				s.Close()
+				return nil, nil, fmt.Errorf("prior store %s holds %s fills under account %q, not --account %q: refusing to start, because those positions would be silently dropped (narrow --prior-stores, or check --account)", path, sinkKind, a, account)
+			}
+		}
+
 		dp, err := s.DerivedPositions(sinkKind, account)
 		if err != nil {
 			s.Close()

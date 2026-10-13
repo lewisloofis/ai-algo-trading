@@ -310,3 +310,34 @@ func (s *PostTradeStore) RealizedPnLIDRByDate(sinkKind, asOfDate string) (int64,
 	}
 	return int64(math.Round(sumIDR)), nil
 }
+
+// FillAccounts returns the distinct run accounts, sorted, under which this
+// store holds sinkKind fills (rows with no run header count as ""). It lets
+// a caller that reads positions for one account notice fills recorded under
+// another, rather than having DerivedPositions' account filter silently drop
+// them.
+func (s *PostTradeStore) FillAccounts(sinkKind string) ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT COALESCE(r.account, '')
+		FROM fill f
+		LEFT JOIN run r ON r.run_id = f.run_id
+		WHERE f.sink_kind = ?
+		ORDER BY 1
+	`, sinkKind)
+	if err != nil {
+		return nil, fmt.Errorf("fill accounts: query: %w", err)
+	}
+	defer rows.Close()
+	var accounts []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, fmt.Errorf("fill accounts: scan: %w", err)
+		}
+		accounts = append(accounts, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("fill accounts: iterate: %w", err)
+	}
+	return accounts, nil
+}

@@ -458,3 +458,25 @@ func TestDerivedPositions_SameOrderIDInTwoRunsIsNotDoubleCounted(t *testing.T) {
 		t.Fatalf("DerivedPositions = %+v, want GOTO 100 shares (one fill, counted once)", got)
 	}
 }
+
+func TestFillAccounts_ListsDistinctAccountsWithFills(t *testing.T) {
+	store := newTestStore(t)
+	var seq int64
+	for _, r := range []struct{ run, account, sink string }{
+		{"run-a", "TEST-SLEEVE", "live"},
+		{"run-b", "test-sleeve", "live"},
+		{"run-c", "", "paper"},
+	} {
+		if err := store.BeginRun(RunRow{RunID: r.run, StartedNs: 1, Source: "live", FillMode: "taker", SinkKind: r.sink, StrategyID: "s", InputSpec: "X", Account: r.account}); err != nil {
+			t.Fatalf("BeginRun: %v", err)
+		}
+		insertFilledOrder(t, store, &seq, r.sink, "GOTO", "buy", 27, 1, 4, 1)
+	}
+	got, err := store.FillAccounts("live")
+	if err != nil {
+		t.Fatalf("FillAccounts: %v", err)
+	}
+	if len(got) != 2 || got[0] != "TEST-SLEEVE" || got[1] != "test-sleeve" {
+		t.Fatalf("FillAccounts(live) = %v, want [TEST-SLEEVE test-sleeve]", got)
+	}
+}
