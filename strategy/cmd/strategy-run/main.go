@@ -96,6 +96,7 @@ func run() error {
 	riskMaxGrossFrac := flag.Float64("risk-max-gross-fraction", 1.0, "max gross exposure cap, as a fraction of --equity-idr")
 	riskMaxPositionFrac := flag.Float64("risk-max-position-fraction", 0.25, "max position-per-name cap, as a fraction of --equity-idr")
 	riskDailyLossFrac := flag.Float64("risk-daily-loss-fraction", 0.05, "daily loss limit, as a fraction of --equity-idr")
+	limitPriceIDR := flag.Int64("limit-price-idr", 0, "DIAGNOSTIC: submit the single rebalance order at exactly this tick-valid IDR price instead of the last price (0 = off; only with --strategy rebalance and a one-target portfolio; used for the first-live-order unfilled step, docs/runbooks/first-live-order.md §5)")
 	flag.Parse()
 
 	if *storePath == "" {
@@ -128,9 +129,12 @@ func run() error {
 	if *priorStores != "" {
 		priorState = &priorStateConfig{glob: *priorStores, sinkKind: *sinkName}
 	}
-	strat, stratID, err := newStrategy(*strategyName, *targetPortfolioPath, priorState)
+	strat, stratID, err := newStrategy(*strategyName, *targetPortfolioPath, priorState, *limitPriceIDR)
 	if err != nil {
 		return err
+	}
+	if *limitPriceIDR > 0 {
+		log.Printf("WARNING: --limit-price-idr=%d is in force: every rebalance order is submitted at this FIXED diagnostic price, not the market price (first-live-order diagnostic, not a pricing policy)", *limitPriceIDR)
 	}
 
 	store, err := engine.OpenStore(*storePath)
@@ -316,7 +320,17 @@ type priorStateConfig struct {
 // portfolio.CalibrationStrategyID) — the binary's --strategy flag selects
 // which CODE runs, but the portfolio decides which of the store's
 // strategy_id partitions the resulting rows belong to.
-func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig) (engine.Strategy, string, error) {
+//
+// limitPriceIDR is the --limit-price-idr diagnostic (0 = off). It is refused
+// for any strategy but rebalance; rebalance.New refuses it for a
+// multi-target portfolio or a non-tick-valid price.
+func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limitPriceIDR int64) (engine.Strategy, string, error) {
+	if limitPriceIDR < 0 {
+		return nil, "", fmt.Errorf("--limit-price-idr must not be negative (got %d)", limitPriceIDR)
+	}
+	if limitPriceIDR > 0 && name != "rebalance" {
+		return nil, "", fmt.Errorf("--limit-price-idr is only valid with --strategy rebalance (got --strategy %q)", name)
+	}
 	switch name {
 	case "orb":
 		return orb.New(), "orb", nil
@@ -333,6 +347,8 @@ func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig) (eng
 		opts := rebalance.Options{
 			Portfolio: tp,
 			Schedule:  rebalance.DailyAt(defaultRebalanceHour, defaultRebalanceMinute),
+
+			LimitPriceIDR: limitPriceIDR,
 		}
 		if prior != nil && prior.glob != "" {
 			attempted, initial, err := loadPriorState(prior.glob, tp.StrategyID, prior.sinkKind)

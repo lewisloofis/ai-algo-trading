@@ -64,7 +64,7 @@ func TestValidatePriorStores_AllowsLiveWithGlobAndPaperWithout(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewStrategy_Orb(t *testing.T) {
-	strat, stratID, err := newStrategy("orb", "", nil)
+	strat, stratID, err := newStrategy("orb", "", nil, 0)
 	if err != nil {
 		t.Fatalf("newStrategy: %v", err)
 	}
@@ -77,13 +77,13 @@ func TestNewStrategy_Orb(t *testing.T) {
 }
 
 func TestNewStrategy_UnknownStrategy(t *testing.T) {
-	if _, _, err := newStrategy("nope", "", nil); err == nil {
+	if _, _, err := newStrategy("nope", "", nil, 0); err == nil {
 		t.Fatal("want an error for an unknown --strategy, got nil")
 	}
 }
 
 func TestNewStrategy_RebalanceRequiresTargetPortfolio(t *testing.T) {
-	if _, _, err := newStrategy("rebalance", "", nil); err == nil {
+	if _, _, err := newStrategy("rebalance", "", nil, 0); err == nil {
 		t.Fatal("want an error when --strategy rebalance is given no --target-portfolio")
 	}
 }
@@ -112,7 +112,7 @@ func writeTargetPortfolio(t *testing.T, dir string) string {
 
 func TestNewStrategy_RebalanceLoadsPortfolioAndUsesItsOwnStrategyID(t *testing.T) {
 	path := writeTargetPortfolio(t, t.TempDir())
-	strat, stratID, err := newStrategy("rebalance", path, nil)
+	strat, stratID, err := newStrategy("rebalance", path, nil, 0)
 	if err != nil {
 		t.Fatalf("newStrategy: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestNewStrategy_RebalanceLoadsPortfolioAndUsesItsOwnStrategyID(t *testing.T
 }
 
 func TestNewStrategy_RebalanceMissingFile(t *testing.T) {
-	if _, _, err := newStrategy("rebalance", filepath.Join(t.TempDir(), "does-not-exist.json"), nil); err == nil {
+	if _, _, err := newStrategy("rebalance", filepath.Join(t.TempDir(), "does-not-exist.json"), nil, 0); err == nil {
 		t.Fatal("want an error for a missing --target-portfolio file")
 	}
 }
@@ -161,7 +161,7 @@ func TestNewStrategy_RebalanceRecoversAttemptedFromPriorStores(t *testing.T) {
 		t.Fatalf("close prior: %v", err)
 	}
 
-	strat, stratID, err := newStrategy("rebalance", path, &priorStateConfig{glob: filepath.Join(dir, "prior.db"), sinkKind: "live"})
+	strat, stratID, err := newStrategy("rebalance", path, &priorStateConfig{glob: filepath.Join(dir, "prior.db"), sinkKind: "live"}, 0)
 	if err != nil {
 		t.Fatalf("newStrategy: %v", err)
 	}
@@ -302,3 +302,58 @@ func TestWrapWithRisk_WrapsPaperSink(t *testing.T) {
 type zeroPnLProvider struct{}
 
 func (zeroPnLProvider) DailyPnLIDR(ctx context.Context) (float64, error) { return 0, nil }
+
+// writeOneSymbolPortfolio writes a single-target portfolio for the
+// --limit-price-idr diagnostic path.
+func writeOneSymbolPortfolio(t *testing.T, dir string) string {
+	t.Helper()
+	p, err := portfolio.NullPortfolio(portfolio.NullOptions{
+		AsOf:            time.Date(2026, 9, 24, 9, 0, 0, 0, calendar.Jakarta),
+		Names:           []string{"BBCA"},
+		BaseNotionalIDR: 1_000_000,
+	})
+	if err != nil {
+		t.Fatalf("NullPortfolio: %v", err)
+	}
+	path := filepath.Join(dir, "one.json")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create %s: %v", path, err)
+	}
+	defer f.Close()
+	if err := p.Encode(f); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	return path
+}
+
+func TestNewStrategy_LimitPriceAcceptedForOneTargetRebalance(t *testing.T) {
+	path := writeOneSymbolPortfolio(t, t.TempDir())
+	if _, _, err := newStrategy("rebalance", path, nil, 5250); err != nil {
+		t.Fatalf("newStrategy: %v", err)
+	}
+}
+
+func TestNewStrategy_LimitPriceRefusals(t *testing.T) {
+	dir := t.TempDir()
+	one := writeOneSymbolPortfolio(t, dir)
+	two := writeTargetPortfolio(t, dir)
+	cases := []struct {
+		name     string
+		strategy string
+		path     string
+		limit    int64
+	}{
+		{"non-rebalance strategy", "orb", "", 5250},
+		{"multi-target portfolio", "rebalance", two, 5250},
+		{"non-tick-valid price", "rebalance", one, 5251},
+		{"negative value", "rebalance", one, -5250},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, _, err := newStrategy(c.strategy, c.path, nil, c.limit); err == nil {
+				t.Fatalf("want an error for --limit-price-idr=%d with %s", c.limit, c.name)
+			}
+		})
+	}
+}

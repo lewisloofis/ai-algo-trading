@@ -63,6 +63,7 @@ still written in two layers, but Layer 2 is now executable:
     --sink live --account 008488L \
     --equity-idr <sleeve withdrawable balance from §3, in whole IDR> \
     --strategy rebalance --target-portfolio <path to a target_portfolio.json sized for the smallest possible order — see §5> \
+    --limit-price-idr <tick-valid price ~12% below market, §5 only — omit for §8's fill variant> \
     --store runs/<YYYY-MM-DD>-<n>.db \
     --prior-stores 'runs/<YYYY-MM-DD>-*.db' \
     --kill-switch-file <path to a file you can create by hand to trip the kill switch mid-run>
@@ -95,6 +96,15 @@ still written in two layers, but Layer 2 is now executable:
     what gets bought/sold and at what size — see §5 for how to hand-write a
     minimal one-symbol, one-lot target portfolio for the diagnostic steps
     below rather than pointing this at a real strategy's output.
+  - `--limit-price-idr <p>` is a diagnostic override (default 0 = off) for
+    §5's unfilled step: `rebalance` otherwise always prices at the last
+    observed price, which would make that step a marketable buy. With it
+    set, the one order is submitted at exactly `p` and sized against `p`.
+    Refused at startup unless `--strategy rebalance`, the portfolio has
+    exactly one target, and `p` is tick-valid (and > 0). It does not bypass
+    anything downstream: the risk gate and the market ARA/ARB band check
+    still apply and still deny an out-of-band `p`. A loud `WARNING` is
+    logged at startup when it is in force. Do **not** pass it for §8.
   - `--kill-switch-file` is optional but strongly recommended for a first
     live order: creating the file (`touch <path>`) mid-run trips the kill
     switch before the next `Submit` call, on top of the manual
@@ -232,15 +242,23 @@ live.PlaceRequest{
 ```
 
 **Getting `strategy-run` to submit exactly this one order.** The `rebalance`
-strategy sizes an order from `target_notional / (tick-snapped price *
-100 shares)`, not from a literal lot count, so hand-write a minimal
-one-symbol `target_portfolio.json` (plan 18 §3.1 shape) whose
-`base_notional_idr` is approximately one lot's notional at the symbol's
-current price (e.g. `price * 100 * 1.0` for `weight: 1.0`) — this sizes to
-1 lot exactly via the same floor-division `rebalance.go` always uses, so
-there is no separate "size override" flag. Point `--target-portfolio` at it
-and run the command line in §1, with `--symbols <SYMBOL>` matching the
-portfolio's one target and a `--store` path fresh for this attempt.
+strategy sizes an order from `target_notional / (price * 100 shares)`, not
+from a literal lot count, and by default prices at the last observed price
+snapped to tick — a marketable order, wrong for this variant. So: hand-write
+a minimal one-symbol `target_portfolio.json` (plan 18 §3.1 shape — the
+schema is unchanged) whose `base_notional_idr` is approximately one lot's
+notional at the **limit** price (`limit * 100 * 1.0` for `weight: 1.0`; it
+floors to exactly 1 lot for anything in `[limit*100, limit*200)`), and pass
+`--limit-price-idr <limit>` with a tick-valid limit ~12% below the current
+bid (e.g. BBCA 5250 when last is ~5950). The strategy then submits at
+exactly that price and sizes lots against it (`floor(notional / (limit *
+100))`), never against the market price. It still waits for the first
+liveprice observation for the symbol before acting — the order needs the
+market to be live, and the gate compares against it. Point `--target-portfolio`
+at the file and run the command line in §1, with `--symbols <SYMBOL>`
+matching the portfolio's one target and a `--store` path fresh for this
+attempt. Check the startup log for the `--limit-price-idr ... is in force`
+warning before arming.
 
 Record, in WIB: submission time, and the broker order id `Place` returns.
 That id is Carina's own numeric id, **not** the client id (`UIRef`/

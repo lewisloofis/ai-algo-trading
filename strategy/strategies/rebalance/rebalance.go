@@ -105,6 +105,18 @@ type Options struct {
 	// (or was already rejected for) an order today would place a second
 	// one under a fresh order id.
 	Attempted map[string]bool
+
+	// LimitPriceIDR, when > 0, is a fixed diagnostic limit price: the one
+	// order is submitted at exactly this price (not the snapped last price)
+	// and sized against it. It exists for the first-live-order runbook's
+	// deliberately-unfillable order (docs/runbooks/first-live-order.md §5)
+	// and is NOT a pricing policy, so New refuses it unless the portfolio has
+	// exactly one target and the price is already tick-valid. Zero (the
+	// default) means normal behaviour. Everything downstream — risk gate,
+	// market band check, ids — is unchanged, so an out-of-band limit is still
+	// denied there. The strategy still waits for a first liveprice
+	// observation for the symbol before acting (see rebalanceOne).
+	LimitPriceIDR int64
 }
 
 // orderMeta is what OnFill needs to resolve a fill back to a symbol and a
@@ -133,6 +145,7 @@ type orderMeta struct {
 type Strategy struct {
 	portfolio portfolio.TargetPortfolio
 	schedule  Schedule
+	limitIDR  int64 // Options.LimitPriceIDR; 0 = off
 
 	lastPrice map[string]float64 // last observed EventLivePrice, per symbol
 	confirmed map[string]int     // filled position, per symbol, in lots
@@ -161,6 +174,10 @@ func New(opts Options) (*Strategy, error) {
 		return nil, fmt.Errorf("%w: portfolio has no targets", ErrInvalidOptions)
 	}
 
+	if err := validateLimitPrice(opts.LimitPriceIDR, len(opts.Portfolio.Targets)); err != nil {
+		return nil, err
+	}
+
 	confirmed := make(map[string]int, len(opts.Initial))
 	for symbol, lots := range opts.Initial {
 		confirmed[symbol] = lots
@@ -176,12 +193,29 @@ func New(opts Options) (*Strategy, error) {
 	return &Strategy{
 		portfolio: opts.Portfolio,
 		schedule:  opts.Schedule,
+		limitIDR:  opts.LimitPriceIDR,
 		lastPrice: make(map[string]float64),
 		confirmed: confirmed,
 		inFlight:  make(map[string]int),
 		attempted: attempted,
 		orders:    make(map[string]orderMeta),
 	}, nil
+}
+
+// validateLimitPrice enforces Options.LimitPriceIDR's preconditions. 0 is
+// always valid (off).
+func validateLimitPrice(limit int64, targets int) error {
+	switch {
+	case limit == 0:
+		return nil
+	case limit < 0:
+		return fmt.Errorf("%w: limit price %d must not be negative", ErrInvalidOptions, limit)
+	case targets != 1:
+		return fmt.Errorf("%w: a fixed limit price is a single-order diagnostic and needs exactly one target, portfolio has %d", ErrInvalidOptions, targets)
+	case snapTickIDR(float64(limit)) != limit:
+		return fmt.Errorf("%w: limit price %d is not tick-valid (nearest tick at or below is %d)", ErrInvalidOptions, limit, snapTickIDR(float64(limit)))
+	}
+	return nil
 }
 
 // StrategyID is the portfolio's own strategy_id — "calibration" for the
@@ -282,7 +316,15 @@ func (s *Strategy) rebalanceOne(ctx context.Context, eng engine.Engine, window, 
 	// attributable to execution (plan 18 §3.3); a deterministic,
 	// one-directional weight error introduced by the sizing basis would be
 	// measured by B6 as though it were execution cost.
+	//
+	// A configured diagnostic limit (Options.LimitPriceIDR) replaces the
+	// snapped last price as both the submitted price and the sizing basis.
+	// The first-observation guard above stays: the order still needs the
+	// market to be live, and the gate downstream compares against it.
 	priceIDR := snapTickIDR(price)
+	if s.limitIDR > 0 {
+		priceIDR = s.limitIDR
+	}
 	if priceIDR <= 0 {
 		// A sub-1-IDR price snaps to 0, and dividing by it yields +Inf,
 		// whose conversion to int is undefined in Go — a garbage lot count

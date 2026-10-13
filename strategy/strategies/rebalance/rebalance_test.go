@@ -422,3 +422,89 @@ func TestDailyAt_OpensAtOrAfterCutoffWIB(t *testing.T) {
 		})
 	}
 }
+
+// --- LimitPriceIDR (first-live-order diagnostic) ---
+
+func TestLimitPrice_SubmitsAtLimitAndSizesAgainstIt(t *testing.T) {
+	// 1,100,000 notional: sized at last 5950 it is 1 lot, at limit 5250 it is
+	// 2 lots, so the lot count proves which price sized the order.
+	p := nullPortfolio(t, []string{"BBCA"}, 1_100_000)
+	strat, err := New(Options{Portfolio: p, Schedule: DailyAt(9, 0), LimitPriceIDR: 5250})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	eng := &fakeEngine{now: wibTime(10, 0)}
+	strat.OnEvent(context.Background(), liveEvent("BBCA", 5950), eng)
+
+	if len(eng.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(eng.calls))
+	}
+	got := eng.calls[0]
+	if got.PriceIDR != 5250 {
+		t.Fatalf("PriceIDR = %d, want 5250 (the limit, not the snapped last)", got.PriceIDR)
+	}
+	if got.Lots != 2 {
+		t.Fatalf("Lots = %d, want 2 (sized against the limit)", got.Lots)
+	}
+}
+
+func TestLimitPrice_OneLotAtMillionNotional(t *testing.T) {
+	p := nullPortfolio(t, []string{"BBCA"}, 1_000_000)
+	strat, err := New(Options{Portfolio: p, Schedule: DailyAt(9, 0), LimitPriceIDR: 5250})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	eng := &fakeEngine{now: wibTime(10, 0)}
+	strat.OnEvent(context.Background(), liveEvent("BBCA", 5950), eng)
+	if len(eng.calls) != 1 || eng.calls[0].PriceIDR != 5250 || eng.calls[0].Lots != 1 {
+		t.Fatalf("calls = %+v, want one buy of 1 lot at 5250", eng.calls)
+	}
+}
+
+func TestLimitPrice_StillWaitsForFirstObservation(t *testing.T) {
+	p := nullPortfolio(t, []string{"BBCA"}, 1_000_000)
+	strat, err := New(Options{Portfolio: p, Schedule: DailyAt(9, 0), LimitPriceIDR: 5250})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	eng := &fakeEngine{now: wibTime(10, 0)}
+	strat.OnEvent(context.Background(), engine.MarketEvent{Kind: engine.EventLivePrice, Symbol: "OTHER"}, eng)
+	if len(eng.calls) != 0 {
+		t.Fatalf("calls = %d before any BBCA price, want 0", len(eng.calls))
+	}
+}
+
+func TestLimitPrice_NewRefusals(t *testing.T) {
+	one := nullPortfolio(t, []string{"BBCA"}, 1_000_000)
+	two := nullPortfolio(t, []string{"BBCA", "BBRI"}, 1_000_000)
+	cases := []struct {
+		name  string
+		p     portfolio.TargetPortfolio
+		limit int64
+	}{
+		{"negative", one, -5250},
+		{"off tick", one, 5251},
+		{"multi target", two, 5250},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := New(Options{Portfolio: c.p, Schedule: DailyAt(9, 0), LimitPriceIDR: c.limit})
+			if !errors.Is(err, ErrInvalidOptions) {
+				t.Fatalf("err = %v, want ErrInvalidOptions", err)
+			}
+		})
+	}
+}
+
+func TestNoLimitPrice_UsesSnappedLast(t *testing.T) {
+	p := nullPortfolio(t, []string{"BBCA"}, 1_000_000)
+	strat, err := New(Options{Portfolio: p, Schedule: DailyAt(9, 0)})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	eng := &fakeEngine{now: wibTime(10, 0)}
+	strat.OnEvent(context.Background(), liveEvent("BBCA", 5950), eng)
+	if len(eng.calls) != 1 || eng.calls[0].PriceIDR != 5950 {
+		t.Fatalf("calls = %+v, want price 5950", eng.calls)
+	}
+}
