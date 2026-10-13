@@ -272,20 +272,9 @@ func run() error {
 	// to observe a run is not a reason to stop it.
 	stopStatus := status.Start(ctx, func(err error) { log.Printf("status: %v", err) })
 
-	if liveSink != nil {
-		// Start the poller before Baseline: Baseline itself only calls
-		// List() once and does not depend on the poller, but starting it
-		// first means the very first fill this run produces is already
-		// being watched for, rather than racing Start against engine.Run's
-		// first Submit.
-		liveSink.Start(ctx)
-		if err := liveSink.Baseline(ctx); err != nil {
-			stopStatus()
-			return fmt.Errorf("live: baseline: %w", err)
-		}
-	}
-
-	counters, runErr := engine.Run(ctx, src, strat, sink, store, stratID, engine.WithProgress(progress))
+	counters, runErr := baselineThenRun(ctx, liveSink, func() (engine.Counters, error) {
+		return engine.Run(ctx, src, strat, sink, store, stratID, engine.WithProgress(progress))
+	})
 	interrupted := ctx.Err() != nil
 	stopSignals()
 	if interrupted {
@@ -324,6 +313,27 @@ func run() error {
 		counters.OrdersAttempted, counters.Fills, counters.NetPnlBps)
 	fmt.Printf("Round-trips: %d | Total fees: %d IDR\n", counters.RoundTrips, counters.TotalFeesIDR)
 	return nil
+}
+
+// baselineThenRun starts liveSink's poller and takes its pre-trade baseline,
+// then runs the engine. A baseline failure skips the engine and is returned
+// as the run error rather than as an early return from run: the caller's
+// shutdown path then still closes the sink and records the run as "error"
+// (an early return left the run row at "running"). liveSink may be nil (a
+// paper run), in which case this is just runEngine().
+func baselineThenRun(ctx context.Context, liveSink *live.Sink, runEngine func() (engine.Counters, error)) (engine.Counters, error) {
+	if liveSink != nil {
+		// Start the poller before Baseline: Baseline itself only calls
+		// List() once and does not depend on the poller, but starting it
+		// first means the very first fill this run produces is already
+		// being watched for, rather than racing Start against engine.Run's
+		// first Submit.
+		liveSink.Start(ctx)
+		if err := liveSink.Baseline(ctx); err != nil {
+			return engine.Counters{}, fmt.Errorf("live: baseline: %w", err)
+		}
+	}
+	return runEngine()
 }
 
 // reconcileAndClose runs live.Sink.ReconcileTerminal and logs any

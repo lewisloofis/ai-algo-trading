@@ -497,3 +497,42 @@ func TestLoadPriorState_PositionsAreScopedToAccount(t *testing.T) {
 		t.Fatalf("positions = %v, want only GOTO: 2 lots", positions)
 	}
 }
+
+// TestBaselineThenRun_BaselineFailureSkipsEngineAndReturnsError: when the
+// pre-trade baseline fails (2026-10-13: an expired trading token, HTTP 401),
+// the engine must not run and the failure must come back as the run error,
+// so the shutdown path records outcome "error" instead of returning early and
+// leaving the run row at "running".
+func TestBaselineThenRun_BaselineFailureSkipsEngineAndReturnsError(t *testing.T) {
+	t.Setenv("ALGO_LIVE", "true")
+	t.Setenv("ALGO_CONFIRM", live.LiveConfirmPhrase)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	_, liveSink, err := newInnerSink("live", "taker", "TEST-SLEEVE", envTokens{trading: "t"}, srv.URL, srv.Client())
+	if err != nil {
+		t.Fatalf("newInnerSink: %v", err)
+	}
+	defer liveSink.Close()
+
+	ran := false
+	_, runErr := baselineThenRun(context.Background(), liveSink, func() (engine.Counters, error) {
+		ran = true
+		return engine.Counters{}, nil
+	})
+	if ran {
+		t.Fatal("engine ran despite a failed baseline")
+	}
+	if !errors.Is(runErr, live.ErrUnauthorized) {
+		t.Fatalf("runErr = %v, want it to wrap live.ErrUnauthorized", runErr)
+	}
+}
+
+func TestBaselineThenRun_NoLiveSinkRunsEngine(t *testing.T) {
+	want := engine.Counters{OrdersAttempted: 3}
+	got, err := baselineThenRun(context.Background(), nil, func() (engine.Counters, error) { return want, nil })
+	if err != nil || got != want {
+		t.Fatalf("baselineThenRun = (%+v, %v), want (%+v, nil)", got, err, want)
+	}
+}
