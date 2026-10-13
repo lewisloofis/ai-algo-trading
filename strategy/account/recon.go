@@ -273,14 +273,14 @@ func onlyOneSideHolds(symbol string, b Position, hasBroker bool, d engine.Derive
 		shares := b.Qty.Balance.Shares()
 		return Divergence{
 			Symbol: symbol, Kind: DivergenceHeldAtBrokerOnly, Severity: SeverityCritical,
-			BrokerShares: shares,
-			Detail:       fmt.Sprintf("%s: held at broker (%.0f shares) but absent from the store", symbol, shares),
+			BrokerShares: shares, DeltaShares: -shares,
+			Detail: fmt.Sprintf("%s: held at broker (%.0f shares) but absent from the store", symbol, shares),
 		}, true
 	case hasStore && !hasBroker:
 		return Divergence{
 			Symbol: symbol, Kind: DivergenceHeldInStoreOnly, Severity: SeverityCritical,
-			StoreShares: d.Shares,
-			Detail:      fmt.Sprintf("%s: in store (%.0f shares) but absent at broker", symbol, d.Shares),
+			StoreShares: d.Shares, DeltaShares: d.Shares,
+			Detail: fmt.Sprintf("%s: in store (%.0f shares) but absent at broker", symbol, d.Shares),
 		}, true
 	default:
 		return Divergence{}, false

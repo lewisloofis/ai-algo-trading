@@ -457,3 +457,21 @@ func TestDivergenceKind_String(t *testing.T) {
 		}
 	}
 }
+
+// TestReconcile_OneSidedDivergenceCarriesDelta pins DeltaShares (store −
+// broker) on the one-sided kinds. It was left 0, so a 100-share GOTO gap
+// (2026-10-13, sold outside the store) read as "delta_shares: 0".
+func TestReconcile_OneSidedDivergenceCarriesDelta(t *testing.T) {
+	storeOnly := Reconcile("live", testAccNo, PortfolioList{}, nil, nil,
+		[]engine.DerivedPosition{{Symbol: "GOTO", Shares: 100, CostBasisExFeeIDR: 2700}})
+	if got := storeOnly.Divergences[0].DeltaShares; got != 100 {
+		t.Errorf("held_in_store_only DeltaShares = %v, want 100", got)
+	}
+
+	brokerOnly := Reconcile("live", testAccNo, PortfolioList{Results: []Position{
+		brokerPosition("BBCA", 1000, 1000, 0, 9200000),
+	}}, nil, nil, nil)
+	if got := brokerOnly.Divergences[0].DeltaShares; got != -1000 {
+		t.Errorf("held_at_broker_only DeltaShares = %v, want -1000", got)
+	}
+}
