@@ -1,6 +1,6 @@
 # Alpha / Infrastructure Split — Two Tracks, One Seam
 
-> **Status:** ✅ Approved · 🔬 Track C complete · 🔨 Track B in progress (B1–B3 complete and live-verified; G2/G3 satisfied, B4 unblocked) · **Owner:** @lewis · **Updated:** 2026-09-16
+> **Status:** ✅ Approved · 🔬 Track C complete · 🔨 Track B in progress (B1–B3 complete and live-verified; B4 first live fills 2026-10-13) · **Owner:** @lewis · **Updated:** 2026-10-13
 > **Related:** [ADR-0016: alpha and infrastructure are separate tracks](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md) · [ADR-0015: leverage is optional](../adr/0015-leverage-optional-horizon-ceiling-lifted.md) · [ADR-0013: one Strategy interface](../adr/0013-one-strategy-interface-and-collector-public-packages.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [13-capital-allocation-and-capacity.md](./13-capital-allocation-and-capacity.md) · [15-measured-fill-and-impact-calibration.md](./15-measured-fill-and-impact-calibration.md) · [16-strategy-triage-and-prioritization.md](./16-strategy-triage-and-prioritization.md) · [17-execution-and-replay-parity-engine.md](./17-execution-and-replay-parity-engine.md) · [Plans index](./README.md)
 
 > **What this is.** The re-cut of roadmap Waves 3–5 into two independently
@@ -1056,6 +1056,51 @@ cost model and found it over-charged ~3×; the fill half — queue position, fil
 rate, adverse selection, rejects — is reachable only through B6, and B6 is
 reachable only through B1–B5. Until then every Track A verdict still rests on a
 cost model that has been cross-checked against itself and never against a fill.
+
+### Progress, 2026-10-13 — from first fill to an automated loop
+
+B4 placed its first real orders today: one resting order was auto-cancelled, and
+one GOTO lot filled with a clean reconciliation
+([runbook §13](../runbooks/first-live-order.md)). The §10 sleeve trading-limit
+probe is scheduled for 2026-10-14.
+
+**A passing §10 shows the system trades safely. It shows nothing about
+profit.** Profit needs two things that do not yet exist:
+
+1. a **realized** cost model, which is B6;
+2. an edge that clears that cost on a **pre-registered** test, which is Track A.
+
+The order below assumes §10 passes. Each step is gated on the one before it,
+not on a date.
+
+| # | Step | Track | Gate to leave it |
+|---|---|---|---|
+| 1 | **Close B4.** Real-fill sessions 2–3 of B1. Verify that rebalance sells to zero when a symbol leaves the target. Identify the mechanism that routed orders to 008488L (§3.4: the order body carries no account field) | B | 3 clean real-fill sessions. Sell-to-zero observed live. Routing mechanism explained, or guarded by a both-account check that fails closed |
+| 2 | **B5 execution algo.** Slicing, participation cap, cancel-on-adverse, arrival-price benchmark | B | A replay run and a de-minimis live run, each with per-child-order slippage vs. arrival recorded |
+| 3 | **B6 calibration flow.** About 100 de-minimis round trips in liquid names, booked under `strategy_id = "calibration"` | B | **Track B done (§9).** Realized coefficients reconcile with C3 in all three buckets |
+| 4 | **B7 ops + B8 decay.** Unattended deploy, supervision, alerting, automated trading-token rotation (a 401 from an expired token hit 2026-10-13), and the plan-11 decay loop with a global off-switch | B | Runs a full session with nobody watching. Kill-switch and divergence alerts fire in a drill |
+| A | **Candidates in parallel.** BNBR / HRTA forward tests (paper first, then de-minimis live). A-2.1 event-driven mechanisms. A-2.2 waits on accrued eligibility history (A-3) | A | A pre-registered pass on the **measured** hurdle and the always-long null gate. Re-judged after step 3 |
+
+**"Automated alpha search" means automating the gauntlet, not the volume of
+candidates.** §1 already showed the failure mode: more throughput in a single
+drilled corner. The target loop, with every arrow a gate whose threshold is
+written down before the test runs:
+
+```
+generate (plan 08, every family)
+  → score on measured cost + always-long null gate (plan 10)
+  → pre-registered OOS, multiple-testing penalty
+  → paper shadow on the live feed
+  → de-minimis live → staged capital
+  → decay monitor (plan 11) retires it
+```
+
+The only human decision in the loop is **each step-up in capital**. Generation
+and retirement run unattended.
+
+**What decides whether this is worth building out:** step 3. If realized cost
+confirms the measured hurdle and nothing clears it, §9(b) is the finding, and
+the loop is not scaled up to search harder.
 
 ## 9. Definition of done
 
