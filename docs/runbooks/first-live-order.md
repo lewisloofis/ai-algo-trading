@@ -459,7 +459,7 @@ are in `runs/2026-10-13-*`, which is untracked. All times are WIB.
 | §2 `market-probe` | BBCA band ARB 5,075 – ARA 7,125, last ~5,925, tick 25. ALLOW at 5,950 and 5,250; DENY at 8,950 (out of band), as expected. |
 | Paper shadow run (`--sink paper --source live`) | `shadow-3`: one intent, buy 1 lot of BBCA at 5,925 at 13:41:39; paper fill at 5,925 with fee 889; no rejects. Two earlier attempts failed on bugs 1 and 2 below. |
 | §3 pre-snapshot | `008488L`: MATCH, 0 positions. `0001958`: 9 holdings; DIVERGENT, as expected, because no store tracks the core book. |
-| §5–§7 unfilled order | First attempt 13:52: baseline `/order/v2/list` 401, an expired trading token, so no order was sent (bug 4). Retry: buy 1 lot of BBCA at a **fixed 5,250** (`--limit-price-idr`), submitted 13:56:32. OPEN, 0 lots done; the app showed 525,787 reserved (525,000 + 0.15% fee) against the sleeve's 15,000,000 equity. Cancelled before 14:03; whether by the 5-minute `OpenTimeout` or in the app was not recorded. Run ended `complete` on Ctrl-C at 14:03:23. Pre/post snapshots of **both** accounts are byte-identical. |
+| §5–§7 unfilled order | First attempt 13:52: baseline `/order/v2/list` 401, an expired trading token, so no order was sent (bug 4). Retry: buy 1 lot of BBCA at a **fixed 5,250** (`--limit-price-idr`), submitted 13:56:32. OPEN, 0 lots done; the app showed 525,787 reserved (525,000 + 0.15% fee) against the sleeve's 15,000,000 equity. **Cancelled automatically** by the live sink's 5-minute `OpenTimeout` (about 14:01:30), with no manual action, which is the first live proof of the auto-cancel path. Run ended `complete` on Ctrl-C at 14:03:23. Pre/post snapshots of **both** accounts are byte-identical. |
 | §8 fill | GOTO, 1 lot at 27 (ask), `--rebalance-at 14:12`. Submitted 14:12:00.08, **fill observed 2.75 s later** (1 lot at 27). `ReconcileTerminal clean`. The WS feed dropped once (EOF at 14:13:30) and reconnected after 750 ms. Post-fill: `008488L` **MATCH** (broker and store both hold GOTO). `0001958`'s broker holdings are identical to the pre-snapshot. |
 | §9 cleanup | GOTO sold in the Stockbit app at 26. The post-sell `008488L` snapshot shows 0 broker symbols; the store still holds 100 GOTO shares (`held_in_store_only`), which is expected because the sale was made outside the store. The `ALGO_*` variables were set per command, never exported. |
 | §10 trading limit | **Not run.** Needs a separate sitting. |
@@ -508,6 +508,6 @@ shares) and paid about 11 IDR in fees. §5 cost nothing.
   `strategy/live/doc.go`'s open question, per §12.
 - B1's three consecutive real-fill sessions: this was session 1 of 3.
 - Ctrl-C still leaves a resting order resting. It is reported as
-  `not_terminal` and has to be cancelled in the app or by the 5-minute
-  `OpenTimeout`.
+  `not_terminal` and has to be cancelled in the app, or by the 5-minute
+  `OpenTimeout` if the process is still running.
 
