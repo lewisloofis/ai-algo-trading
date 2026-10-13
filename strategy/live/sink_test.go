@@ -592,3 +592,37 @@ func TestPoll_UndeliveredFillIsNotCommittedToBookkeeping(t *testing.T) {
 		t.Fatal("ReconcileTerminal reported no divergence, want a LotMismatch flagging the undelivered fill")
 	}
 }
+
+// TestPoll_FillCarriesScheduleFee pins that a live fill's FeeIDR is the same
+// broker fee schedule PaperSink charges (engine.ScheduleFeeIDR), computed on
+// the marginal leg's own notional — not 0. A 0 fee understated fees and net
+// PnL on the first live fill (2026-10-13, GOTO 1 lot @ 27).
+func TestPoll_FillCarriesScheduleFee(t *testing.T) {
+	cases := []struct {
+		name, side, path, sideWire string
+		wantFee                    int64
+	}{
+		// 2 lots @ 9500 = 1,900,000 notional: 15 bps buy = 2850, 25 bps sell = 4750.
+		{"buy", "buy", pathBuy, "SIDE_BUY", 2850},
+		{"sell", "sell", pathSell, "SIDE_SELL", 4750},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := routeServer(t, map[string]http.HandlerFunc{
+				tc.path:  jsonHandler(http.StatusOK, `{"data":{"order_id":"1"}}`),
+				pathList: jsonHandler(http.StatusOK, `{"data":[{"order_id":"1","symbol":"BBCA","side":"`+tc.sideWire+`","status_text":"MATCH","price":{"order":9500,"average":{"price":9500}},"amount":{"matched_total":1900000},"qty":{"lot_done":2,"lot_open":0,"lot_total":2}}]}`),
+			})
+			s := newTestSink(t, srv)
+			ctx := context.Background()
+			intent := testIntent("rebalance-BBCA-1", 2)
+			intent.Side = tc.side
+			if _, err := s.Submit(ctx, intent); err != nil {
+				t.Fatalf("Submit: %v", err)
+			}
+			fills := pollOnceDrain(t, s, ctx, 1)
+			if got := fills[0].Fill.FeeIDR; got != tc.wantFee {
+				t.Fatalf("FeeIDR = %d, want %d", got, tc.wantFee)
+			}
+		})
+	}
+}

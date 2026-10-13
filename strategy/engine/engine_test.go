@@ -497,3 +497,21 @@ func TestStoreAppendOnly(t *testing.T) {
 		t.Fatal("InsertDecision with duplicate seq must return an error (PK constraint), got nil")
 	}
 }
+
+func TestScheduleFeeIDR(t *testing.T) {
+	cases := []struct {
+		side     string
+		notional int64
+		want     int64
+	}{
+		{"buy", 2_700, 4},     // GOTO 1 lot @ 27: 4.05
+		{"sell", 2_600, 7},    // 6.5 rounds half away from zero
+		{"buy", 525_000, 788}, // BBCA 1 lot @ 5250: 787.5
+		{"sell", 87_500_000, 218_750},
+	}
+	for _, tc := range cases {
+		if got := ScheduleFeeIDR(tc.side, tc.notional); got != tc.want {
+			t.Errorf("ScheduleFeeIDR(%q, %d) = %d, want %d", tc.side, tc.notional, got, tc.want)
+		}
+	}
+}

@@ -14,6 +14,20 @@ const (
 	feeRateSell  = 0.0025 // 25 bps
 )
 
+// ScheduleFeeIDR is the broker fee schedule (15 bps buy, 25 bps sell incl.
+// the 0.1% sales tax) applied to notionalIDR, rounded to whole IDR. It is the
+// single source of fees for both PaperSink and the live sink: Carina's own
+// per-order fee field has unconfirmed semantics (see strategy/live's
+// SnapshotAveragePrice.Fee), so a live fill's fee is this schedule's
+// estimate, not a broker-reported figure.
+func ScheduleFeeIDR(side string, notionalIDR int64) int64 {
+	rate := feeRateBuy
+	if side == "sell" {
+		rate = feeRateSell
+	}
+	return int64(math.Round(float64(notionalIDR) * rate))
+}
+
 // OrderSink accepts order intents and reports executions. PaperSink is the only
 // implementation built for plan 17; CarinaSink (live routing) is deferred.
 type OrderSink interface {
@@ -163,12 +177,7 @@ func (p *PaperSink) Submit(ctx context.Context, intent OrderIntent) (OrderID, er
 		}
 	}
 
-	notional := fillPx * int64(intent.Lots) * sharesPerLot
-	rate := feeRateBuy
-	if intent.Side == "sell" {
-		rate = feeRateSell
-	}
-	fee := int64(math.Round(float64(notional) * rate))
+	fee := ScheduleFeeIDR(intent.Side, fillPx*int64(intent.Lots)*sharesPerLot)
 
 	var slippage float64
 	if intent.PriceIDR > 0 {

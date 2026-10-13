@@ -167,10 +167,11 @@ func (s *Sink) applySnapshot(t *trackedOrder, snap Snapshot, now time.Time) (pen
 					OrderID:      engine.OrderID(t.ClientOrderID),
 					FillPriceIDR: priceIDR,
 					FillLots:     deltaLots,
-					// FeeIDR is left at 0: see SnapshotAveragePrice.Fee's doc
-					// comment for why this package does not attempt to derive
-					// a per-leg fee from Carina's cumulative average.
-					FeeIDR:      0,
+					// FeeIDR is the fee schedule's estimate on this leg's own
+					// notional, not Carina's figure: see
+					// SnapshotAveragePrice.Fee's doc comment for why the
+					// broker's cumulative fee is not used.
+					FeeIDR:      engine.ScheduleFeeIDR(t.Side, priceIDR*int64(deltaLots)*sharesPerLot),
 					SlippageBps: slippageBps(t.DecisionPriceIDR, priceIDR),
 				},
 			},

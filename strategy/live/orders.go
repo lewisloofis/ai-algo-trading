@@ -227,9 +227,8 @@ type SnapshotAveragePrice struct {
 	// Fee is documented only as "the fee component of the average"
 	// (docs/reference/04-order-lifecycle.md §4) — whether that is
 	// cumulative or a per-share average is not confirmed either way, so
-	// this package does not attempt to derive a per-fill fee from it (see
-	// Sink's poll loop, which leaves FillRecord.FeeIDR at 0 rather than
-	// guess).
+	// this package does not derive a per-fill fee from it. The poll loop
+	// sets FillRecord.FeeIDR from engine.ScheduleFeeIDR instead.
 	Fee float64 `json:"fee"`
 }
 
