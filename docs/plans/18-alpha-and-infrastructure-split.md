@@ -836,6 +836,26 @@ safe without it.
       itself deduplicates on a repeated `ui_ref` is unverified, and a restart
       does not rebuild `RiskSink`'s in-memory exposure for an order placed but
       not yet filled.*
+- [ ] **Restart-stable, per-leg order ids for intraday strategies** (found
+      2026-10-13). The live sink dedups on `ui_ref = f(client order id, trading
+      day)`. Each strategy's id scheme therefore decides what can trade and
+      what a restart does:
+      - `rebalance` uses `rebalance-<SYM>-<date>`: deliberately one order per
+        symbol per day, so no same-day round trip. The first live test's GOTO
+        sell had to go through the app.
+      - `orb` uses `orb-<SYM>-<counter>`, and the counter restarts at 1 with the
+        process. After a same-day crash and restart, a **new** trade reuses the
+        morning's id and `ui_ref`, is treated as a duplicate, and is
+        **silently skipped**. That fails safe (no double order) but drops the
+        trade.
+
+      Any multi-trade strategy needs ids that are unique per intended leg
+      (entry ≠ exit ≠ re-entry) and stable across a restart for the same
+      decision. Derive them from the decision (leg + signal time), or from a
+      per-day sequence recovered from `--prior-stores`, never from an
+      in-process counter. **Gate: before any intraday strategy runs `--sink
+      live`.** Needs a restart test proving neither a duplicate order nor a
+      dropped trade.
 - [ ] Reconcile every terminal state back to B1. *`strategy-run` calls
       `Baseline` at startup and `ReconcileTerminal` at shutdown, logging any
       divergence; rejected intents now land in the store's `order_reject` table
