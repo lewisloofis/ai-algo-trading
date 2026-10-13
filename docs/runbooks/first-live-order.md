@@ -6,6 +6,11 @@
 > "Layer 1 / Layer 2" split below is kept as written because it still
 > describes what is read-only vs. what places a real order; only the
 > "NOT YET WIRED" framing is stale and is corrected in §1.
+>
+> **Executed 2026-10-13: §2–§9 PASSED; §10 (trading-limit probe) NOT YET
+> RUN.** The order landed in the sleeve `008488L`, and the core book
+> `0001958` did not move. See §13 for the full log, the numbers, and the five
+> bugs it surfaced, all fixed the same day.
 
 ## 0. What this settles, and why it needs a real order
 
@@ -321,8 +326,11 @@ Re-run §3's exact procedure for **both** accounts.
 Only proceed once §5–§7 completed cleanly: no unexpected position change, no
 open questions about the cancel.
 
-1. Same symbol/board/lots/order-type as §5, but price **at or inside the
-   current best offer** for a buy, so it fills promptly. Keep notional small —
+1. Same board/lots/order-type as §5, but price **at or inside the
+   current best offer** for a buy, so it fills promptly. On the same day as
+   §5, use a **different symbol**: the order id is
+   `rebalance-<SYMBOL>-<date>`, so each symbol gets one rebalance order per
+   trading day (see §1's flag notes). Keep notional small —
    1 lot of a low-priced, already gate-ALLOW, liquid name.
 2. Submit, then poll `Detail` until FILLED. (A 1-lot order cannot partially
    fill below the lot boundary — it should go straight to FILLED, or stay
@@ -440,3 +448,66 @@ independently confirm," which this runbook's execution is that confirmation.
   open question. Neither is its own checkbox in §10 today, but both are named
   preconditions before B4 can be trusted with anything beyond the smallest
   possible size, per that file's own doc comment.
+
+## 13. Execution log — 2026-10-13 (Tue, Session 2)
+
+The first execution of §2–§9. Run artifacts (stores, status files, snapshots)
+are in `runs/2026-10-13-*`, which is untracked. All times are WIB.
+
+| Step | Result |
+|---|---|
+| §2 `market-probe` | BBCA band ARB 5,075 – ARA 7,125, last ~5,925, tick 25. ALLOW at 5,950 and 5,250; DENY at 8,950 (out of band), as expected. |
+| Paper shadow run (`--sink paper --source live`) | `shadow-3`: one intent, buy 1 lot of BBCA at 5,925 at 13:41:39; paper fill at 5,925 with fee 889; no rejects. Two earlier attempts failed on bugs 1 and 2 below. |
+| §3 pre-snapshot | `008488L`: MATCH, 0 positions. `0001958`: 9 holdings; DIVERGENT, as expected, because no store tracks the core book. |
+| §5–§7 unfilled order | First attempt 13:52: baseline `/order/v2/list` 401, an expired trading token, so no order was sent (bug 4). Retry: buy 1 lot of BBCA at a **fixed 5,250** (`--limit-price-idr`), submitted 13:56:32. OPEN, 0 lots done; the app showed 525,787 reserved (525,000 + 0.15% fee) against the sleeve's 15,000,000 equity. Cancelled before 14:03; whether by the 5-minute `OpenTimeout` or in the app was not recorded. Run ended `complete` on Ctrl-C at 14:03:23. Pre/post snapshots of **both** accounts are byte-identical. |
+| §8 fill | GOTO, 1 lot at 27 (ask), `--rebalance-at 14:12`. Submitted 14:12:00.08, **fill observed 2.75 s later** (1 lot at 27). `ReconcileTerminal clean`. The WS feed dropped once (EOF at 14:13:30) and reconnected after 750 ms. Post-fill: `008488L` **MATCH** (broker and store both hold GOTO). `0001958`'s broker holdings are identical to the pre-snapshot. |
+| §9 cleanup | GOTO sold in the Stockbit app at 26. The post-sell `008488L` snapshot shows 0 broker symbols; the store still holds 100 GOTO shares (`held_in_store_only`), which is expected because the sale was made outside the store. The `ALGO_*` variables were set per command, never exported. |
+| §10 trading limit | **Not run.** Needs a separate sitting. |
+
+**§3.4 attribution answer.** An order placed with `--account 008488L` lands in
+the sleeve. That rests on three observations:
+- The sleeve gained exactly the 1 GOTO lot.
+- The app's sleeve view showed the §5 reservation against the sleeve's own
+  15,000,000.
+- The core book's holdings did not move across either order.
+
+Withdrawable was read from the app, not from a CLI (§1: not wired), so the
+exact before/after cash figures were not captured programmatically. We did not
+capture whether the resting §5 order appeared in `/order/v2/list` for both
+accounts while it rested: the snapshots were taken before and after the
+order, not during it.
+
+**Cost.** About 111 IDR: the GOTO round trip lost 100 IDR (27 → 26 × 100
+shares) and paid about 11 IDR in fees. §5 cost nothing.
+
+**Bugs this session surfaced, all fixed 2026-10-13:**
+
+1. Carina/Exodus REST returns HTTP 403 to Go's default User-Agent before
+   auth. Every client now sends `feed.DefaultUserAgent`, and `account`
+   returns a separate `ErrForbidden` (`e6077c4`).
+2. The rebalance window was hardcoded to 15:00, after continuous trading
+   ends, so a live run could never trade. Fixed with `--rebalance-at HH:MM`.
+   The same commit makes Ctrl-C/SIGTERM shut down cleanly: reconcile and
+   close run on a fresh 30 s context and the run is recorded as `complete`
+   (`2f5a4e0`). `--limit-price-idr` was added for §5 (`f73f193`).
+3. Live fills recorded `fee_idr = 0`. They now use the paper sink's fee
+   schedule, `engine.ScheduleFeeIDR`; this is an estimate, because the
+   meaning of Carina's fee field is unconfirmed (`42411a0`).
+4. A failed pre-trade baseline left the run row at `running`. It now
+   records `error` and closes the sink (`94120fd`).
+5. `account-recon` for one account counted another account's fills from
+   the same store, so the sleeve's GOTO showed up in the core book. Each run
+   now records `run.account`, and positions and order ids are filtered by it
+   (`8fce31f`). Stores written before this fix, including all of today's,
+   read as account `""`. A sixth, smaller bug: one-sided divergences showed
+   `delta_shares: 0` (`12669dc`).
+
+**Still open.**
+- §10, the sleeve trading-limit probe.
+- Recording the attribution answer in plan 18 §3.4 and
+  `strategy/live/doc.go`'s open question, per §12.
+- B1's three consecutive real-fill sessions: this was session 1 of 3.
+- Ctrl-C still leaves a resting order resting. It is reported as
+  `not_terminal` and has to be cancelled in the app or by the 5-minute
+  `OpenTimeout`.
+
