@@ -896,6 +896,40 @@ tape cannot see, and cross-checks C's answer against reality.
       weaker exit condition than a cross-check between two independent methods.
 - [ ] Absorbs plan 17 §6.6 and completes [plan 15](./15-measured-fill-and-impact-calibration.md).
 
+**Where the fills come from (decided 2026-10-13).** Fills from a strategy carry
+the same B6 fields as calibration-only fills. The primary source is therefore the
+**live forward test of a Track A candidate** (BNBR, HRTA) at 1–2 lots, not a
+dedicated calibration programme.
+
+- **Why.** The candidate needs a live forward test regardless of B6, so its fees
+  and spread are paid either way. Merging the two removes the separate bill. A
+  dedicated 1-lot programme was costed at roughly 0.5–1M IDR for ~100 round
+  trips, and up to ~2M with low-liquidity names. About 0.40% of that is
+  fee + tax and the rest is spread.
+- **Trade-offs accepted:**
+  - **Slower.** A daily single-name signal trades a few times a month, so ~100
+    round trips takes months, not weeks.
+  - **Narrow coverage.** One or two names cover one or two buckets. A
+    calibration top-up fills only the buckets the candidates leave empty: a few
+    resting-order round trips, budgeted at ~100–300k IDR under
+    `strategy_id = "calibration"`.
+  - **The edge stays unproven.** BNBR's case rests on `eff_N=28` and five days
+    of one regime (§4.4a). Its forward test is a test, not income.
+- **Books stay separate.** Strategy fills are booked under their own
+  `strategy_id`, and cost metrics are computed from them per fill. A lucky
+  strategy run must not read as cheap execution, nor an unlucky one as
+  expensive execution.
+- **Impact needs size.** At 1–2 lots the impact term is buried under spread and
+  noise. These fills measure fill rate, queue wait, adverse selection and
+  slippage, but they cannot check C3's impact coefficients. That cross-check
+  needs a later, capped phase at a visible participation rate, roughly
+  5–20M IDR per order, scheduled only after the small-size fills are in.
+- [ ] **Prerequisite — the daily target emitter.** No job yet turns a Track A
+      signal into `target_portfolio.json` (§3.1). Build it first: a pre-open job
+      that writes the day's target for each forward-tested candidate. Then
+      `strategy-run --strategy rebalance` trades it. It is the first producer on
+      the seam.
+
 ### B7 — Ops
 
 - [ ] Deploy `strategy-run` with the same self-check discipline the collector has
@@ -1077,9 +1111,10 @@ not on a date.
 |---|---|---|---|
 | 1 | **Close B4.** Real-fill sessions 2–3 of B1. Verify that rebalance sells to zero when a symbol leaves the target. Identify the mechanism that routed orders to 008488L (§3.4: the order body carries no account field) | B | 3 clean real-fill sessions. Sell-to-zero observed live. Routing mechanism explained, or guarded by a both-account check that fails closed |
 | 2 | **B5 execution algo.** Slicing, participation cap, cancel-on-adverse, arrival-price benchmark | B | A replay run and a de-minimis live run, each with per-child-order slippage vs. arrival recorded |
-| 3 | **B6 calibration flow.** About 100 de-minimis round trips in liquid names, booked under `strategy_id = "calibration"` | B | **Track B done (§9).** Realized coefficients reconcile with C3 in all three buckets |
+| 2a | **Daily target emitter.** A pre-open job writes `target_portfolio.json` from the BNBR / HRTA signals | A→B | Writes a correct target on N consecutive days, checked against the research signal. Runs with `--sink paper` before live |
+| 3 | **B6, sourced from forward tests.** BNBR / HRTA live at 1–2 lots under their own `strategy_id`. Small `calibration` top-up only in buckets the candidates leave empty. Capped impact phase afterwards (B6 "Where the fills come from") | A+B | **Track B done (§9).** Realized coefficients reconcile with C3 in all three buckets |
 | 4 | **B7 ops + B8 decay.** Unattended deploy, supervision, alerting, automated trading-token rotation (a 401 from an expired token hit 2026-10-13), and the plan-11 decay loop with a global off-switch | B | Runs a full session with nobody watching. Kill-switch and divergence alerts fire in a drill |
-| A | **Candidates in parallel.** BNBR / HRTA forward tests (paper first, then de-minimis live). A-2.1 event-driven mechanisms. A-2.2 waits on accrued eligibility history (A-3) | A | A pre-registered pass on the **measured** hurdle and the always-long null gate. Re-judged after step 3 |
+| A | **Candidates in parallel.** BNBR / HRTA forward tests (paper first, then de-minimis live, which is step 3's fill source). A-2.1 event-driven mechanisms. A-2.2 waits on accrued eligibility history (A-3) | A | A pre-registered pass on the **measured** hurdle and the always-long null gate. Re-judged after step 3 |
 
 **"Automated alpha search" means automating the gauntlet, not the volume of
 candidates.** §1 already showed the failure mode: more throughput in a single
@@ -1118,7 +1153,10 @@ infrastructure-first has a runaway failure mode — gold-plating an execution st
 for a strategy that never arrives — and every prior wave lacked a falsifiable
 exit condition. Rough order of magnitude: ~100 round trips in liquid names at
 de-minimis size. The spend is a **research budget**, booked under
-`strategy_id = "calibration"` (ADR-0016 §6), never as strategy PnL.
+`strategy_id = "calibration"` (ADR-0016 §6), never as strategy PnL. *Since
+2026-10-13 most of these round trips come from candidate forward tests booked
+under their own `strategy_id`. Only the bucket top-up is `calibration` (B6,
+"Where the fills come from").*
 
 **Track A is done for this cycle when** either (a) a family in an A-2 region
 clears the *measured* hurdle and the always-long null gate on a pre-registered
