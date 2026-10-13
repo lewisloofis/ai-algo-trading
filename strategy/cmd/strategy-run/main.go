@@ -172,7 +172,7 @@ func run() error {
 
 	var priorState *priorStateConfig
 	if *priorStores != "" {
-		priorState = &priorStateConfig{glob: *priorStores, sinkKind: *sinkName}
+		priorState = &priorStateConfig{glob: *priorStores, sinkKind: *sinkName, account: strings.TrimSpace(*account)}
 	}
 	at, err := parseRebalanceAt(*rebalanceAtFlag)
 	if err != nil {
@@ -252,6 +252,7 @@ func run() error {
 		StrategyID: stratID,
 		InputSpec:  inputSpec,
 		BinaryHash: binaryHash(),
+		Account:    strings.TrimSpace(*account),
 	}); err != nil {
 		return err
 	}
@@ -374,6 +375,7 @@ func validateSinkSource(sinkName, source string) error {
 type priorStateConfig struct {
 	glob     string
 	sinkKind string
+	account  string // --account; prior positions are only this account's
 }
 
 // newStrategy builds the named strategy and returns it together with the
@@ -415,7 +417,7 @@ func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limi
 			LimitPriceIDR: limitPriceIDR,
 		}
 		if prior != nil && prior.glob != "" {
-			attempted, initial, err := loadPriorState(prior.glob, tp.StrategyID, prior.sinkKind)
+			attempted, initial, err := loadPriorState(prior.glob, tp.StrategyID, prior.sinkKind, prior.account)
 			if err != nil {
 				return nil, "", fmt.Errorf("recover restart state: %w", err)
 			}
@@ -449,7 +451,7 @@ func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limi
 // Each matched file's DerivedPositions reflects only THAT file's own fills
 // — one run's fills never appear in another run's store — so summing
 // positions across files is correct, not double-counting.
-func loadPriorState(glob, strategyID, sinkKind string) (map[string]bool, map[string]int, error) {
+func loadPriorState(glob, strategyID, sinkKind, account string) (map[string]bool, map[string]int, error) {
 	paths, err := globFiles(glob)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve %q: %w", glob, err)
@@ -472,7 +474,7 @@ func loadPriorState(glob, strategyID, sinkKind string) (map[string]bool, map[str
 			attempted[k] = true
 		}
 
-		dp, err := s.DerivedPositions(sinkKind)
+		dp, err := s.DerivedPositions(sinkKind, account)
 		if err != nil {
 			s.Close()
 			return nil, nil, fmt.Errorf("derived positions %s: %w", path, err)

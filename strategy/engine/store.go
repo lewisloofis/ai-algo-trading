@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS run (
     strategy_id TEXT NOT NULL,
     input_spec TEXT NOT NULL,
     binary_hash TEXT NOT NULL DEFAULT '',
+    account TEXT NOT NULL DEFAULT '',
     orders_attempted INTEGER,
     fills INTEGER,
     total_fees_idr INTEGER,
@@ -133,6 +134,9 @@ var migrations = []struct{ table, column, ddl string }{
 	{"fill", "run_id", "TEXT NOT NULL DEFAULT ''"},
 	{"attribution", "run_id", "TEXT NOT NULL DEFAULT ''"},
 	{"attribution", "as_of_date", "TEXT NOT NULL DEFAULT ''"},
+	// run.account: runs recorded before it existed read back as '' (no
+	// account), never as whichever account opens the file next.
+	{"run", "account", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // DecisionRow is one OnEvent observation.
@@ -335,6 +339,11 @@ type RunRow struct {
 	// BinaryHash identifies the binary that produced the run. Empty when it
 	// could not be computed; never faked.
 	BinaryHash string
+	// Account is the brokerage sub-account the run's orders were routed to
+	// (strategy-run --account). Empty for a run with no account. Position and
+	// order-id queries filter on it so one account's fills are never
+	// reconciled against another's (plan 18 §3.4).
+	Account string
 	// Counters is the final engine.Counters; zero-valued while running.
 	Counters Counters
 	// CountersValid is false until FinishRun writes the counters, so a reader
@@ -449,10 +458,10 @@ func (s *PostTradeStore) BeginRun(r RunRow) error {
 		r.Outcome = RunOutcomeRunning
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO run (run_id, started_ns, ended_ns, outcome, error, source, pacing, fill_mode, sink_kind, strategy_id, input_spec, binary_hash)
-		 VALUES (?, ?, NULL, ?, '', ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO run (run_id, started_ns, ended_ns, outcome, error, source, pacing, fill_mode, sink_kind, strategy_id, input_spec, binary_hash, account)
+		 VALUES (?, ?, NULL, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.RunID, r.StartedNs, r.Outcome, r.Source, r.Pacing, r.FillMode, r.SinkKind,
-		r.StrategyID, r.InputSpec, r.BinaryHash,
+		r.StrategyID, r.InputSpec, r.BinaryHash, r.Account,
 	)
 	if err != nil {
 		return fmt.Errorf("insert run: %w", err)

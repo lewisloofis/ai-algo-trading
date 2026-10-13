@@ -457,3 +457,43 @@ func TestShutdownContextIsLiveAndBounded(t *testing.T) {
 		t.Fatalf("deadline %v away, want (0, %v]", d, shutdownTimeout)
 	}
 }
+
+// TestLoadPriorState_PositionsAreScopedToAccount: a prior store holding fills
+// from two accounts' runs seeds the strategy with only --account's position.
+// Account numbers are synthetic.
+func TestLoadPriorState_PositionsAreScopedToAccount(t *testing.T) {
+	dir := t.TempDir()
+	s, err := engine.OpenStore(filepath.Join(dir, "prior.db"))
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	seq := int64(0)
+	for _, r := range []struct{ run, account, symbol string }{
+		{"run-sleeve", "TEST-SLEEVE", "GOTO"},
+		{"run-core", "TEST-CORE", "BBCA"},
+	} {
+		if err := s.BeginRun(engine.RunRow{RunID: r.run, StartedNs: 1, Source: "live", FillMode: "taker", SinkKind: "live", StrategyID: "s", InputSpec: r.symbol, Account: r.account}); err != nil {
+			t.Fatalf("BeginRun: %v", err)
+		}
+		orderID := "rebalance-" + r.symbol + "-2026-10-13"
+		seq++
+		if err := s.InsertIntent(engine.IntentRow{Seq: seq, RecvNs: 1, StrategyID: "s", Symbol: r.symbol, Side: "buy", PriceIDR: 100, Lots: 2, OrderID: orderID, SinkKind: "live"}); err != nil {
+			t.Fatalf("InsertIntent: %v", err)
+		}
+		seq++
+		if err := s.InsertFill(engine.FillRow{Seq: seq, RecvNs: 1, OrderID: orderID, FillPriceIDR: 100, FillLots: 2, SinkKind: "live"}); err != nil {
+			t.Fatalf("InsertFill: %v", err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	_, positions, err := loadPriorState(filepath.Join(dir, "*.db"), "s", "live", "TEST-SLEEVE")
+	if err != nil {
+		t.Fatalf("loadPriorState: %v", err)
+	}
+	if len(positions) != 1 || positions["GOTO"] != 2 {
+		t.Fatalf("positions = %v, want only GOTO: 2 lots", positions)
+	}
+}

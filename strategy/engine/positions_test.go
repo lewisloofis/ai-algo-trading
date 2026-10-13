@@ -34,7 +34,7 @@ func TestDerivedPositions_SingleBuy(t *testing.T) {
 	var seq int64
 	insertFilledOrder(t, store, &seq, "live", "BBCA", "buy", 9200, 10, 13800, 1)
 
-	got, err := store.DerivedPositions("live")
+	got, err := store.DerivedPositions("live", "")
 	if err != nil {
 		t.Fatalf("DerivedPositions: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestDerivedPositions_BuyThenPartialSell_MovingAverageCostBasis(t *testing.T
 	insertFilledOrder(t, store, &seq, "live", "BBCA", "buy", 9000, 10, 13500, 1)
 	insertFilledOrder(t, store, &seq, "live", "BBCA", "sell", 9500, 4, 9500, 2)
 
-	got, err := store.DerivedPositions("live")
+	got, err := store.DerivedPositions("live", "")
 	if err != nil {
 		t.Fatalf("DerivedPositions: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestDerivedPositions_FullyClosedPositionIsOmitted(t *testing.T) {
 	insertFilledOrder(t, store, &seq, "live", "BBCA", "buy", 9000, 10, 13500, 1)
 	insertFilledOrder(t, store, &seq, "live", "BBCA", "sell", 9500, 10, 23750, 2)
 
-	got, err := store.DerivedPositions("live")
+	got, err := store.DerivedPositions("live", "")
 	if err != nil {
 		t.Fatalf("DerivedPositions: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestDerivedPositions_FiltersBySinkKind(t *testing.T) {
 	insertFilledOrder(t, store, &seq, "paper", "BBCA", "buy", 9000, 10, 13500, 1)
 	insertFilledOrder(t, store, &seq, "live", "TLKM", "buy", 3000, 5, 2250, 2)
 
-	got, err := store.DerivedPositions("live")
+	got, err := store.DerivedPositions("live", "")
 	if err != nil {
 		t.Fatalf("DerivedPositions: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestDerivedPositions_FiltersBySinkKind(t *testing.T) {
 		t.Fatalf("DerivedPositions(\"live\") = %+v, want only TLKM", got)
 	}
 
-	paperOnly, err := store.DerivedPositions("paper")
+	paperOnly, err := store.DerivedPositions("paper", "")
 	if err != nil {
 		t.Fatalf("DerivedPositions: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestDerivedPositions_FiltersBySinkKind(t *testing.T) {
 
 func TestDerivedPositions_NoFillsReturnsEmpty(t *testing.T) {
 	store := newTestStore(t)
-	got, err := store.DerivedPositions("live")
+	got, err := store.DerivedPositions("live", "")
 	if err != nil {
 		t.Fatalf("DerivedPositions: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestOrderIDs_FiltersBySinkKindAndReturnsASet(t *testing.T) {
 	insertFilledOrder(t, store, &seq, "live", "TLKM", "sell", 3100, 5, 1937, 2)
 	insertFilledOrder(t, store, &seq, "paper", "AAAA", "buy", 500, 1, 75, 3)
 
-	got, err := store.OrderIDs("live")
+	got, err := store.OrderIDs("live", "")
 	if err != nil {
 		t.Fatalf("OrderIDs: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestOrderIDs_FiltersBySinkKindAndReturnsASet(t *testing.T) {
 func TestOrderIDs_NoOrdersReturnsEmptySet(t *testing.T) {
 	store := newTestStore(t)
 
-	got, err := store.OrderIDs("live")
+	got, err := store.OrderIDs("live", "")
 	if err != nil {
 		t.Fatalf("OrderIDs: %v", err)
 	}
@@ -380,5 +380,53 @@ func TestRealizedPnLIDRByDate_DisambiguatesSharedOrderIDByRecvNs(t *testing.T) {
 	// notional = 9,000,000, 80bps -> 72,000.
 	if want := int64(72000); got != want {
 		t.Errorf("RealizedPnLIDRByDate = %d, want %d (must not double-count the shared order_id's other fill)", got, want)
+	}
+}
+
+// TestDerivedPositionsAndOrderIDs_FilterByRunAccount pins the plan 18 §3.4
+// attribution fix: a store holding fills from runs against two different
+// accounts must report each account's positions and order ids only. Before
+// this, account-recon against the core book counted the sleeve's fills.
+// Account numbers are synthetic.
+func TestDerivedPositionsAndOrderIDs_FilterByRunAccount(t *testing.T) {
+	store := newTestStore(t)
+	var seq int64
+	if err := store.BeginRun(RunRow{RunID: "run-a", StartedNs: 1, Source: "live", FillMode: "taker", SinkKind: "live", StrategyID: "s", InputSpec: "X", Account: "TEST-SLEEVE"}); err != nil {
+		t.Fatalf("BeginRun a: %v", err)
+	}
+	sleeveID := insertFilledOrder(t, store, &seq, "live", "GOTO", "buy", 27, 1, 4, 1)
+	if err := store.BeginRun(RunRow{RunID: "run-b", StartedNs: 2, Source: "live", FillMode: "taker", SinkKind: "live", StrategyID: "s", InputSpec: "X", Account: "TEST-CORE"}); err != nil {
+		t.Fatalf("BeginRun b: %v", err)
+	}
+	coreID := insertFilledOrder(t, store, &seq, "live", "BBCA", "buy", 9200, 2, 2760, 2)
+
+	for _, tc := range []struct {
+		account, wantSymbol, wantID string
+	}{
+		{"TEST-SLEEVE", "GOTO", sleeveID},
+		{"TEST-CORE", "BBCA", coreID},
+	} {
+		got, err := store.DerivedPositions("live", tc.account)
+		if err != nil {
+			t.Fatalf("DerivedPositions(%s): %v", tc.account, err)
+		}
+		if len(got) != 1 || got[0].Symbol != tc.wantSymbol {
+			t.Errorf("DerivedPositions(live, %s) = %+v, want only %s", tc.account, got, tc.wantSymbol)
+		}
+		ids, err := store.OrderIDs("live", tc.account)
+		if err != nil {
+			t.Fatalf("OrderIDs(%s): %v", tc.account, err)
+		}
+		if _, ok := ids[tc.wantID]; len(ids) != 1 || !ok {
+			t.Errorf("OrderIDs(live, %s) = %+v, want only %s", tc.account, ids, tc.wantID)
+		}
+	}
+
+	none, err := store.DerivedPositions("live", "TEST-OTHER")
+	if err != nil {
+		t.Fatalf("DerivedPositions(other): %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("DerivedPositions(live, TEST-OTHER) = %+v, want none", none)
 	}
 }

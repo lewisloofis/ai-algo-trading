@@ -398,3 +398,49 @@ func TestFinishRunTouchesOnlyTheRunTable(t *testing.T) {
 		}
 	}
 }
+
+// TestMigrateAddsAccountToAPreExistingRunTable covers stores written before
+// run.account existed (every store up to 2026-10-13): the column is added, and
+// their runs read back with an empty account rather than failing.
+func TestMigrateAddsAccountToAPreExistingRunTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-account.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	_, err = old.Exec(`
+CREATE TABLE run (run_id TEXT PRIMARY KEY, started_ns INTEGER NOT NULL, ended_ns INTEGER, outcome TEXT NOT NULL DEFAULT 'running', error TEXT NOT NULL DEFAULT '', source TEXT NOT NULL, pacing TEXT NOT NULL DEFAULT '', fill_mode TEXT NOT NULL, sink_kind TEXT NOT NULL, strategy_id TEXT NOT NULL, input_spec TEXT NOT NULL, binary_hash TEXT NOT NULL DEFAULT '', orders_attempted INTEGER, fills INTEGER, total_fees_idr INTEGER, round_trips INTEGER, net_pnl_bps REAL);
+INSERT INTO run (run_id, started_ns, source, fill_mode, sink_kind, strategy_id, input_spec) VALUES ('old-run', 1, 'live', 'taker', 'live', 's', 'X');
+`)
+	if err != nil {
+		t.Fatalf("build pre-account schema: %v", err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore on a pre-account file: %v", err)
+	}
+	defer store.Close()
+
+	var account string
+	if err := store.db.QueryRow(`SELECT account FROM run WHERE run_id = 'old-run'`).Scan(&account); err != nil {
+		t.Fatalf("select account: %v", err)
+	}
+	if account != "" {
+		t.Fatalf("pre-existing run account = %q, want empty", account)
+	}
+	row := testRunRow("new-run")
+	row.Account = "TEST-SLEEVE"
+	if err := store.BeginRun(row); err != nil {
+		t.Fatalf("BeginRun after migration: %v", err)
+	}
+	if err := store.db.QueryRow(`SELECT account FROM run WHERE run_id = 'new-run'`).Scan(&account); err != nil {
+		t.Fatalf("select new account: %v", err)
+	}
+	if account != "TEST-SLEEVE" {
+		t.Fatalf("new run account = %q, want TEST-SLEEVE", account)
+	}
+}

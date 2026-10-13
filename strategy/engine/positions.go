@@ -70,14 +70,20 @@ func (a *lotAccount) applySell(shares float64) {
 // pure noise, so both sides of the join are filtered to the requested kind.
 // A symbol whose fills net to zero shares (fully closed) is omitted — it is
 // not currently "held" by either side.
-func (s *PostTradeStore) DerivedPositions(sinkKind string) ([]DerivedPosition, error) {
+//
+// account is load-bearing the same way: only fills from runs whose
+// run.account equals it are counted, so a store holding sleeve fills never
+// reports them as the core book's (plan 18 §3.4). Rows with no run header,
+// and runs recorded before run.account existed, count as account "".
+func (s *PostTradeStore) DerivedPositions(sinkKind, account string) ([]DerivedPosition, error) {
 	rows, err := s.db.Query(`
 		SELECT oi.symbol, oi.side, f.fill_price_idr, f.fill_lots, f.fee_idr
 		FROM fill f
 		JOIN order_intent oi ON oi.order_id = f.order_id
-		WHERE f.sink_kind = ? AND oi.sink_kind = ?
+		LEFT JOIN run r ON r.run_id = oi.run_id
+		WHERE f.sink_kind = ? AND oi.sink_kind = ? AND COALESCE(r.account, '') = ?
 		ORDER BY oi.symbol, f.recv_ns, f.seq
-	`, sinkKind, sinkKind)
+	`, sinkKind, sinkKind, account)
 	if err != nil {
 		return nil, fmt.Errorf("derived positions: query fills: %w", err)
 	}
@@ -136,9 +142,14 @@ func (s *PostTradeStore) DerivedPositions(sinkKind string) ([]DerivedPosition, e
 // sub-account's orders with no account attribution at all: order_id is the
 // only reliable discriminator between "ours" and "some other account's",
 // and the store is the only place that knows which order_ids are ours (see
-// strategy/account.OwnReservedSellShares).
-func (s *PostTradeStore) OrderIDs(sinkKind string) (map[string]struct{}, error) {
-	rows, err := s.db.Query(`SELECT order_id FROM order_intent WHERE sink_kind = ?`, sinkKind)
+// strategy/account.OwnReservedSellShares). Filtered by run account exactly
+// as DerivedPositions is.
+func (s *PostTradeStore) OrderIDs(sinkKind, account string) (map[string]struct{}, error) {
+	rows, err := s.db.Query(`
+		SELECT oi.order_id FROM order_intent oi
+		LEFT JOIN run r ON r.run_id = oi.run_id
+		WHERE oi.sink_kind = ? AND COALESCE(r.account, '') = ?
+	`, sinkKind, account)
 	if err != nil {
 		return nil, fmt.Errorf("order ids: query: %w", err)
 	}

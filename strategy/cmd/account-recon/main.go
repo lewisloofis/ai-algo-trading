@@ -68,7 +68,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	defer store.Close()
 
-	derived, err := store.DerivedPositions(*sinkKind)
+	derived, err := store.DerivedPositions(*sinkKind, *accNo)
 	if err != nil {
 		fmt.Fprintf(stderr, "account-recon: read derived positions: %v\n", err)
 		return 1
@@ -78,7 +78,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// resting orders" and "some other sub-account's", since /order/v2/list
 	// returns every sub-account's orders with no account attribution at all
 	// (see account.OpenOrders' doc comment).
-	ourOrderIDs, err := store.OrderIDs(*sinkKind)
+	ourOrderIDs, err := store.OrderIDs(*sinkKind, *accNo)
 	if err != nil {
 		fmt.Fprintf(stderr, "account-recon: read our order ids: %v\n", err)
 		return 1
