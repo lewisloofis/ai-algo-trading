@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"collector/feed"
 )
 
 // This file mirrors strategy/account/client.go's transport shape (host
@@ -201,6 +203,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	if err != nil {
 		return nil, fmt.Errorf("live: build request for %s: %w", path, err)
 	}
+	req.Header.Set("User-Agent", feed.DefaultUserAgent)
 	req.Header.Set("Authorization", "Bearer "+c.tokens.TradingToken())
 	req.Header.Set("Accept", "application/json")
 	if jsonBody != nil {

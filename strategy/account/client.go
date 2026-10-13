@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"collector/feed"
 )
 
 // DefaultHost is the production Carina host, used when New is called with an
@@ -83,9 +85,15 @@ func New(host, accNo string, tokens TokenSource, httpClient *http.Client) (*Clie
 	return &Client{host: strings.TrimRight(host, "/"), accNo: accNo, tokens: tokens, http: httpClient}, nil
 }
 
-// ErrUnauthorized is returned when the trading token is rejected (HTTP 401
-// or 403). It is a distinct, checkable error — never folded into an empty
-// result. This repo has already shipped the bug where an expired token made
+// ErrForbidden is returned on HTTP 403. It is deliberately not ErrUnauthorized:
+// the WAF in front of Carina answers 403 to a default library User-Agent
+// before auth is checked, so a 403 does not by itself mean the token is bad.
+// It is just as much a hard error as ErrUnauthorized — callers must never
+// degrade it to an empty result.
+var ErrForbidden = errors.New("account: HTTP 403 forbidden — may be a WAF/User-Agent block or a trading-token problem")
+
+// ErrUnauthorized is returned when the trading token is rejected (HTTP 401).
+// It is a distinct, checkable error — never folded into an empty result. This repo has already shipped the bug where an expired token made
 // an endpoint 401, the caller degraded to "nothing found", and a downstream
 // process wrote a confident verdict over that silence (see
 // docs/plans/18-alpha-and-infrastructure-split.md §4.4). Here that failure
@@ -125,6 +133,7 @@ func (c *Client) get(ctx context.Context, path string, query url.Values) ([]byte
 	if err != nil {
 		return nil, fmt.Errorf("account: build request for %s: %w", path, err)
 	}
+	req.Header.Set("User-Agent", feed.DefaultUserAgent)
 	req.Header.Set("Authorization", "Bearer "+c.tokens.TradingToken())
 	req.Header.Set("Accept", "application/json")
 
@@ -136,8 +145,11 @@ func (c *Client) get(ctx context.Context, path string, query url.Values) ([]byte
 
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, bodyReadLimit))
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, fmt.Errorf("account: %s: %w", path, ErrUnauthorized)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("account: %s: HTTP %d: %w", path, resp.StatusCode, ErrForbidden)
 	}
 	if resp.StatusCode/100 != 2 {
 		return nil, &APIError{Path: path, Status: resp.StatusCode, Body: truncate(string(body), bodySnippetLimit)}

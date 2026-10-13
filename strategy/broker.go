@@ -130,6 +130,7 @@ func (b *Broker) place(sig Signal, lots int, price float64) error {
 
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", b.cfg.CarinaHost+path, bytes.NewReader(body))
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Authorization", "Bearer "+b.session.TradingToken())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Platform", "android")

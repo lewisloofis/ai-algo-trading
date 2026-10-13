@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"collector/feed"
 )
 
 // Default hosts. The split is not cosmetic: the market-time endpoints are
@@ -26,7 +28,7 @@ const (
 // LiveDataSource came to pin the same string. A 403 here would surface as
 // "the gate could not answer", i.e. every order denied, so the header is
 // part of the contract rather than a nicety.
-const DefaultUserAgent = "okhttp/4.9.3"
+const DefaultUserAgent = feed.DefaultUserAgent
 
 // bodyReadLimit caps how much of a response body get will read, bounding
 // memory on an unexpectedly large or non-JSON response.

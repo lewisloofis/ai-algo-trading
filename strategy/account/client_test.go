@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"collector/feed"
 )
 
 // fakeTokenSource is a TokenSource that returns a fixed token, and records
@@ -156,18 +158,59 @@ func TestPortfolioList_EmptyBodyIsAnError(t *testing.T) {
 	}
 }
 
-func TestGet_401And403ReturnErrUnauthorized(t *testing.T) {
-	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
-		srv, _ := serveFixture(t, status, "")
-		c := newTestClient(t, srv.URL, &fakeTokenSource{token: "expired"}, srv.Client())
+func TestGet_401ReturnsErrUnauthorized(t *testing.T) {
+	srv, _ := serveFixture(t, http.StatusUnauthorized, "")
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "expired"}, srv.Client())
 
-		_, err := c.PortfolioList(context.Background())
-		if !errors.Is(err, ErrUnauthorized) {
-			t.Errorf("status %d: PortfolioList error = %v, want errors.Is(err, ErrUnauthorized)", status, err)
+	_, err := c.PortfolioList(context.Background())
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("PortfolioList error = %v, want errors.Is(err, ErrUnauthorized)", err)
+	}
+	if errors.Is(err, ErrForbidden) {
+		t.Errorf("401 error %v must not match ErrForbidden", err)
+	}
+	if strings.Contains(err.Error(), "expired") {
+		t.Errorf("error %q leaked the token", err.Error())
+	}
+}
+
+// TestGet_403ReturnsErrForbiddenDistinctFrom401 pins that a 403 is not
+// reported as a rejected token: it is usually the WAF's User-Agent block,
+// and "check SB_TRADING_ACCESS_TOKEN" sends the operator the wrong way. It
+// is still a hard error, never an empty result.
+func TestGet_403ReturnsErrForbiddenDistinctFrom401(t *testing.T) {
+	srv, _ := serveFixture(t, http.StatusForbidden, "")
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "expired"}, srv.Client())
+
+	_, err := c.PortfolioList(context.Background())
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("PortfolioList error = %v, want errors.Is(err, ErrForbidden)", err)
+	}
+	if errors.Is(err, ErrUnauthorized) {
+		t.Errorf("403 error %v must not match ErrUnauthorized", err)
+	}
+	for _, want := range []string{"403", "WAF", "User-Agent"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("403 error %q does not mention %q", err.Error(), want)
 		}
-		if strings.Contains(err.Error(), "expired") {
-			t.Errorf("status %d: error %q leaked the token", status, err.Error())
-		}
+	}
+	if strings.Contains(err.Error(), "expired") {
+		t.Errorf("error %q leaked the token", err.Error())
+	}
+}
+
+func TestGet_SendsDefaultUserAgent(t *testing.T) {
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	c := newTestClient(t, srv.URL, &fakeTokenSource{token: "t"}, srv.Client())
+
+	_, _ = c.PortfolioList(context.Background())
+	if gotUA != feed.DefaultUserAgent {
+		t.Errorf("User-Agent = %q, want %q", gotUA, feed.DefaultUserAgent)
 	}
 }
 

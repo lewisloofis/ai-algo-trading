@@ -463,3 +463,28 @@ func TestHasLoginChallengeNegativeForTokenPair(t *testing.T) {
 		t.Error("expected hasLoginChallenge=false for normal token-pair response")
 	}
 }
+
+// ---------- User-Agent test ----------
+
+// TestRequestsSendDefaultUserAgent pins the WAF workaround: Go's default
+// "Go-http-client/1.1" is answered 403 before auth is checked, so every
+// request built through baseHeaders must carry DefaultUserAgent.
+func TestRequestsSendDefaultUserAgent(t *testing.T) {
+	t.Parallel()
+
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"key":"k"}}`))
+	}))
+	defer srv.Close()
+
+	s := NewSession(Config{ExodusHost: srv.URL, AccessToken: "some-access-token"})
+	if _, err := s.GetWebsocketKey(); err != nil {
+		t.Fatalf("GetWebsocketKey error: %v", err)
+	}
+	if gotUA != DefaultUserAgent {
+		t.Errorf("User-Agent = %q, want %q", gotUA, DefaultUserAgent)
+	}
+}

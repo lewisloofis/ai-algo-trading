@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"collector/feed"
 )
 
 func TestNewClient_UnarmedFailsAndSendsNothing(t *testing.T) {
@@ -122,5 +124,34 @@ func TestClassifyOrderError_UnrecognisedBodyIsAPIError(t *testing.T) {
 	}
 	if apiErr.Status != http.StatusInternalServerError {
 		t.Errorf("APIError.Status = %d, want 500", apiErr.Status)
+	}
+}
+
+func TestDo_SendsDefaultUserAgent(t *testing.T) {
+	var gotUA string
+	srv := routeServer(t, map[string]http.HandlerFunc{
+		pathList: func(w http.ResponseWriter, r *http.Request) {
+			gotUA = r.Header.Get("User-Agent")
+			w.WriteHeader(http.StatusUnauthorized)
+		},
+		pathBuy: func(w http.ResponseWriter, r *http.Request) {
+			gotUA = r.Header.Get("User-Agent")
+			w.WriteHeader(http.StatusUnauthorized)
+		},
+	})
+	c := newTestClient(t, srv)
+
+	for name, call := range map[string]func() error{
+		"GET": func() error { _, err := c.List(context.Background()); return err },
+		"POST": func() error {
+			_, err := c.postJSON(context.Background(), pathBuy, map[string]string{"k": "v"})
+			return err
+		},
+	} {
+		gotUA = ""
+		_ = call()
+		if gotUA != feed.DefaultUserAgent {
+			t.Errorf("%s: User-Agent = %q, want %q", name, gotUA, feed.DefaultUserAgent)
+		}
 	}
 }

@@ -133,7 +133,15 @@ func (s *Session) UserID() string {
 	return s.userID
 }
 
+// DefaultUserAgent is sent on every Stockbit HTTP request, here and in the
+// strategy clients that share this constant. It is not decoration: the WAF
+// answers 403 (body "null") to Go's default "Go-http-client/1.1" before auth
+// is even checked, while this okhttp string reaches auth and gets a real
+// 401 for a bad token.
+const DefaultUserAgent = "okhttp/4.9.3"
+
 func (s *Session) baseHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", DefaultUserAgent)
 	req.Header.Set("X-Platform", "android")
 	req.Header.Set("X-AppVersion", "7.0.0")
 	req.Header.Set("X-DeviceType", "algo-prototype")

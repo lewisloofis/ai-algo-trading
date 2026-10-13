@@ -157,6 +157,7 @@ func resolveEnv(s *string, envKey string) {
 // the mobile client (not the web app) consistently across the whole flow:
 // X-Platform: android also skips the reCAPTCHA the web login path requires.
 func androidHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", feed.DefaultUserAgent)
 	req.Header.Set("X-Platform", "android")
 	req.Header.Set("X-AppVersion", "7.0.0")
 	req.Header.Set("X-DeviceType", "algo-prototype")

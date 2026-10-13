@@ -85,7 +85,8 @@ func NewDailyPnL(client *Client, store *engine.PostTradeStore, sinkKind string, 
 // number this returns for a precise day-scoped PnL.
 //
 // An error from either half is returned as-is, never degraded to a 0 PnL.
-// In particular a 401/403 from PortfolioList surfaces as ErrUnauthorized
+// In particular a 401 (ErrUnauthorized) or 403 (ErrForbidden) from
+// PortfolioList surfaces as an error
 // (wrapped, so errors.Is still matches) — this package has already shipped
 // the bug where an expired token's 401 became an empty result read as a
 // confident "nothing found" (see ErrUnauthorized's doc comment), and

@@ -15,6 +15,11 @@ import (
 	"time"
 )
 
+// userAgent: the WAF 403s Go's default "Go-http-client/1.1" before auth is
+// checked. Kept as a local literal (not feed.DefaultUserAgent) so this
+// prototype stays stdlib-only.
+const userAgent = "okhttp/4.9.3"
+
 var httpClient = &http.Client{Timeout: 20 * time.Second}
 
 // Session holds both token sets and serialises refreshes.
@@ -58,6 +63,7 @@ func (s *Session) UserID() string {
 }
 
 func (s *Session) baseHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("X-Platform", "android")
 	req.Header.Set("X-AppVersion", "7.0.0")
 	req.Header.Set("X-DeviceType", "algo-prototype")
