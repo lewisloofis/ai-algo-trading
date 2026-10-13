@@ -430,3 +430,31 @@ func TestDerivedPositionsAndOrderIDs_FilterByRunAccount(t *testing.T) {
 		t.Errorf("DerivedPositions(live, TEST-OTHER) = %+v, want none", none)
 	}
 }
+
+// TestDerivedPositions_SameOrderIDInTwoRunsIsNotDoubleCounted: rebalance
+// order ids are deterministic (rebalance-<SYM>-<date>), so two runs sharing
+// one store file can each record an intent with the same id. A fill must
+// join only its own run's intent, or it is counted once per matching intent.
+func TestDerivedPositions_SameOrderIDInTwoRunsIsNotDoubleCounted(t *testing.T) {
+	store := newTestStore(t)
+	for i, run := range []string{"run-a", "run-b"} {
+		if err := store.BeginRun(RunRow{RunID: run, StartedNs: int64(i + 1), Source: "live", FillMode: "taker", SinkKind: "live", StrategyID: "s", InputSpec: "X", Account: "TEST-SLEEVE"}); err != nil {
+			t.Fatalf("BeginRun %s: %v", run, err)
+		}
+		if err := store.InsertIntent(IntentRow{Seq: int64(10*i + 1), RecvNs: 1, StrategyID: "s", Symbol: "GOTO", Side: "buy", PriceIDR: 27, Lots: 1, OrderID: "rebalance-GOTO-2026-10-13", SinkKind: "live"}); err != nil {
+			t.Fatalf("InsertIntent %s: %v", run, err)
+		}
+	}
+	// Only run-b's order filled.
+	if err := store.InsertFill(FillRow{Seq: 12, RecvNs: 2, OrderID: "rebalance-GOTO-2026-10-13", FillPriceIDR: 27, FillLots: 1, FeeIDR: 4, SinkKind: "live"}); err != nil {
+		t.Fatalf("InsertFill: %v", err)
+	}
+
+	got, err := store.DerivedPositions("live", "TEST-SLEEVE")
+	if err != nil {
+		t.Fatalf("DerivedPositions: %v", err)
+	}
+	if len(got) != 1 || got[0].Shares != 100 {
+		t.Fatalf("DerivedPositions = %+v, want GOTO 100 shares (one fill, counted once)", got)
+	}
+}

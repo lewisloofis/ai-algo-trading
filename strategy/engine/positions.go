@@ -71,6 +71,10 @@ func (a *lotAccount) applySell(shares float64) {
 // A symbol whose fills net to zero shares (fully closed) is omitted — it is
 // not currently "held" by either side.
 //
+// The join also matches run_id: rebalance order ids are deterministic per
+// symbol and day, so two runs sharing a file can record the same order_id,
+// and an order_id-only join counts each fill once per matching intent.
+//
 // account is load-bearing the same way: only fills from runs whose
 // run.account equals it are counted, so a store holding sleeve fills never
 // reports them as the core book's (plan 18 §3.4). Rows with no run header,
@@ -79,7 +83,7 @@ func (s *PostTradeStore) DerivedPositions(sinkKind, account string) ([]DerivedPo
 	rows, err := s.db.Query(`
 		SELECT oi.symbol, oi.side, f.fill_price_idr, f.fill_lots, f.fee_idr
 		FROM fill f
-		JOIN order_intent oi ON oi.order_id = f.order_id
+		JOIN order_intent oi ON oi.order_id = f.order_id AND oi.run_id = f.run_id
 		LEFT JOIN run r ON r.run_id = oi.run_id
 		WHERE f.sink_kind = ? AND oi.sink_kind = ? AND COALESCE(r.account, '') = ?
 		ORDER BY oi.symbol, f.recv_ns, f.seq
@@ -282,7 +286,7 @@ func (s *PostTradeStore) RealizedPnLIDRByDate(sinkKind, asOfDate string) (int64,
 	rows, err := s.db.Query(`
 		SELECT a.net_pnl_bps, f.fill_price_idr, f.fill_lots
 		FROM attribution a
-		JOIN fill f ON f.order_id = a.entry_order_id AND f.recv_ns = a.entry_recv_ns
+		JOIN fill f ON f.order_id = a.entry_order_id AND f.recv_ns = a.entry_recv_ns AND f.run_id = a.run_id
 		WHERE a.as_of_date = ? AND f.sink_kind = ?
 	`, asOfDate, sinkKind)
 	if err != nil {
