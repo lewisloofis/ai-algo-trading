@@ -152,6 +152,9 @@ func (s *Sink) applySnapshot(t *trackedOrder, snap Snapshot, now time.Time) (pen
 	var pf pendingFill
 	var emit bool
 
+	if lotDone := int(snap.Qty.LotDone); lotDone > t.brokerLotDone {
+		t.brokerLotDone = lotDone
+	}
 	deltaLots := int(snap.Qty.LotDone) - t.LotsFilled
 	if deltaLots > 0 {
 		priceIDR, usedMatchedTotal := s.marginalFillPriceIDR(t, snap, deltaLots)

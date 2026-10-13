@@ -69,7 +69,7 @@ func TestDo_SendsBearerAuthorizationHeader(t *testing.T) {
 	if _, err := c.List(context.Background()); err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if !tokens.asked {
+	if !tokens.asked.Load() {
 		t.Fatal("client never asked TokenSource for a token")
 	}
 	if want := "Bearer secret-trading-token"; gotAuth != want {

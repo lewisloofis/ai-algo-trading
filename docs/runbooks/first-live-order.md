@@ -114,15 +114,16 @@ still written in two layers, but Layer 2 is now executable:
   - `--rebalance-at HH:MM` (WIB) opens the rebalance window. Its default,
     15:00, is after continuous trading ends, so a run without it never
     trades — always pass an in-session time (e.g. two minutes from now).
-  - **Stopping a run: Ctrl-C (SIGINT) or SIGTERM.** The run cancels, then the
-    live sink's `ReconcileTerminal` + `Close`, the final status write and
-    `FinishRun` all run on a fresh 30s timeout, and the run row records
-    `complete`. A second Ctrl-C during that shutdown force-exits and skips
-    them. Ctrl-C does **not** cancel a resting order: anything still OPEN is
-    logged as `RECONCILE DIVERGENCE — not_terminal=[...]` and must be
-    cancelled in the Stockbit app. While the process runs, the live sink
-    auto-cancels any order still OPEN after 5 minutes (`live.DefaultOpenTimeout`),
-    so for §5 keep it running ~6 minutes before Ctrl-C.
+  - **Stopping a run: Ctrl-C (SIGINT) or SIGTERM.** With `--sink live`, the
+    first Ctrl-C **cancels every resting order** and refuses new ones. It then
+    waits up to 30s, with the feed and order watcher still running, until each
+    order is terminal and any last fill is recorded. Then `ReconcileTerminal`
+    + `Close`, the final status write and `FinishRun` run. An order still not
+    terminal after that is logged as `RECONCILE DIVERGENCE — not_terminal=[...]`;
+    the run then ends as **`error`**, and you must cancel that order in the
+    Stockbit app. A second Ctrl-C force-exits immediately and skips all of
+    this. While the process runs, the live sink also auto-cancels any order
+    still OPEN after 5 minutes (`live.DefaultOpenTimeout`).
   - The order id is `rebalance-<SYMBOL>-<date>`: **one rebalance order per
     symbol per trading day.** §5 and §8 on the same day must use different
     symbols (a same-symbol rerun is skipped via `--prior-stores`, or reuses
@@ -521,7 +522,6 @@ shares) and paid about 11 IDR in fees. §5 cost nothing.
   claim in today's token that differs from the 2026-09-14 `acn=0001958`. The
   operator can check the token's claims in their own terminal; the token must
   never be pasted into chat.
-- Ctrl-C still leaves a resting order resting. It is reported as
-  `not_terminal` and has to be cancelled in the app, or by the 5-minute
-  `OpenTimeout` if the process is still running.
+- ~~Ctrl-C leaves a resting order resting~~. Fixed the same day: Ctrl-C now
+  cancels open orders and waits for them to settle (see §1's flag notes).
 

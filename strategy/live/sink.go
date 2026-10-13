@@ -62,6 +62,7 @@ type Sink struct {
 	byBroker map[string]string        // brokerOrderID -> clientOrderID
 	uiRefs   map[string]string        // clientOrderID -> ui_ref (see uiref.go)
 	baseline map[string]struct{}      // brokerOrderID set present before this run started (see Baseline)
+	draining bool                     // set by Drain; Submit refuses new orders
 
 	fills     chan engine.AsyncFill
 	done      chan struct{}
@@ -80,6 +81,10 @@ type trackedOrder struct {
 	ackAlerted      bool
 	openSince       time.Time
 	cancelRequested bool // OpenTimeout cancel already issued; do not resend every poll tick
+	// brokerLotDone is the broker's latest lot_done. LotsFilled catches up
+	// to it only once the matching fill is handed off on Fills(), so
+	// LotsFilled < brokerLotDone means a fill is still in flight (Drain).
+	brokerLotDone int
 }
 
 // Options configures NewSink. Only Client is required; every other field
@@ -179,6 +184,10 @@ func (s *Sink) Submit(ctx context.Context, intent engine.OrderIntent) (engine.Or
 	}
 
 	s.mu.Lock()
+	if s.draining {
+		s.mu.Unlock()
+		return "", fmt.Errorf("live: Submit %s: %w", intent.OrderID, ErrShuttingDown)
+	}
 	uiRef, seen := s.uiRefs[intent.OrderID]
 	if !seen {
 		// DeterministicUIRef, not NewUIRef: see its doc comment. Keying on

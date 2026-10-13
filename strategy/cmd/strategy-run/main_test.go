@@ -536,3 +536,88 @@ func TestBaselineThenRun_NoLiveSinkRunsEngine(t *testing.T) {
 		t.Fatalf("baselineThenRun = (%+v, %v), want (%+v, nil)", got, err, want)
 	}
 }
+
+// fakeDrainer records when Drain ran relative to the run being stopped.
+type fakeDrainer struct {
+	drained  chan struct{}
+	runAlive func() bool
+	sawAlive bool
+}
+
+func (f *fakeDrainer) Drain(ctx context.Context) error {
+	f.sawAlive = f.runAlive()
+	close(f.drained)
+	return nil
+}
+
+// TestStopOnSignal_DrainsBeforeStoppingTheRun: on a signal the live sink is
+// drained while the run (engine + poller) is still alive, and only then is
+// the run cancelled — so fills from cancelled-or-filled orders still reach
+// the store.
+func TestStopOnSignal_DrainsBeforeStoppingTheRun(t *testing.T) {
+	sigCtx, signal := context.WithCancel(context.Background())
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	d := &fakeDrainer{drained: make(chan struct{}), runAlive: func() bool { return runCtx.Err() == nil }}
+
+	done := make(chan struct{})
+	go func() { stopOnSignal(sigCtx, runCtx, d, cancelRun, time.Second); close(done) }()
+	signal()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stopOnSignal did not return after a signal")
+	}
+	if !d.sawAlive {
+		t.Fatal("Drain ran after the run was already cancelled")
+	}
+	if runCtx.Err() == nil {
+		t.Fatal("run was not cancelled after the drain")
+	}
+}
+
+func TestStopOnSignal_RunEndingOnItsOwnSkipsDrain(t *testing.T) {
+	sigCtx, stopSig := context.WithCancel(context.Background())
+	defer stopSig()
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	d := &fakeDrainer{drained: make(chan struct{}), runAlive: func() bool { return true }}
+
+	done := make(chan struct{})
+	go func() { stopOnSignal(sigCtx, runCtx, d, cancelRun, time.Second); close(done) }()
+	cancelRun()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stopOnSignal did not return after the run ended")
+	}
+	select {
+	case <-d.drained:
+		t.Fatal("Drain ran although no signal arrived")
+	default:
+	}
+}
+
+func TestStopOnSignal_PaperRunHasNoDrainer(t *testing.T) {
+	sigCtx, signal := context.WithCancel(context.Background())
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	signal()
+	stopOnSignal(sigCtx, runCtx, nil, cancelRun, time.Second)
+	if runCtx.Err() == nil {
+		t.Fatal("paper run was not cancelled on a signal")
+	}
+}
+
+// TestReconcileErr: an order still not terminal at shutdown is a failed run,
+// not a clean one; other divergences are logged only.
+func TestReconcileErr(t *testing.T) {
+	if err := reconcileErr(live.Divergence{NotTerminal: []string{"rebalance-BBCA-2026-10-13"}}); err == nil {
+		t.Fatal("want an error for a non-terminal order at shutdown")
+	}
+	if err := reconcileErr(live.Divergence{Unbaselined: []string{"99"}}); err != nil {
+		t.Fatalf("unbaselined orders alone must not fail the run, got %v", err)
+	}
+	if err := reconcileErr(live.Divergence{}); err != nil {
+		t.Fatalf("clean divergence: %v", err)
+	}
+}

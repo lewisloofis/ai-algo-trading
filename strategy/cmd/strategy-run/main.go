@@ -212,13 +212,27 @@ func run() error {
 			return err
 		}
 	}
-	// SIGINT/SIGTERM cancels ctx so engine.Run returns and the shutdown below
-	// (live reconcile + close, final status, FinishRun) still runs. Before
-	// this, Ctrl-C killed the process outright and left the run row at
-	// "running". stopSignals is called once engine.Run returns, so a second
-	// Ctrl-C during shutdown falls back to the default and kills immediately.
-	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// ctx is the run's own context (source, poller, engine). A SIGINT/SIGTERM
+	// does not cancel it directly: stopOnSignal first drains the live sink
+	// (cancel resting orders, wait for their fills to reach the engine) and
+	// only then cancels ctx, so engine.Run returns and the shutdown below
+	// (reconcile + close, final status, FinishRun) runs. The first signal
+	// also restores default signal handling, so a second Ctrl-C kills the
+	// process immediately.
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	go func() { <-sigCtx.Done(); stopSignals() }()
+	ctx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	var drain drainer
+	if liveSink != nil {
+		drain = liveSink
+	}
+	stopperDone := make(chan struct{})
+	go func() {
+		stopOnSignal(sigCtx, ctx, drain, cancelRun, shutdownTimeout)
+		close(stopperDone)
+	}()
 
 	src, err := newSource(ctx, *source, *segmentsGlob, *symbolsFlag, *pacing)
 	if err != nil {
@@ -275,11 +289,10 @@ func run() error {
 	counters, runErr := baselineThenRun(ctx, liveSink, func() (engine.Counters, error) {
 		return engine.Run(ctx, src, strat, sink, store, stratID, engine.WithProgress(progress))
 	})
-	interrupted := ctx.Err() != nil
+	interrupted := sigCtx.Err() != nil
+	cancelRun() // before stopSignals: stopOnSignal must see the run already over
 	stopSignals()
-	if interrupted {
-		log.Printf("strategy-run: signal received — shutting down (Ctrl-C again to force exit)")
-	}
+	<-stopperDone
 	runErr = runErrAfterShutdown(runErr, interrupted)
 
 	if liveSink != nil {
@@ -287,7 +300,9 @@ func run() error {
 		// orders end up" is worth knowing whether the run ended cleanly or
 		// not — see reconcileAndClose's doc comment.
 		shutdownCtx, cancelShutdown := newShutdownContext()
-		reconcileAndClose(shutdownCtx, liveSink, runID)
+		if err := reconcileAndClose(shutdownCtx, liveSink, runID); err != nil && runErr == nil {
+			runErr = err
+		}
 		cancelShutdown()
 	}
 
@@ -342,7 +357,11 @@ func baselineThenRun(ctx context.Context, liveSink *live.Sink, runEngine func() 
 // Divergence has no dedicated schema of its own and inventing one is out of
 // this task's scope), then closes the sink. Called once, unconditionally,
 // right after engine.Run returns.
-func reconcileAndClose(ctx context.Context, sink *live.Sink, runID string) {
+//
+// It returns reconcileErr's verdict, so an order still resting at shutdown
+// fails the run instead of letting it end "complete". A ReconcileTerminal
+// call that itself fails is logged only: it says nothing about the orders.
+func reconcileAndClose(ctx context.Context, sink *live.Sink, runID string) error {
 	div, err := sink.ReconcileTerminal(ctx)
 	switch {
 	case err != nil:
@@ -356,6 +375,53 @@ func reconcileAndClose(ctx context.Context, sink *live.Sink, runID string) {
 	if err := sink.Close(); err != nil {
 		log.Printf("live: run %s: close: %v", runID, err)
 	}
+	if err != nil {
+		return nil
+	}
+	return reconcileErr(div)
+}
+
+// reconcileErr fails the run when any order this run placed is still not
+// terminal at shutdown: it may yet fill with nothing recording it. Lot
+// mismatches and unbaselined orders stay log-only, as before (an
+// unbaselined order is usually a manual order placed in the app).
+func reconcileErr(div live.Divergence) error {
+	if len(div.NotTerminal) == 0 {
+		return nil
+	}
+	return fmt.Errorf("live: orders still not terminal at shutdown %v — cancel them in the Stockbit app; any later fill is not in the store", div.NotTerminal)
+}
+
+// drainer is the live sink's operator-stop hook (live.Sink.Drain).
+type drainer interface {
+	Drain(ctx context.Context) error
+}
+
+// stopOnSignal waits for either a signal (sigCtx) or the run ending on its
+// own (runCtx). On a signal while the run is still alive it drains d first,
+// bounded by timeout, while the engine and poller are still running, so
+// cancelled-or-filled orders settle and their fills reach the store; then
+// it cancels the run. d is nil for a paper run, which is cancelled at once.
+func stopOnSignal(sigCtx, runCtx context.Context, d drainer, cancelRun context.CancelFunc, timeout time.Duration) {
+	select {
+	case <-runCtx.Done():
+		return
+	case <-sigCtx.Done():
+	}
+	if runCtx.Err() != nil {
+		return
+	}
+	if d != nil {
+		log.Printf("strategy-run: signal received — cancelling open orders and waiting up to %v for them to settle (Ctrl-C again to force exit)", timeout)
+		drainCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		if err := d.Drain(drainCtx); err != nil {
+			log.Printf("strategy-run: %v", err)
+		}
+		cancel()
+	} else {
+		log.Printf("strategy-run: signal received — shutting down (Ctrl-C again to force exit)")
+	}
+	cancelRun()
 }
 
 // validatePriorStores refuses --sink live without --prior-stores. Restart

@@ -3,6 +3,7 @@ package live
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 )
 
@@ -15,11 +16,11 @@ const testAccNo = "008488L"
 // whether it was ever asked for it.
 type fakeTokenSource struct {
 	token string
-	asked bool
+	asked atomic.Bool // the poller and a concurrent Cancel both read the token
 }
 
 func (f *fakeTokenSource) TradingToken() string {
-	f.asked = true
+	f.asked.Store(true)
 	return f.token
 }
 
