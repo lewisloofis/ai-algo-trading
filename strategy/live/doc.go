@@ -74,4 +74,12 @@
 // holdings moved — before this sink is trusted with anything beyond the
 // smallest possible size. This is flagged here, in the open, rather than
 // silently assumed away.
+//
+// Measured 2026-10-13 (docs/runbooks/first-live-order.md §13): the first
+// live orders placed through this package — one resting, one filled — landed
+// in the sleeve 008488L, and the core book did not move. That is an
+// observation, not a mechanism: accNo is still never sent on an order, so
+// routing is Carina's choice by some means not yet identified, and it must be
+// re-confirmed by a both-account snapshot diff every live session until it
+// is.
 package live

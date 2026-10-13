@@ -218,6 +218,25 @@ by our own `order_id`s, which the post-trade store knows.
       notional twice the size of the entire sleeve, and a second over-charge in
       every impact figure on top of the coefficient error §4.4 corrected.
 
+**Order attribution — measured 2026-10-13, mechanism unknown.** The first live
+orders ([runbook §13](../runbooks/first-live-order.md)) landed in the sleeve:
+- a resting BBCA order, auto-cancelled;
+- a GOTO 1-lot fill, sold back in the app.
+
+After the fill, `008488L` reconciled MATCH with GOTO held. The core book's
+holdings were byte-identical before and after both orders. But **no order
+request carries an account**: the order body has no account field, and
+`strategy-run --account` is used only for reconciliation and store scoping. So
+Carina chose the sleeve by itself, despite the JWT being stamped
+`acn=0001958` as measured above. Treat this as observed, not guaranteed:
+- every live session re-confirms it with a before/after snapshot of both
+  accounts;
+- identifying the routing mechanism is open.
+
+- [ ] **Identify what routes an order to `008488L`** (app account selection
+      at token mint? sub-account default? a changed token claim?). Until then,
+      a token minted differently could route to the core book silently.
+
 > **This likely warrants an ADR amending [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md).**
 > The capital model there reasons about a sleeve funded by a trading limit on the
 > core book; a separate sub-account changes that from arithmetic we perform into

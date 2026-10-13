@@ -464,8 +464,16 @@ are in `runs/2026-10-13-*`, which is untracked. All times are WIB.
 | §9 cleanup | GOTO sold in the Stockbit app at 26. The post-sell `008488L` snapshot shows 0 broker symbols; the store still holds 100 GOTO shares (`held_in_store_only`), which is expected because the sale was made outside the store. The `ALGO_*` variables were set per command, never exported. |
 | §10 trading limit | **Not run.** Needs a separate sitting. |
 
-**§3.4 attribution answer.** An order placed with `--account 008488L` lands in
-the sleeve. That rests on three observations:
+**§3.4 attribution answer: both orders landed in the sleeve, but we do not
+know why.** `--account` is **not sent to Carina**. `live.Client` stores it, but
+the order body (`placeBody`) has no account field, and no order endpoint takes
+one. Carina routed both orders to `008488L` on its own. Plan 18 §3.4 recorded
+on 2026-09-14 that the trading JWT is stamped `acn=0001958`, the core book, so
+"the token's own account" does not explain the result either. Until the
+mechanism is known, every live session must re-confirm attribution with the
+§3/§7 snapshot diff of both accounts, and `--account` should be read as "the
+account we *expect* and reconcile against", not as routing. The routing
+evidence:
 - The sleeve gained exactly the 1 GOTO lot.
 - The app's sleeve view showed the §5 reservation against the sleeve's own
   15,000,000.
@@ -507,6 +515,12 @@ shares) and paid about 11 IDR in fees. §5 cost nothing.
 - Recording the attribution answer in plan 18 §3.4 and
   `strategy/live/doc.go`'s open question, per §12.
 - B1's three consecutive real-fill sessions: this was session 1 of 3.
+- **Find out what routes an order to `008488L`**, since `--account` does not.
+  Candidate explanations: the account selected in the app when the trading
+  token was minted, a server-side default for the `Trading` sub-account, or a
+  claim in today's token that differs from the 2026-09-14 `acn=0001958`. The
+  operator can check the token's claims in their own terminal; the token must
+  never be pasted into chat.
 - Ctrl-C still leaves a resting order resting. It is reported as
   `not_terminal` and has to be cancelled in the app, or by the 5-minute
   `OpenTimeout` if the process is still running.
