@@ -31,9 +31,11 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"collector/calendar"
@@ -55,14 +57,56 @@ import (
 // for the precedent.
 const sharesPerLot = 100
 
-// defaultRebalanceHour/Minute is the rebalance window's opening time,
-// matching portfolio.NullOptions' own CompleteBy default (15:00 WIB —
-// see null.go's defaultCompleteByHourWIB). There is currently no flag to
-// override this; add one if a second schedule is ever needed.
-const (
-	defaultRebalanceHour   = 15
-	defaultRebalanceMinute = 0
-)
+// defaultRebalanceAtFlag is --rebalance-at's default: the rebalance window's
+// opening time (WIB), matching portfolio.NullOptions' own CompleteBy default
+// (15:00 WIB — see null.go's defaultCompleteByHourWIB). Continuous trading
+// ends before 15:00 on every weekday, so with this default the market gate
+// denies every order a live session would place; pass an in-session time
+// (e.g. --rebalance-at 13:45) for a run that is meant to trade.
+const defaultRebalanceAtFlag = "15:00"
+
+// rebalanceAt is a parsed --rebalance-at value.
+type rebalanceAt struct{ hour, min int }
+
+// parseRebalanceAt parses a strict "HH:MM" (24h, WIB) --rebalance-at value.
+func parseRebalanceAt(s string) (rebalanceAt, error) {
+	if len(s) != 5 || s[2] != ':' {
+		return rebalanceAt{}, fmt.Errorf("--rebalance-at %q must be HH:MM (24h, WIB)", s)
+	}
+	for _, i := range []int{0, 1, 3, 4} {
+		if s[i] < '0' || s[i] > '9' {
+			return rebalanceAt{}, fmt.Errorf("--rebalance-at %q must be HH:MM (24h, WIB)", s)
+		}
+	}
+	h := int(s[0]-'0')*10 + int(s[1]-'0')
+	m := int(s[3]-'0')*10 + int(s[4]-'0')
+	if h > 23 || m > 59 {
+		return rebalanceAt{}, fmt.Errorf("--rebalance-at %q is not a valid time of day", s)
+	}
+	return rebalanceAt{hour: h, min: m}, nil
+}
+
+// shutdownTimeout bounds the end-of-run work (live reconcile + close) that
+// runs after the run context is gone: long enough for ReconcileTerminal's
+// single List call, short enough that a hung broker cannot block exit.
+const shutdownTimeout = 30 * time.Second
+
+// newShutdownContext returns the context for end-of-run work. It is rooted in
+// context.Background, not the run context: after Ctrl-C the run context is
+// already cancelled, and reusing it would fail every reconcile HTTP call.
+func newShutdownContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), shutdownTimeout)
+}
+
+// runErrAfterShutdown maps the cancellation a SIGINT/SIGTERM causes to a
+// clean stop: an operator-requested stop is how a live run normally ends, not
+// a failure. Any other error — or a cancel with no signal behind it — is kept.
+func runErrAfterShutdown(runErr error, interrupted bool) error {
+	if interrupted && errors.Is(runErr, context.Canceled) {
+		return nil
+	}
+	return runErr
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -97,6 +141,7 @@ func run() error {
 	riskMaxPositionFrac := flag.Float64("risk-max-position-fraction", 0.25, "max position-per-name cap, as a fraction of --equity-idr")
 	riskDailyLossFrac := flag.Float64("risk-daily-loss-fraction", 0.05, "daily loss limit, as a fraction of --equity-idr")
 	limitPriceIDR := flag.Int64("limit-price-idr", 0, "DIAGNOSTIC: submit the single rebalance order at exactly this tick-valid IDR price instead of the last price (0 = off; only with --strategy rebalance and a one-target portfolio; used for the first-live-order unfilled step, docs/runbooks/first-live-order.md §5)")
+	rebalanceAtFlag := flag.String("rebalance-at", defaultRebalanceAtFlag, "rebalance window opening time, HH:MM WIB (--strategy rebalance only); the default 15:00 is after continuous trading ends, so pass an in-session time for a run meant to trade")
 	flag.Parse()
 
 	if *storePath == "" {
@@ -129,7 +174,11 @@ func run() error {
 	if *priorStores != "" {
 		priorState = &priorStateConfig{glob: *priorStores, sinkKind: *sinkName}
 	}
-	strat, stratID, err := newStrategy(*strategyName, *targetPortfolioPath, priorState, *limitPriceIDR)
+	at, err := parseRebalanceAt(*rebalanceAtFlag)
+	if err != nil {
+		return err
+	}
+	strat, stratID, err := newStrategy(*strategyName, *targetPortfolioPath, priorState, *limitPriceIDR, at)
 	if err != nil {
 		return err
 	}
@@ -163,7 +212,13 @@ func run() error {
 			return err
 		}
 	}
-	ctx := context.Background()
+	// SIGINT/SIGTERM cancels ctx so engine.Run returns and the shutdown below
+	// (live reconcile + close, final status, FinishRun) still runs. Before
+	// this, Ctrl-C killed the process outright and left the run row at
+	// "running". stopSignals is called once engine.Run returns, so a second
+	// Ctrl-C during shutdown falls back to the default and kills immediately.
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 
 	src, err := newSource(ctx, *source, *segmentsGlob, *symbolsFlag, *pacing)
 	if err != nil {
@@ -230,12 +285,20 @@ func run() error {
 	}
 
 	counters, runErr := engine.Run(ctx, src, strat, sink, store, stratID, engine.WithProgress(progress))
+	interrupted := ctx.Err() != nil
+	stopSignals()
+	if interrupted {
+		log.Printf("strategy-run: signal received — shutting down (Ctrl-C again to force exit)")
+	}
+	runErr = runErrAfterShutdown(runErr, interrupted)
 
 	if liveSink != nil {
 		// Unconditional, whatever runErr says: "how did this run's own
 		// orders end up" is worth knowing whether the run ended cleanly or
 		// not — see reconcileAndClose's doc comment.
-		reconcileAndClose(ctx, liveSink, runID)
+		shutdownCtx, cancelShutdown := newShutdownContext()
+		reconcileAndClose(shutdownCtx, liveSink, runID)
+		cancelShutdown()
 	}
 
 	// Stop the ticker before the terminal write, or it can overwrite the final
@@ -323,8 +386,9 @@ type priorStateConfig struct {
 //
 // limitPriceIDR is the --limit-price-idr diagnostic (0 = off). It is refused
 // for any strategy but rebalance; rebalance.New refuses it for a
-// multi-target portfolio or a non-tick-valid price.
-func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limitPriceIDR int64) (engine.Strategy, string, error) {
+// multi-target portfolio or a non-tick-valid price. at is the parsed
+// --rebalance-at window opening time (rebalance only).
+func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limitPriceIDR int64, at rebalanceAt) (engine.Strategy, string, error) {
 	if limitPriceIDR < 0 {
 		return nil, "", fmt.Errorf("--limit-price-idr must not be negative (got %d)", limitPriceIDR)
 	}
@@ -346,7 +410,7 @@ func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limi
 
 		opts := rebalance.Options{
 			Portfolio: tp,
-			Schedule:  rebalance.DailyAt(defaultRebalanceHour, defaultRebalanceMinute),
+			Schedule:  rebalance.DailyAt(at.hour, at.min),
 
 			LimitPriceIDR: limitPriceIDR,
 		}

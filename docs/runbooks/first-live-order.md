@@ -64,6 +64,7 @@ still written in two layers, but Layer 2 is now executable:
     --equity-idr <sleeve withdrawable balance from §3, in whole IDR> \
     --strategy rebalance --target-portfolio <path to a target_portfolio.json sized for the smallest possible order — see §5> \
     --limit-price-idr <tick-valid price ~12% below market, §5 only — omit for §8's fill variant> \
+    --rebalance-at <HH:MM WIB, a minute or two from now, inside a continuous session> \
     --store runs/<YYYY-MM-DD>-<n>.db \
     --prior-stores 'runs/<YYYY-MM-DD>-*.db' \
     --kill-switch-file <path to a file you can create by hand to trip the kill switch mid-run>
@@ -105,6 +106,22 @@ still written in two layers, but Layer 2 is now executable:
     anything downstream: the risk gate and the market ARA/ARB band check
     still apply and still deny an out-of-band `p`. A loud `WARNING` is
     logged at startup when it is in force. Do **not** pass it for §8.
+  - `--rebalance-at HH:MM` (WIB) opens the rebalance window. Its default,
+    15:00, is after continuous trading ends, so a run without it never
+    trades — always pass an in-session time (e.g. two minutes from now).
+  - **Stopping a run: Ctrl-C (SIGINT) or SIGTERM.** The run cancels, then the
+    live sink's `ReconcileTerminal` + `Close`, the final status write and
+    `FinishRun` all run on a fresh 30s timeout, and the run row records
+    `complete`. A second Ctrl-C during that shutdown force-exits and skips
+    them. Ctrl-C does **not** cancel a resting order: anything still OPEN is
+    logged as `RECONCILE DIVERGENCE — not_terminal=[...]` and must be
+    cancelled in the Stockbit app. While the process runs, the live sink
+    auto-cancels any order still OPEN after 5 minutes (`live.DefaultOpenTimeout`),
+    so for §5 keep it running ~6 minutes before Ctrl-C.
+  - The order id is `rebalance-<SYMBOL>-<date>`: **one rebalance order per
+    symbol per trading day.** §5 and §8 on the same day must use different
+    symbols (a same-symbol rerun is skipped via `--prior-stores`, or reuses
+    the same `ui_ref`).
   - `--kill-switch-file` is optional but strongly recommended for a first
     live order: creating the file (`touch <path>`) mid-run trips the kill
     switch before the next `Submit` call, on top of the manual

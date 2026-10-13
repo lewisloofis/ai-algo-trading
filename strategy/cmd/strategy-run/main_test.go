@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -64,7 +66,7 @@ func TestValidatePriorStores_AllowsLiveWithGlobAndPaperWithout(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewStrategy_Orb(t *testing.T) {
-	strat, stratID, err := newStrategy("orb", "", nil, 0)
+	strat, stratID, err := newStrategy("orb", "", nil, 0, defaultAt(t))
 	if err != nil {
 		t.Fatalf("newStrategy: %v", err)
 	}
@@ -77,13 +79,13 @@ func TestNewStrategy_Orb(t *testing.T) {
 }
 
 func TestNewStrategy_UnknownStrategy(t *testing.T) {
-	if _, _, err := newStrategy("nope", "", nil, 0); err == nil {
+	if _, _, err := newStrategy("nope", "", nil, 0, defaultAt(t)); err == nil {
 		t.Fatal("want an error for an unknown --strategy, got nil")
 	}
 }
 
 func TestNewStrategy_RebalanceRequiresTargetPortfolio(t *testing.T) {
-	if _, _, err := newStrategy("rebalance", "", nil, 0); err == nil {
+	if _, _, err := newStrategy("rebalance", "", nil, 0, defaultAt(t)); err == nil {
 		t.Fatal("want an error when --strategy rebalance is given no --target-portfolio")
 	}
 }
@@ -112,7 +114,7 @@ func writeTargetPortfolio(t *testing.T, dir string) string {
 
 func TestNewStrategy_RebalanceLoadsPortfolioAndUsesItsOwnStrategyID(t *testing.T) {
 	path := writeTargetPortfolio(t, t.TempDir())
-	strat, stratID, err := newStrategy("rebalance", path, nil, 0)
+	strat, stratID, err := newStrategy("rebalance", path, nil, 0, defaultAt(t))
 	if err != nil {
 		t.Fatalf("newStrategy: %v", err)
 	}
@@ -126,7 +128,7 @@ func TestNewStrategy_RebalanceLoadsPortfolioAndUsesItsOwnStrategyID(t *testing.T
 }
 
 func TestNewStrategy_RebalanceMissingFile(t *testing.T) {
-	if _, _, err := newStrategy("rebalance", filepath.Join(t.TempDir(), "does-not-exist.json"), nil, 0); err == nil {
+	if _, _, err := newStrategy("rebalance", filepath.Join(t.TempDir(), "does-not-exist.json"), nil, 0, defaultAt(t)); err == nil {
 		t.Fatal("want an error for a missing --target-portfolio file")
 	}
 }
@@ -161,7 +163,7 @@ func TestNewStrategy_RebalanceRecoversAttemptedFromPriorStores(t *testing.T) {
 		t.Fatalf("close prior: %v", err)
 	}
 
-	strat, stratID, err := newStrategy("rebalance", path, &priorStateConfig{glob: filepath.Join(dir, "prior.db"), sinkKind: "live"}, 0)
+	strat, stratID, err := newStrategy("rebalance", path, &priorStateConfig{glob: filepath.Join(dir, "prior.db"), sinkKind: "live"}, 0, defaultAt(t))
 	if err != nil {
 		t.Fatalf("newStrategy: %v", err)
 	}
@@ -169,12 +171,12 @@ func TestNewStrategy_RebalanceRecoversAttemptedFromPriorStores(t *testing.T) {
 		t.Fatalf("stratID = %q, want %q", stratID, portfolio.CalibrationStrategyID)
 	}
 
-	// The strategy's rebalance window opens at defaultRebalanceHour:defaultRebalanceMinute
+	// The strategy's rebalance window opens at the default --rebalance-at (15:00)
 	// WIB (see newStrategy) — this event must land at or after that, on the
 	// SAME calendar date the prior store seeded, or the window never opens
 	// and nothing is attempted at all (a different failure than the one
 	// this test checks for).
-	eventRecvNs := time.Date(2026, 9, 24, defaultRebalanceHour, defaultRebalanceMinute+5, 0, 0, calendar.Jakarta).UnixNano()
+	eventRecvNs := time.Date(2026, 9, 24, defaultAt(t).hour, defaultAt(t).min+5, 0, 0, calendar.Jakarta).UnixNano()
 	fe := &fakeStrategyEngine{now: time.Unix(0, eventRecvNs)}
 	strat.OnEvent(context.Background(), liveEventFor("TINS", 1000, eventRecvNs), fe)
 	strat.OnEvent(context.Background(), liveEventFor("AMMN", 2500, eventRecvNs), fe)
@@ -329,7 +331,7 @@ func writeOneSymbolPortfolio(t *testing.T, dir string) string {
 
 func TestNewStrategy_LimitPriceAcceptedForOneTargetRebalance(t *testing.T) {
 	path := writeOneSymbolPortfolio(t, t.TempDir())
-	if _, _, err := newStrategy("rebalance", path, nil, 5250); err != nil {
+	if _, _, err := newStrategy("rebalance", path, nil, 5250, defaultAt(t)); err != nil {
 		t.Fatalf("newStrategy: %v", err)
 	}
 }
@@ -351,9 +353,107 @@ func TestNewStrategy_LimitPriceRefusals(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, _, err := newStrategy(c.strategy, c.path, nil, c.limit); err == nil {
+			if _, _, err := newStrategy(c.strategy, c.path, nil, c.limit, defaultAt(t)); err == nil {
 				t.Fatalf("want an error for --limit-price-idr=%d with %s", c.limit, c.name)
 			}
 		})
+	}
+}
+
+func TestParseRebalanceAt(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantH    int
+		wantM    int
+		wantFail bool
+	}{
+		{in: "15:00", wantH: 15, wantM: 0},
+		{in: "13:45", wantH: 13, wantM: 45},
+		{in: "09:05", wantH: 9, wantM: 5},
+		{in: "00:00", wantH: 0, wantM: 0},
+		{in: "", wantFail: true},
+		{in: "24:00", wantFail: true},
+		{in: "13:60", wantFail: true},
+		{in: "-1:00", wantFail: true},
+		{in: "1345", wantFail: true},
+		{in: "13:4", wantFail: true},
+		{in: "ab:cd", wantFail: true},
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			got, err := parseRebalanceAt(c.in)
+			if c.wantFail {
+				if err == nil {
+					t.Fatalf("parseRebalanceAt(%q) = %+v, want error", c.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseRebalanceAt(%q) error: %v", c.in, err)
+			}
+			if got.hour != c.wantH || got.min != c.wantM {
+				t.Fatalf("parseRebalanceAt(%q) = %02d:%02d, want %02d:%02d", c.in, got.hour, got.min, c.wantH, c.wantM)
+			}
+		})
+	}
+}
+
+func TestDefaultRebalanceAtIsUnchanged(t *testing.T) {
+	got, err := parseRebalanceAt(defaultRebalanceAtFlag)
+	if err != nil {
+		t.Fatalf("default %q does not parse: %v", defaultRebalanceAtFlag, err)
+	}
+	if got.hour != 15 || got.min != 0 {
+		t.Fatalf("default rebalance time = %02d:%02d, want 15:00 (existing behaviour)", got.hour, got.min)
+	}
+}
+
+// defaultAt is the parsed --rebalance-at default, for newStrategy calls that
+// are not about the schedule.
+func defaultAt(t *testing.T) rebalanceAt {
+	t.Helper()
+	at, err := parseRebalanceAt(defaultRebalanceAtFlag)
+	if err != nil {
+		t.Fatalf("default --rebalance-at: %v", err)
+	}
+	return at
+}
+
+func TestRunErrAfterShutdown(t *testing.T) {
+	other := errors.New("feed died")
+	cases := []struct {
+		name        string
+		runErr      error
+		interrupted bool
+		want        error
+	}{
+		{"clean end", nil, false, nil},
+		{"signal cancels the run: clean stop", context.Canceled, true, nil},
+		{"signal, wrapped cancel: clean stop", fmt.Errorf("source: %w", context.Canceled), true, nil},
+		{"signal but a real error: kept", other, true, other},
+		{"cancel without a signal: kept", context.Canceled, false, context.Canceled},
+		{"real error, no signal: kept", other, false, other},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runErrAfterShutdown(tc.runErr, tc.interrupted); !errors.Is(got, tc.want) || (got == nil) != (tc.want == nil) {
+				t.Fatalf("runErrAfterShutdown(%v, %v) = %v, want %v", tc.runErr, tc.interrupted, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestShutdownContextIsLiveAndBounded(t *testing.T) {
+	ctx, cancel := newShutdownContext()
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("shutdown context already done: %v", err)
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("shutdown context has no deadline: a hung reconcile would block exit forever")
+	}
+	if d := time.Until(deadline); d <= 0 || d > shutdownTimeout {
+		t.Fatalf("deadline %v away, want (0, %v]", d, shutdownTimeout)
 	}
 }
