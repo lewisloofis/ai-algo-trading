@@ -39,6 +39,7 @@ from screener.metrics import (
     tick_size,
 )
 from lib.session import filter_continuous_session
+from screener.sb_http import SB_USER_AGENT, urlopen_bytes
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -315,7 +316,7 @@ class LiveDataSource:
             url,
             headers={
                 "Authorization": f"Bearer {self._token}",
-                "User-Agent": "okhttp/4.9.3",
+                "User-Agent": SB_USER_AGENT,
                 "X-Platform": "android",
                 "X-AppVersion": "7.0.0",
                 "X-DeviceType": "algo-prototype",
@@ -323,8 +324,8 @@ class LiveDataSource:
                 "Accept": "application/json",
             },
         )
-        with urllib.request.urlopen(req, timeout=15, context=self._ssl_ctx) as resp:
-            return json.loads(resp.read().decode())
+        raw = urlopen_bytes(req, timeout=15, context=self._ssl_ctx)
+        return json.loads(raw.decode())
 
     def _fetch_subsector_symbols(self, label: str, subsector_id: str) -> set[str]:
         """
