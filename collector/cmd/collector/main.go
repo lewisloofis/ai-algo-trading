@@ -32,7 +32,7 @@ const (
 	heartbeatInterval = 10 * time.Second
 	tokenRefreshEvery = 20 * time.Minute
 	reconnectMin      = 750 * time.Millisecond
-	reconnectMax      = 3 * time.Second
+	reconnectMax      = 60 * time.Second
 	readDeadline      = 60 * time.Second
 	statsInterval     = 15 * time.Second
 	// rollInterval bounds the data at risk from an unexpected crash: the active
@@ -380,14 +380,21 @@ func rollLoop(ctx context.Context, sf *segmentFile, symbols []string, interval t
 // runWithReconnect keeps the feed alive across disconnects with capped
 // exponential backoff, mirroring prototype/main.go.
 func runWithReconnect(ctx context.Context, cfg collectorConfig, s *feed.Session, sf *segmentFile) {
-	backoff := reconnectMin
+	state := newReconnectState()
 	attempt := 0
 	for ctx.Err() == nil {
+		started := time.Now()
 		err := runOnce(ctx, cfg, s, sf)
 		if ctx.Err() != nil {
 			return
 		}
-		if err != nil {
+		if isStableConnection(time.Since(started)) {
+			state.onStableConnection()
+		}
+		backoff, sustained := state.onFailure(err)
+		if sustained {
+			log.Print(sustainedFailureMessage(state.consecutive, err, backoff))
+		} else if err != nil {
 			log.Printf("[feed] disconnected: %v — reconnecting in %s", err, backoff)
 		}
 
@@ -405,10 +412,6 @@ func runWithReconnect(ctx context.Context, cfg collectorConfig, s *feed.Session,
 		case <-time.After(backoff):
 		}
 
-		backoff *= 2
-		if backoff > reconnectMax {
-			backoff = reconnectMax
-		}
 		attempt++
 	}
 }
