@@ -329,7 +329,7 @@ def store_rows(runs: "list[Any]") -> tuple[StageRow, list[Alert]]:
     details: list[str] = []
     if crashed:
         state = STATUS_WARN
-        details.append(f"{len(crashed)} run(s) still marked 'running' — died before finishing")
+        details.append(f"{len(crashed)} run(s) still marked 'running' — no end row written (process exited without finalizing, or still running)")
         alerts.append(
             Alert(ALERT_RUN_CRASHED, STATUS_WARN, f"{len(crashed)} run header(s) left at 'running'")
         )
@@ -389,7 +389,7 @@ def build_panel_b(
             detail=(
                 "recon runs but does not persist its output, so there is nothing to "
                 "render. Persisting it is the remaining Panel B gap "
-                f"(alert condition: {ALERT_RECON_DIVERGENCE})."
+                f"(not evaluated here; once persisted it would raise {ALERT_RECON_DIVERGENCE})."
             ),
         )
     )

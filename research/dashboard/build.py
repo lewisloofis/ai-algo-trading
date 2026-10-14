@@ -19,6 +19,7 @@ from strategy_fit.portfolio_json import (
     load_sidecar,
 )
 
+from dashboard.annotations import Annotation, load_annotations
 from dashboard import panel_a, panel_b, panel_c, store
 from dashboard.render import (
     Column,
@@ -46,6 +47,7 @@ class Inputs:
     status_json: str | None = None
     healthcheck_json: str | None = None
     eligibility_json: str | None = None
+    annotations_json: str | None = None
     now_s: float | None = None
 
 
@@ -496,7 +498,12 @@ _C_REJECT_COLS = (
 )
 
 
-def render_panel_c(panel: panel_c.PanelC, runs: Sequence[store.RunHeader]) -> tuple[str, set[str]]:
+def render_panel_c(
+    panel: panel_c.PanelC,
+    runs: Sequence[store.RunHeader],
+    annotations: Mapping[str, Annotation] | None = None,
+) -> tuple[str, set[str]]:
+    annotations = annotations or {}
     used = {c.key for c in _C_COLS + _C_RISK_COLS + _C_FUNNEL_COLS + _C_REJECT_COLS if c.glossary}
     out = ['<h2 id="panel-c">C · Per-strategy profitability — what did each algo earn?</h2>']
 
@@ -515,15 +522,23 @@ def render_panel_c(panel: panel_c.PanelC, runs: Sequence[store.RunHeader]) -> tu
             '<p class="empty">Runs were recorded but produced no decisions and no '
             "round-trips: the strategy never fired.</p>"
         )
-        out.append(_runs_table(runs))
+        out.append(_runs_table(runs, panel.funnels, annotations))
         return "\n".join(out), used
 
-    if not panel.has_live:
+    if panel.has_live or panel.has_live_runs:
+        out.append(
+            banner(
+                "info",
+                "<strong>Live rows are real-money fills</strong> (sink <code>live</code>). "
+                "Replay/paper and live rows are grouped separately and are never summed.",
+            )
+        )
+    else:
         out.append(
             banner(
                 "replay",
-                "<strong>Every figure below is replay or paper.</strong> Live order routing does "
-                "not exist yet (plan-18 B4), so no number here has been paid for. Replay PnL and "
+                "<strong>Every figure below is replay or paper.</strong> No run in the supplied "
+                "stores used a live sink, so no number here has been paid for. Replay PnL and "
                 "live PnL are grouped separately and are never summed.",
             )
         )
@@ -618,7 +633,7 @@ def render_panel_c(panel: panel_c.PanelC, runs: Sequence[store.RunHeader]) -> tu
                     num(f.intents),
                     num(f.fills),
                     num(f.intents_unfilled),
-                    num(f.rejects),
+                    _rejected_cell(f, annotations.get(f.run_id)),
                 ]
                 for f in panel.funnels
             ],
@@ -647,7 +662,7 @@ def render_panel_c(panel: panel_c.PanelC, runs: Sequence[store.RunHeader]) -> tu
             )
         )
 
-    out.append(_runs_table(runs))
+    out.append(_runs_table(runs, panel.funnels, annotations))
     return "\n".join(out), used
 
 
@@ -669,16 +684,55 @@ _RUN_COLS = (
     # The run table's counter columns are RunRow.Counters, so the definition
     # that owns them is engine.Counters — not a `run.*` field of its own.
     Column("counters.round_trips", "Round-trips", numeric=True),
+    Column("", "Note", glossary=False),
 )
 
 
-def _runs_table(runs: Sequence[store.RunHeader]) -> str:
+_OPERATOR_TAG = "<span class='mono'>operator-written</span>"
+
+
+def _rejected_cell(f: store.DecisionFunnel, ann: Annotation | None) -> str:
+    if not f.rejects_recorded:
+        return "n/a (no order_reject table)"
+    cell = num(f.rejects)
+    if f.rejects == 0 and ann is not None and ann.reject_reason:
+        cell += (
+            f"<br>0 recorded; {_OPERATOR_TAG}: <code>{esc(ann.reject_reason)}</code> "
+            f"<span class='mono'>({esc(ann.source)})</span>"
+        )
+    return cell
+
+
+def _run_note(
+    r: store.RunHeader, funnels: Sequence[store.DecisionFunnel], ann: Annotation | None
+) -> str:
+    parts = []
+    if r.crashed:
+        mine = [f for f in funnels if f.run_id == r.run_id]
+        decisions = sum(f.decisions for f in mine)
+        intents = sum(f.intents for f in mine)
+        parts.append(
+            f"no end row; {decisions:,} decisions, {intents:,} intents recorded"
+        )
+    if r.error:
+        parts.append(esc(r.error))
+    if ann is not None:
+        parts.append(f"{_OPERATOR_TAG}: {esc(ann.note)} <span class='mono'>({esc(ann.source)})</span>")
+    return "<br>".join(parts) or "—"
+
+
+def _runs_table(
+    runs: Sequence[store.RunHeader],
+    funnels: Sequence[store.DecisionFunnel] = (),
+    annotations: Mapping[str, Annotation] | None = None,
+) -> str:
     if not runs:
         return ""
+    annotations = annotations or {}
     rows = []
     for r in sorted(runs, key=lambda r: r.started_ns, reverse=True):
         state = {"complete": "ok", "error": "fail", "running": "warn"}.get(r.outcome, "unknown")
-        label = r.outcome + (" (died?)" if r.crashed else "")
+        label = r.outcome + (" (no end row)" if r.crashed else "")
         rows.append(
             [
                 f"<span class='mono'>{esc(r.run_id)}</span>",
@@ -689,6 +743,7 @@ def _runs_table(runs: Sequence[store.RunHeader]) -> str:
                 f"<span class='mono'>{esc(r.input_spec)}</span>",
                 f"<code>{esc(r.binary_hash[:12] or '—')}</code>",
                 num(r.round_trips),
+                _run_note(r, funnels, annotations.get(r.run_id)),
             ]
         )
     return "<h3>Runs</h3>" + table(_RUN_COLS, rows)
@@ -722,7 +777,11 @@ def build_html(inputs: Inputs) -> str:
 
     a_html, a_keys = render_panel_a(cells, doc, previous if inputs.previous_portfolio_json else None)
     b_html, b_keys = render_panel_b(b_panel)
-    c_html, c_keys = render_panel_c(c_panel, data.runs)
+    annotations = load_annotations(inputs.annotations_json)
+    shown = {r.run_id for r in data.runs} | {f.run_id for f in data.funnels}
+    c_html, c_keys = render_panel_c(
+        c_panel, data.runs, {k: v for k, v in annotations.items() if k in shown}
+    )
 
     generated = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     header = [

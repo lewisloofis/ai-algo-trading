@@ -47,7 +47,7 @@ class TestJoinSafety:
             panel_c.summarise([attribution(strategy_id="mean_reversion")])
 
     def test_the_error_names_the_known_ids(self):
-        with pytest.raises(UnmappedStrategyError, match="Known ids: orb"):
+        with pytest.raises(UnmappedStrategyError, match=r"Known ids: .*\borb\b"):
             panel_c.summarise([attribution(strategy_id="whatever")])
 
     def test_orb_is_not_joined_to_intraday_momentum(self):
@@ -106,6 +106,13 @@ class TestSinkSeparation:
             StoreData(attributions=[attribution(sink_kind="live")])
         )
         assert with_live.has_live is True
+
+    def test_a_live_run_header_alone_marks_the_panel_live(self):
+        from dashboard.test_panel_b import run_header
+
+        data = StoreData(runs=[run_header(sink_kind="live")])
+        assert panel_c.build_panel_c(data).has_live_runs is True
+        assert panel_c.build_panel_c(StoreData(runs=[run_header(sink_kind="paper")])).has_live_runs is False
 
 
 class TestAggregation:

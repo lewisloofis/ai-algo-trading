@@ -223,6 +223,8 @@ class PanelC:
     excluded_ids: tuple[str, ...]
     has_live: bool
     """True if any row came from a live sink. False means every number is replay."""
+    has_live_runs: bool
+    """True if any run header has a live sink, even one that produced no round-trip."""
     rejects: list[RejectSummary]
     """
     Rejections grouped by (strategy_id, sink_kind, reason) — see
@@ -245,5 +247,6 @@ def build_panel_c(data: StoreData) -> PanelC:
         excluded_round_trips=len(excluded),
         excluded_ids=tuple(sorted(EXCLUDED_STRATEGY_IDS)),
         has_live=any(r.sink_kind == "live" for r in rows),
+        has_live_runs=any(r.sink_kind == "live" for r in data.runs),
         rejects=summarise_rejects(data.rejects),
     )

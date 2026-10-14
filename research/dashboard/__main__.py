@@ -17,6 +17,7 @@ import argparse
 import os
 import sys
 
+from dashboard.annotations import DEFAULT_PATH as DEFAULT_ANNOTATIONS
 from dashboard.build import Inputs, write_dashboard
 from dashboard.strategy_map import UnmappedStrategyError
 
@@ -45,6 +46,8 @@ def main(argv: "list[str] | None" = None) -> int:
     p.add_argument("--healthcheck", default=None,
                    help="output of `collector_healthcheck.py --json` (Panel B)")
     p.add_argument("--eligibility", default=None, help="a universe eligibility.json (Panel B)")
+    p.add_argument("--annotations", default=DEFAULT_ANNOTATIONS,
+                   help="operator annotations JSON keyed by run_id (default: the checked-in file)")
     p.add_argument("--out", default=DEFAULT_OUT, help=f"output HTML path (default {DEFAULT_OUT})")
     args = p.parse_args(argv)
 
@@ -55,6 +58,7 @@ def main(argv: "list[str] | None" = None) -> int:
         status_json=args.status,
         healthcheck_json=args.healthcheck,
         eligibility_json=args.eligibility,
+        annotations_json=args.annotations,
     )
     try:
         path = write_dashboard(inputs, args.out)

@@ -183,6 +183,12 @@ def test_decision_funnel_rejects_defaults_to_zero_without_the_table(make_store):
     path = make_store(schema=schema_without_reject, decisions=[{"seq": 1}], intents=[{"seq": 2, "order_id": "o1"}])
     funnels = store.read_store(path).funnels
     assert funnels[0].rejects == 0
+    assert funnels[0].rejects_recorded is False
+
+
+def test_decision_funnel_marks_rejects_recorded_when_the_table_exists(make_store):
+    path = make_store(decisions=[{"seq": 1}], intents=[{"seq": 2, "order_id": "o1"}])
+    assert store.read_store(path).funnels[0].rejects_recorded is True
 
 
 def test_read_stores_unions_several_files(make_store):

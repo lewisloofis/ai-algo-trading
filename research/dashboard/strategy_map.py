@@ -61,6 +61,24 @@ STRATEGY_JOINS: Mapping[str, StrategyJoin] = {
             "edge is shown against it."
         ),
     ),
+    **{
+        sid: StrategyJoin(
+            strategy_id=sid,
+            research_family=None,
+            definitions_match=False,
+            note=(
+                "Plan-18 B4 live-order infrastructure test (runbook "
+                "first-live-order.md): orders placed to prove the order path, "
+                "not to earn. No research family; no modelled edge is shown."
+            ),
+        )
+        for sid in (
+            "manual-first-order-fill",
+            "manual-first-order-shadow",
+            "manual-limit-probe",
+            "roundtrip-goto",
+        )
+    },
 }
 
 # Reserved ids that must never be reported as strategy performance.

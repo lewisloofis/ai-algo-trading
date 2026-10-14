@@ -114,6 +114,12 @@ class DecisionFunnel:
     signals: int
     intents: int
     fills: int
+    rejects_recorded: bool = True
+    """
+    False when the store has no order_reject table (written before it existed):
+    `rejects` is then 0 because nothing could be recorded, not because nothing
+    was rejected, and the page says "n/a" rather than 0.
+    """
     rejects: int = 0
     """
     Count of order_reject rows for this (run_id, strategy_id) — an intent
@@ -333,7 +339,8 @@ def _read_funnels(conn: sqlite3.Connection) -> list[DecisionFunnel]:
             }
 
     rejects: dict[tuple[str, str], int] = {}
-    if _has_table(conn, "order_reject"):
+    has_reject_table = _has_table(conn, "order_reject")
+    if has_reject_table:
         reject_run = "run_id" if "run_id" in _columns(conn, "order_reject") else "''"
         rejects = {
             (r["rid"], r["strategy_id"]): r["n"]
@@ -356,6 +363,7 @@ def _read_funnels(conn: sqlite3.Connection) -> list[DecisionFunnel]:
                 intents=intents.get((run_id, strategy_id), 0),
                 fills=fills.get((run_id, strategy_id), 0),
                 rejects=rejects.get((run_id, strategy_id), 0),
+                rejects_recorded=has_reject_table,
             )
         )
     return out

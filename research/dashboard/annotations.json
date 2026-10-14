@@ -1,0 +1,11 @@
+{
+  "20261013T065258Z-a383cdef": {
+    "note": "First live attempt (13:52 WIB): the pre-trade baseline call to /order/v2/list returned 401 because the trading token had expired, so no order was sent. The run exited before writing its end row, leaving the header at 'running'. Fixed the same day: a failed baseline now records outcome 'error' (commit 94120fd).",
+    "source": "docs/runbooks/first-live-order.md, section 13 (bug 4) and its attempt table"
+  },
+  "20261014T081304Z-8575169b": {
+    "note": "BBRI limit probe: buy 64 lots at 2,630 (16,832,000 IDR) against 14.9M withdrawable in the sleeve 008488L. Carina accepted the submission, then rejected the order in the app. This run predates commit a641a2a, so the post-submit rejection was not written to order_reject.",
+    "source": "docs/runbooks/first-live-order.md, section 14; commit a641a2a",
+    "reject_reason": "[C-006] insufficient trading balance"
+  }
+}

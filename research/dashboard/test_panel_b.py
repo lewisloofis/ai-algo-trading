@@ -198,7 +198,8 @@ class TestStoreRow:
         row, alerts = store_rows([run_header(outcome="running", ended_ns=None)])
         assert row.status == STATUS_WARN
         assert [a.condition for a in alerts] == [ALERT_RUN_CRASHED]
-        assert "died before finishing" in row.detail
+        assert "no end row" in row.detail
+        assert "died" not in row.detail
 
     def test_an_errored_run_is_a_failure(self):
         row, _ = store_rows([run_header(outcome="error", error="boom")])

@@ -140,7 +140,19 @@ class TestPanelCRendering:
         )
         html = build_html(Inputs(store_globs=[path]))
         assert "Every figure below is replay or paper" in html
-        assert "plan-18 B4" in html
+        assert "plan-18 B4" not in html
+        assert "does not exist yet" not in html
+
+    def test_a_live_run_replaces_the_replay_banner_with_a_real_money_one(self, make_store):
+        path = make_store(
+            runs=[{"run_id": "r1", "sink_kind": "live", "source": "live"}],
+            decisions=[{"seq": 1}],
+            intents=[{"seq": 2, "order_id": "o1", "sink_kind": "live"}],
+        )
+        html = build_html(Inputs(store_globs=[path]))
+        assert "Every figure below is replay or paper" not in html
+        assert "real-money fills" in html
+        assert "never summed" in html
 
     def test_an_unmapped_strategy_id_fails_the_render(self, make_store):
         path = make_store(
@@ -162,7 +174,51 @@ class TestPanelCRendering:
     def test_the_run_table_flags_a_crashed_run(self, make_store):
         path = make_store(runs=[{"run_id": "r1", "outcome": "running", "ended_ns": None}])
         html = build_html(Inputs(store_globs=[path]))
-        assert "died?" in html
+        assert "died?" not in html
+        assert "no end row" in html
+
+    def test_a_run_with_no_end_row_reports_what_it_recorded(self, make_store):
+        path = make_store(runs=[{"run_id": "r1", "outcome": "running", "ended_ns": None}])
+        html = build_html(Inputs(store_globs=[path]))
+        assert "0 decisions, 0 intents recorded" in html
+
+    def test_an_operator_annotation_is_rendered_verbatim_and_marked(self, make_store, tmp_path):
+        path = make_store(runs=[{"run_id": "r1", "outcome": "running", "ended_ns": None}])
+        ann = tmp_path / "ann.json"
+        ann.write_text(json.dumps({"r1": {"note": "token expired <b>401</b>", "source": "runbook s13"}}))
+        html = build_html(Inputs(store_globs=[path], annotations_json=str(ann)))
+        assert "operator-written" in html
+        assert "token expired &lt;b&gt;401&lt;/b&gt;" in html
+        assert "runbook s13" in html
+
+    def test_an_annotation_for_a_run_not_in_the_stores_is_not_rendered(self, make_store, tmp_path):
+        path = make_store(runs=[{"run_id": "r1"}])
+        ann = tmp_path / "ann.json"
+        ann.write_text(json.dumps({"ghost": {"note": "zzz-orphan-note", "source": "x"}}))
+        html = build_html(Inputs(store_globs=[path], annotations_json=str(ann)))
+        assert "zzz-orphan-note" not in html
+
+    def test_a_post_submit_reject_with_no_row_shows_the_annotated_reason(self, make_store, tmp_path):
+        path = make_store(
+            runs=[{"run_id": "r1", "sink_kind": "live"}],
+            decisions=[{"seq": 1}],
+            intents=[{"seq": 2, "order_id": "o1", "sink_kind": "live"}],
+        )
+        ann = tmp_path / "ann.json"
+        ann.write_text(json.dumps({"r1": {
+            "note": "n", "source": "s", "reject_reason": "[C-006] insufficient trading balance"}}))
+        html = build_html(Inputs(store_globs=[path], annotations_json=str(ann)))
+        assert "[C-006] insufficient trading balance" in html
+        assert "0 recorded" in html
+
+    def test_a_store_without_order_reject_shows_rejected_as_unknown(self, make_store):
+        import re as _re
+        from dashboard.conftest import go_schema_sql
+
+        schema = _re.sub(r"CREATE TABLE IF NOT EXISTS order_reject.*?;\n", "", go_schema_sql(), flags=_re.DOTALL)
+        path = make_store(schema=schema, decisions=[{"seq": 1}], intents=[{"seq": 2, "order_id": "o1"}])
+        html = build_html(Inputs(store_globs=[path]))
+        assert "n/a (no order_reject table)" in html
 
     def test_store_read_errors_are_surfaced(self, tmp_path):
         bad = tmp_path / "bad.db"
