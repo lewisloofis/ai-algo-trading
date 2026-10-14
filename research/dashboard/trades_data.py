@@ -52,6 +52,7 @@ class OrderLine:
     status: str
     """filled / partly filled / rejected / not filled."""
     reject_reason: str | None
+    order_id: str = ""
 
     @property
     def filled(self) -> bool:
@@ -69,6 +70,8 @@ class Position:
     lots: int
     avg_cost: float
     cost_idr: float
+    lots_detail: tuple[tuple[str, int, float], ...] = ()
+    """(buy date, lots, buy price) for each still-open lot, oldest first. Filled by the ledger."""
 
 
 @dataclass(frozen=True)
@@ -154,6 +157,7 @@ def build_orders(data: StoreData, annotations: Mapping[str, Annotation]) -> list
                 realised_pnl_idr=sum(pnl) if pnl else None,
                 status=_status(filled_lots, i.lots, reason is not None),
                 reject_reason=reason,
+                order_id=i.order_id,
             )
         )
     seen = {(i.store_path, i.run_id, i.order_id) for i in intents}
@@ -167,7 +171,7 @@ def build_orders(data: StoreData, annotations: Mapping[str, Annotation]) -> list
                 strategy_id=r.strategy_id, strategy_label=join.label or r.strategy_id,
                 strategy_note=join.note, run_id=r.run_id, sink_kind=r.sink_kind, filled_lots=0,
                 fill_price=None, fees_idr=0, realised_pnl_idr=None, status="rejected",
-                reject_reason=plain_reason(r.reason),
+                reject_reason=plain_reason(r.reason), order_id=r.order_id,
             )
         )
     return sorted(lines, key=lambda x: x.when, reverse=True)

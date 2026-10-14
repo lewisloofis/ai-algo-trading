@@ -1,0 +1,33 @@
+{
+  "_schema": {
+    "file": "runs/manual_trades.json (gitignored; copy this file there and edit). A missing file means no manual trades.",
+    "top_level": "{\"trades\": [ ...one object per trade... ]}. The _schema key is ignored.",
+    "date": "required, YYYY-MM-DD",
+    "time_wib": "required key; HH:MM or HH:MM:SS Jakarta time, or null when unknown",
+    "symbol": "required, upper-case ticker, e.g. GOTO",
+    "side": "required, buy or sell",
+    "lots": "required, integer > 0 (1 lot = 100 shares)",
+    "price_idr": "required, number > 0, rupiah per share",
+    "fee_idr": "required, number >= 0 (decimals allowed, e.g. 6.5), total broker + exchange fee for this trade",
+    "net_amount_idr": "optional, number: the broker's net amount (shown, not recomputed)",
+    "broker_realised_pnl_idr": "optional, number: the broker's own realised profit/loss for this sell",
+    "closes_order_id": "optional: order_id of a bot order this trade closes; must exist in the stores",
+    "note": "required string (may be empty)",
+    "unknown_fields": "rejected: the build fails"
+  },
+  "trades": [
+    {
+      "date": "2026-10-13",
+      "time_wib": "14:14:15",
+      "symbol": "GOTO",
+      "side": "sell",
+      "lots": 1,
+      "price_idr": 26,
+      "fee_idr": 6.5,
+      "net_amount_idr": 2593.5,
+      "broker_realised_pnl_idr": -110.55,
+      "closes_order_id": "rebalance-GOTO-2026-10-13",
+      "note": "Example only: sold by hand in the broker app."
+    }
+  ]
+}

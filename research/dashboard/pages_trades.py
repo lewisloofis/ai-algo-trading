@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from dashboard import svg
-from dashboard.render import Column, banner, colored, esc, money, page, table
+from dashboard.render import Column, banner, colored, esc, money, money_exact, page, table
 from dashboard.terms import term_link
 from dashboard.trades_data import OrderLine
 
@@ -64,6 +64,65 @@ def _row(x: OrderLine) -> list[str]:
     ]
 
 
+UNKNOWN_TIME = "time not recorded"
+
+RECON_COLS = (
+    Column("Sale"),
+    Column("Our realised result", numeric=True, term="realised-pnl"),
+    Column("Broker's figure", numeric=True),
+    Column("Difference (broker minus ours)", numeric=True),
+    Column("Why they differ"),
+)
+
+
+def _manual_when(t) -> str:
+    return f"{t.date} {t.time_wib[:5]}" if t.time_wib else f"{t.date} · {UNKNOWN_TIME}"
+
+
+def _manual_row(t, closing) -> list[str]:
+    pnl = "–"
+    if closing is not None:
+        pnl = colored(money(closing.pnl_idr, signed=True), closing.pnl_idr)
+        if t.broker_realised_pnl_idr is not None:
+            pnl += f'<div class="small">broker app: {money_exact(t.broker_realised_pnl_idr, signed=True)}</div>'
+    note = f'<div class="small">{esc(t.note)}</div>' if t.note else ""
+    link = f'<div class="small">closes bot order {esc(t.closes_order_id)}</div>' if t.closes_order_id else ""
+    return [
+        _manual_when(t),
+        f"<b>{esc(t.symbol)}</b>",
+        t.side.upper(),
+        f"{t.lots:,}",
+        f"{money(t.price_idr)} (executed)",
+        f"Yes: {t.lots} lot{'s' if t.lots != 1 else ''} at {money(t.price_idr)}",
+        money(t.fee_idr),
+        pnl,
+        f'<span class="src-manual">manual (app)</span>{note}{link}',
+    ]
+
+
+def _reconciliation(d) -> str:
+    if not d.manual:
+        return ""
+    rows = [
+        [
+            f"{esc(r.symbol)} sell, {r.day}"
+            + (f'<div class="small">closes {esc(r.closes_order_id)}</div>' if r.closes_order_id else ""),
+            money_exact(r.ours_idr, signed=True),
+            money_exact(r.broker_idr, signed=True),
+            money_exact(r.difference_idr, signed=True),
+            esc(r.reason),
+        ]
+        for r in d.ledger.reconciliations
+    ]
+    return (
+        "<h2>Manual trades: reconciliation notes</h2>"
+        '<p class="small">Our figure uses each trade\'s own price and fees, net of both legs\' fees, matched '
+        "first-in-first-out. Where the broker app gave its own realised figure it is shown beside ours "
+        f"({term_link('reconciliation-note')}). Neither side is edited to make them agree.</p>"
+        + table(RECON_COLS, rows, empty="No manual trade carries a broker figure to compare.")
+    )
+
+
 def _reject_row(x: OrderLine) -> list[str]:
     tried = f"{x.side.upper()} {x.lots:,} lot{'s' if x.lots != 1 else ''} at limit {money(x.limit_price)} ({money(x.limit_price * x.lots * 100)})"
     mode = "Real money" if x.sink_kind == "live" else "Practice (paper)"
@@ -72,7 +131,7 @@ def _reject_row(x: OrderLine) -> list[str]:
 
 def _charts(d) -> str:
     out = []
-    for sym in sorted({x.symbol for x in d.live}):
+    for sym in sorted({x.symbol for x in d.live} | {t.symbol for t in d.manual}):
         marks = [
             svg.Mark(
                 x.when.date().isoformat(),
@@ -84,6 +143,12 @@ def _charts(d) -> str:
             )
             for x in d.live
             if x.symbol == sym
+        ] + [
+            svg.Mark(t.date, t.price_idr, t.side, True,
+                     f"MANUAL (app) {t.side} {t.lots} lot(s) filled at {t.price_idr:,.0f} - {_manual_when(t)}",
+                     manual=True)
+            for t in d.manual
+            if t.symbol == sym
         ]
         closes = d.closes.get(sym, [])
         chart = svg.price_chart(f"{sym}: daily closes and the bot's orders", closes, marks)
@@ -100,25 +165,33 @@ def _charts(d) -> str:
         return '<p class="empty">No live orders to chart.</p>'
     legend = (
         '<p class="small">Grey line: daily closing price. Green ▲ = buy, red ▼ = sell. '
-        "A solid marker was filled; a hollow one was sent but not filled. Hover a marker for details. "
-        "Only real-money orders are marked.</p>"
+        "A solid marker was filled; a hollow one was sent but not filled. A diamond (◆) is a "
+        f"{term_link('manual-trade', 'manual trade')} placed by hand in the broker app (green = buy, red = sell). "
+        "Hover a marker for details. Only real-money orders are marked.</p>"
     )
     return legend + "".join(out)
 
 
 def render(d) -> str:
     live_ok = [x for x in d.live if x.status != "rejected"]
+    closing_of = {id(c.sell.trade): c for c in d.ledger.closings if c.sell.trade is not None}
+    keyed = [((x.when.date().isoformat(), x.when.strftime("%H:%M:%S")), _row(x)) for x in live_ok]
+    keyed += [((t.date, t.time_wib or "23:59:59"), _manual_row(t, closing_of.get(id(t)))) for t in d.manual]
+    live_rows = [row for _k, row in sorted(keyed, key=lambda kv: kv[0], reverse=True)]
     refused = [x for x in d.orders if x.status == "rejected"]
     s = d.summary
+    led = d.ledger
+    by_hand = (f" Plus <b>{len(d.manual)}</b> {term_link('manual-trade', 'manual trade')}(s) placed by hand in the "
+               "broker app." if d.manual else "")
     intro = (
         f"<p class=\"lead\">Every order the bot has sent, newest first: <b>{s.orders_sent}</b> real-money order(s), "
-        f"<b>{s.orders_filled}</b> filled. So far these are 1-lot tests of the order path, not a trading strategy. "
+        f"<b>{s.orders_filled}</b> filled.{by_hand} So far these are 1-lot tests of the order path, not a trading strategy. "
         f"Terms such as {term_link('lot')} and {term_link('filled')} link to the Glossary.</p>"
     )
     totals = banner(
         "ok",
-        f"Real money only: realised profit {money(s.realised_pnl_idr, signed=True)} · fees {money(s.fees_idr)} · "
-        f"{s.round_trips_closed} round trip(s) closed. Practice orders below are not included.",
+        f"Real money only: realised profit {money(led.realised_pnl_idr, signed=True)} · fees {money(led.fees_idr)} · "
+        f"{led.round_trips_closed} sale(s) closed (bot and manual, matched first-in-first-out). Practice orders below are not included.",
     )
     paper_note = banner(
         "paper",
@@ -130,7 +203,8 @@ def render(d) -> str:
         + intro
         + totals
         + "<h2>Real-money orders</h2>"
-        + table(COLS, [_row(x) for x in live_ok], empty="No real-money orders yet.")
+        + table(COLS, live_rows, empty="No real-money orders yet.")
+        + _reconciliation(d)
         + "<h2>Refused or failed orders</h2>"
         + '<p class="small">Orders the broker or the bot\'s safety limits turned down, in plain words.</p>'
         + table(REJECT_COLS, [_reject_row(x) for x in refused if x.sink_kind == "live"] +

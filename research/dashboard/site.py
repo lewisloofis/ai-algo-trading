@@ -7,6 +7,8 @@ check itself, and writes static HTML into one directory.
 
 Failures that must stop the build rather than render something misleading:
   * a strategy_id in the stores that strategy_map.py does not know (UnmappedStrategyError)
+  * a malformed runs/manual_trades.json (ManualTradesError), a manual sell that would take a
+    position negative, or a link to a bot order that does not exist (ledger.LedgerError)
   * a column or link that points at a glossary term that does not exist (KeyError)
 """
 
@@ -22,7 +24,7 @@ import pandas as pd
 
 from strategy_fit.trade_export import CellTrades, export_cells
 
-from dashboard import config, health, inputs, results, scorecard, store, trades_data
+from dashboard import config, health, inputs, ledger, manual_trades, results, scorecard, store, trades_data
 from dashboard.annotations import Annotation, Decision, TimelineEvent, load_annotations, load_decision, load_timeline
 
 
@@ -33,6 +35,8 @@ class SiteOptions:
     research_dir: str = config.RESEARCH_DIR
     out_dir: str = config.DEFAULT_OUT_DIR
     annotations_path: str | None = None
+    manual_trades_path: str | None = None
+    """Default: <runs_dir>/manual_trades.json. A missing file means no manual trades."""
     healthcheck: str = "run"
     """'run' (run the script), 'skip', or a path to a saved ``--json`` output."""
     now: datetime | None = None
@@ -52,6 +56,8 @@ class SiteData:
     live: list[trades_data.OrderLine]
     paper: list[trades_data.OrderLine]
     summary: trades_data.LiveSummary
+    manual: list[manual_trades.ManualTrade]
+    ledger: ledger.Ledger
     run: results.RunResults | None
     rows: list[scorecard.ScoreRow]
     exported: dict[tuple[str, str, int], CellTrades]
@@ -93,6 +99,9 @@ def gather(opt: SiteOptions, log: Callable[[str], None] = lambda _m: None) -> Si
     orders = trades_data.build_orders(data, annotations)  # raises UnmappedStrategyError
     live, paper = trades_data.split_by_sink(orders)
     summary = trades_data.live_summary(live)
+    manual = manual_trades.load_manual_trades(
+        opt.manual_trades_path or os.path.join(opt.runs_dir, "manual_trades.json"))  # raises ManualTradesError
+    merged = ledger.build_ledger(live, manual)  # raises LedgerError (negative position, unknown link)
 
     status_path = inputs.latest_status_json(opt.runs_dir)
     status = None
@@ -116,7 +125,7 @@ def gather(opt: SiteOptions, log: Callable[[str], None] = lambda _m: None) -> Si
         exported = export_cells(wanted, data_dir=opt.daily_dir)
         rows = scorecard.build_rows(run, exported)
 
-    symbols = sorted({x.symbol for x in orders})
+    symbols = sorted({x.symbol for x in orders} | {t.symbol for t in manual})
     closes = {s: load_closes(opt.daily_dir, s) for s in symbols}
     return SiteData(
         now=now,
@@ -131,6 +140,8 @@ def gather(opt: SiteOptions, log: Callable[[str], None] = lambda _m: None) -> Si
         live=live,
         paper=paper,
         summary=summary,
+        manual=manual,
+        ledger=merged,
         run=run,
         rows=rows,
         exported=exported,

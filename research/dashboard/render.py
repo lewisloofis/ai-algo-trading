@@ -53,6 +53,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-
 .banner.fail { background: var(--red-bg); border-color: var(--red); color: #7f1d1d; }
 .banner.ok { background: var(--green-bg); border-color: var(--green); color: #14532d; }
 .banner.paper { background: #f5f3ff; border-color: #7c3aed; color: #4c1d95; }
+.src-manual { display: inline-block; padding: 0.05rem 0.5rem; border-radius: 4px; font-size: 12px; font-weight: 700; background: #e0f2fe; color: #075985; border: 1px solid #0284c7; }
 table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem; font-size: 13.5px; }
 th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { background: var(--panel); font-weight: 600; position: sticky; top: 42px; }
@@ -114,6 +115,15 @@ def money(idr: float | int | None, signed: bool = False) -> str:
     v = round(idr)
     sign = "-" if v < 0 else ("+" if signed and v > 0 else "")
     return f"{sign}Rp {abs(v):,}"
+
+
+def money_exact(idr: float | None, signed: bool = False) -> str:
+    """Rupiah to the cent, for figures compared line by line with the broker's: 'Rp 110.56'."""
+    if idr is None:
+        return "–"
+    v = round(idr, 2)
+    sign = "-" if v < 0 else ("+" if signed and v > 0 else "")
+    return f"{sign}Rp {abs(v):,.2f}"
 
 
 def pct(value: float | None, decimals: int = 2, signed: bool = True) -> str:

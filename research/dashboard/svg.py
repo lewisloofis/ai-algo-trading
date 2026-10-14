@@ -43,6 +43,8 @@ class Mark:
     """'buy' or 'sell'."""
     filled: bool
     label: str = ""
+    manual: bool = False
+    """Placed by hand in the broker app, not by the bot: drawn as a diamond."""
 
 
 def _ord(day: str) -> int:
@@ -183,6 +185,12 @@ def price_chart(
         x, y = sc.x(m.day), sc.y(m.price)
         up = m.side == "buy"
         color = GREEN if up else RED
+        if m.manual:
+            tip = html.escape(m.label or f"manual {m.side} {m.price:,.0f} on {m.day}")
+            dia = f"{x:.1f},{y - 8:.1f} {x + 8:.1f},{y:.1f} {x:.1f},{y + 8:.1f} {x - 8:.1f},{y:.1f}"
+            body += (f'<polygon class="manual-mark" points="{dia}" fill="{color}" stroke="{INK}" '
+                     f'stroke-width="2"><title>{tip}</title></polygon>')
+            continue
         tri = f"{x:.1f},{y - 8:.1f} {x - 6:.1f},{y + 5:.1f} {x + 6:.1f},{y + 5:.1f}" if up else (
             f"{x:.1f},{y + 8:.1f} {x - 6:.1f},{y - 5:.1f} {x + 6:.1f},{y - 5:.1f}"
         )

@@ -244,3 +244,89 @@ def test_the_checked_in_annotations_render_without_any_account_shaped_number(wor
     for p in out.iterdir():
         assert not shaped.search(p.read_text(encoding="utf-8")), p.name
     assert "[account]" in text(out, "research.html")
+
+
+# --- manual (app) trades ----------------------------------------------------------------------
+
+def _manual_file(runs, *trades):
+    base = {"time_wib": None, "fee_idr": 0, "note": "by hand"}
+    (runs / "manual_trades.json").write_text(json.dumps({"trades": [{**base, **t} for t in trades]}))
+
+
+def _goto_world(world, make_store):
+    """The 10-13 live buy (27, fee 0) plus the world's 10-14 buy (28): the real GOTO situation."""
+    opt, runs, out = world
+    os.replace(
+        make_store(
+            name="live-1013.db",
+            runs=[{"run_id": "r-1013", "started_ns": 1_791_875_520_000_000_000, "ended_ns": 1_791_875_530_000_000_000,
+                   "sink_kind": "live", "strategy_id": "manual-first-order-fill", "source": "live"}],
+            intents=[{"seq": 1, "recv_ns": 1_791_875_520_080_349_000, "strategy_id": "manual-first-order-fill",
+                      "symbol": "GOTO", "side": "buy", "price_idr": 27, "lots": 1,
+                      "order_id": "rebalance-GOTO-2026-10-13", "sink_kind": "live", "run_id": "r-1013"}],
+            fills=[{"seq": 1, "order_id": "rebalance-GOTO-2026-10-13", "fill_price_idr": 27, "fill_lots": 1,
+                    "fee_idr": 0, "sink_kind": "live", "run_id": "r-1013"}],
+        ),
+        runs / "live-1013.db",
+    )
+    _manual_file(runs, {"date": "2026-10-13", "symbol": "GOTO", "side": "sell", "lots": 1, "price_idr": 26,
+                        "fee_idr": 6.5, "net_amount_idr": 2593.5, "broker_realised_pnl_idr": -110.55,
+                        "closes_order_id": "rebalance-GOTO-2026-10-13"})
+    return opt, runs, out
+
+
+def test_goto_manual_sale_end_to_end_on_overview_and_trades(world, make_store):
+    opt, _runs, out = _goto_world(world, make_store)
+    build_site(opt)
+    index = text(out, "index.html")
+    assert "1 lot GOTO" in index and "2 lots GOTO" not in index
+    assert "bought @ Rp 28 on 2026-10-14" in index
+    assert "-Rp 106.50" in index and "-Rp 110.55" in index  # ours, with the broker's beside it
+    trades = text(out, "trades.html")
+    assert "manual (app)" in trades and "time not recorded" in trades
+    live_part = trades[trades.index("Real-money orders"): trades.index("Refused or failed")]
+    assert live_part.index("2026-10-14") < live_part.index("2026-10-13")
+    assert "Reconciliation" in trades and "-Rp 4.05" in trades and "bot store recorded buy fee 0 (broker 4.05)" in trades
+    assert "manual-mark" in trades  # a distinct chart marker
+    assert "007777" not in trades and "007777" not in index
+
+
+def test_manual_trades_never_reach_the_paper_table(world, make_store):
+    opt, _runs, out = _goto_world(world, make_store)
+    build_site(opt)
+    trades = text(out, "trades.html")
+    paper_part = trades[trades.index("Practice (paper) orders"): trades.index("Price charts")]
+    assert "manual (app)" not in paper_part and "GOTO" not in paper_part
+
+
+def test_no_manual_file_builds_as_before_with_no_manual_section(world):
+    opt, _runs, out = world
+    build_site(opt)
+    assert "manual (app)" not in text(out, "trades.html")
+    assert "Reconciliation notes" not in text(out, "trades.html")
+
+
+def test_a_double_entered_manual_sale_fails_the_build(world, make_store):
+    opt, runs, _out = _goto_world(world, make_store)
+    sale = {"date": "2026-10-13", "symbol": "GOTO", "side": "sell", "lots": 1, "price_idr": 26, "fee_idr": 7}
+    _manual_file(runs, sale, sale, sale)  # holds 2 lots (10-13 and 10-14 buys); the third sale is negative
+    from dashboard.ledger import NegativePositionError
+
+    with pytest.raises(NegativePositionError, match="GOTO"):
+        build_site(opt)
+
+
+def test_a_malformed_manual_file_fails_the_build(world):
+    opt, runs, _out = world
+    _manual_file(runs, {"date": "2026-10-13", "symbol": "GOTO", "side": "sideways", "lots": 1, "price_idr": 26})
+    from dashboard.manual_trades import ManualTradesError
+
+    with pytest.raises(ManualTradesError, match="side"):
+        build_site(opt)
+
+
+def test_glossary_explains_manual_trade_and_reconciliation_note(world):
+    opt, _runs, out = world
+    build_site(opt)
+    g = text(out, "glossary.html")
+    assert "Manual trade" in g and "Reconciliation note" in g

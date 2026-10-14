@@ -48,6 +48,14 @@ TERMS: tuple[Term, ...] = (
     # --- where an order ran ---------------------------------------------
     Term("live", "Live",
          "A real order sent to the broker with real money."),
+    Term("manual-trade", "Manual trade",
+         "A trade the account owner placed by hand in the Stockbit app, not the bot. The bot's records "
+         "do not contain it, so it is typed into runs/manual_trades.json and merged with the bot's real-money "
+         "fills. It is real money and never counts as practice. Labelled 'manual (app)' on the Trades page."),
+    Term("reconciliation-note", "Reconciliation note",
+         "A line that sets our figure beside the broker's for the same sale, shows the difference and says "
+         "why they differ (for example a fee the bot's records did not capture). Both numbers are kept as "
+         "reported; nothing is silently corrected."),
     Term("paper", "Paper / shadow",
          "A practice run: the bot decides and records orders as if it traded, but nothing is sent "
          "to the broker. Paper results never count towards real profit and are never added to it."),
