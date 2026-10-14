@@ -195,6 +195,12 @@ func run() error {
 		log.Printf("WARNING: --limit-price-idr=%d is in force: every rebalance order is submitted at this FIXED diagnostic price, not the market price (first-live-order diagnostic, not a pricing policy)", *limitPriceIDR)
 	}
 
+	if rs, ok := strat.(*rebalance.Strategy); ok && *source == "live" {
+		if missing := heldUnsubscribed(rs.Positions(), splitSymbols(*symbolsFlag)); len(missing) > 0 {
+			log.Printf("WARNING: held positions in %v are not in --symbols: rebalance needs a price event per symbol, so these cannot be sold or rebalanced this run; add them to --symbols", missing)
+		}
+	}
+
 	store, err := engine.OpenStore(*storePath)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
@@ -813,6 +819,24 @@ func newLiveSource(ctx context.Context, symbolsFlag string) (<-chan engine.Marke
 	dialer := engine.NewWSDialer(session, cfg.WSURL, cfg.WSSubProto, symbols, channels)
 
 	return engine.LiveSource(ctx, dialer, cal)
+}
+
+// heldUnsubscribed returns, sorted, the symbols with a nonzero held position
+// that are absent from the subscribed list (case-insensitive). Rebalance only
+// acts on a symbol after seeing a price event for it.
+func heldUnsubscribed(held map[string]int, subscribed []string) []string {
+	have := make(map[string]bool, len(subscribed))
+	for _, sym := range subscribed {
+		have[strings.ToUpper(strings.TrimSpace(sym))] = true
+	}
+	var out []string
+	for sym, lots := range held {
+		if lots != 0 && !have[strings.ToUpper(sym)] {
+			out = append(out, sym)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func splitSymbols(s string) []string {

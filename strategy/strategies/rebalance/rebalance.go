@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -250,7 +251,8 @@ func (s *Strategy) Rejections() int { return s.rejects }
 // OnEvent updates the last-observed price for a liveprice tick, then — on
 // every event, not just liveprice ticks, since a rejected or late attempt
 // for one symbol must still be retried on the next event regardless of
-// which symbol that event names — tries to bring every target symbol to
+// which symbol that event names — tries to bring every target symbol, and
+// every held symbol absent from the target (target zero: sold out), to
 // its target lot count for the current schedule window, at most once each.
 //
 // Per (window, symbol): if the window hasn't opened (Schedule.Window
@@ -272,9 +274,37 @@ func (s *Strategy) OnEvent(ctx context.Context, e engine.MarketEvent, eng engine
 		return
 	}
 
-	for _, symbol := range s.portfolio.Symbols() {
+	for _, symbol := range s.rebalanceSymbols() {
 		s.rebalanceOne(ctx, eng, window, symbol)
 	}
+}
+
+// rebalanceSymbols returns, sorted and de-duplicated, the union of every
+// target symbol and every symbol with a nonzero held position
+// (confirmed + in-flight, which includes Options.Initial). A held symbol
+// absent from the target must still be visited so it can be sold to zero;
+// iterating only the target would orphan it.
+func (s *Strategy) rebalanceSymbols() []string {
+	set := make(map[string]bool)
+	for _, symbol := range s.portfolio.Symbols() {
+		set[symbol] = true
+	}
+	for symbol, lots := range s.confirmed {
+		if lots+s.inFlight[symbol] != 0 {
+			set[symbol] = true
+		}
+	}
+	for symbol, lots := range s.inFlight {
+		if lots+s.confirmed[symbol] != 0 {
+			set[symbol] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for symbol := range set {
+		out = append(out, symbol)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // rebalanceOne attempts, at most once, to close the gap between symbol's
@@ -292,14 +322,21 @@ func (s *Strategy) rebalanceOne(ctx context.Context, eng engine.Engine, window, 
 		return // retry on a later event in this same window
 	}
 
-	targetNotional, ok := s.portfolio.TargetNotionalIDR(symbol)
-	if !ok {
-		// Cannot happen given symbol came from s.portfolio.Symbols() itself,
-		// but a symbol this package cannot size is one it must not guess
-		// about — mark it attempted so a defensive bug here fails closed
-		// (no order) rather than retrying forever.
-		s.attempted[key] = true
-		return
+	// A symbol absent from the target (ok == false) is one the portfolio
+	// dropped: its target is zero, so a held position is sold to zero through
+	// the same path as any other symbol. (This used to mark the symbol
+	// attempted and return, which orphaned the position.) It still needs a
+	// price event, so the operator must include such symbols in --symbols.
+	// Long-only (plan 18 §11): an absent symbol that is flat or short never
+	// trades, and a diagnostic fixed limit price (single-target) never
+	// touches non-target symbols.
+	targetNotional, inTarget := s.portfolio.TargetNotionalIDR(symbol)
+	if !inTarget {
+		if s.limitIDR > 0 || s.confirmed[symbol]+s.inFlight[symbol] <= 0 {
+			s.attempted[key] = true
+			return
+		}
+		targetNotional = 0
 	}
 
 	// Snap BEFORE sizing, and size against the snapped price — not the raw
