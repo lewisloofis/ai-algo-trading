@@ -522,6 +522,42 @@ entry convention and the grid phase (DEWA h5: -33.6 bps in the 09-24 run, +319.0
 it is noise on fat-tailed returns, not signal. Daily band: still no tradeable alpha; the
 BNBR forward test (plan 20) should be read against 57 bps gross, not 324.
 
+## 2026-10-14 — D1 applied to the cross-sectional family; nothing survives
+
+**Fix (`families_cross_sectional.py`).** The IC and every forward return used
+`wide.pct_change(h).shift(-h)`, i.e. close_s -> close_{s+h}, the same close that ranks the names.
+Now routed through `entry_convention` (default `next_close`; `--entry` reaches the cell via
+`run_grid`; `signal_close_LOOKAHEAD` keeps the verbatim old formula and every-day periods so
+legacy numbers reproduce). Rebalance rule (replaces "every day is an independent period"):
+rank on s, hold s+1 .. s+1+hold, re-rank only on the exit day s+1+hold
+(`deoverlap_sequential` on calendar positions; first eligible day starts the schedule).
+`eff_n` = rebalance periods taken. The family had no null at all (it only reported IC and is
+always `long_short_infeasible`); it now also records a top-quintile long-leg DIAGNOSTIC and
+an equal-weight-universe null on the same entry/hold/periods, so a beta-to-trend read is
+possible. Status is unchanged (`long_short_infeasible`, never scored as tradeable).
+
+**Re-score** (115 names, `--use-calibrated`, bars to 2026-10-14, `research/out_d1_xsec/`,
+`strategy_fit/compare_d1_xsec.py`; cost = median floor 84.1 bps + median impact 1.9 bps, full
+round trip each period). Long top-quintile, net of cost, vs equal-weight null, paired t:
+
+| entry | hold | eff_n | gross | net | null | edge over null | t |
+|---|---|---|---|---|---|---|---|
+| LOOKAHEAD (old) | 1 / 2 / 5 | 657 / 656 / 653 | -2.8 / 9.5 / 45.8 | -88.8 / -76.5 / -40.2 | 7.4 / 14.6 / 37.8 | -10.2 / -5.0 / 8.0 | -2.7 / -0.9 / 0.9 |
+| next_close | 1 / 2 / 5 | 328 / 219 / 109 | 3.6 / 9.9 / 34.6 | -82.4 / -76.1 / -51.4 | 4.9 / 20.6 / 39.5 | -1.3 / -10.7 / -4.8 | -0.3 / -1.3 / -0.2 |
+| next_open | 1 / 2 / 5 | 328 / 219 / 109 | -18.2 / -21.8 / -8.9 | -104 / -108 / -95 | 4.4 / 15.3 / 31.7 | -22.6 / -37.0 / -40.6 | -4.1 / -4.0 / -1.9 |
+
+h20/h60: LOOKAHEAD counted ~640 / ~600 overlapping daily periods (h60 gross 690.8, edge 102.8,
+t 2.82: an overlap artefact, ~10 independent windows); next_close has eff_n 31 / 10 (h60
+`insufficient_n`), h20 gross 128.6, net +42.6 but null 200.7 so edge over null -72.1.
+
+**Verdict.** No cross-sectional cell survives, and the family could not have been deployed
+anyway (short leg). Under `next_close` every h1-h5 cell loses to the equal-weight null and
+to cost; the one positive-net cell (h20) is universe beta (null 200 bps) with edge over null
+negative and 31 periods. Results move strongly with the rebalance phase (h5 edge over null
+-25.7 .. +67.9 bps across the 6 phases), the same fragility as the single-name survivors, so
+no phase-picked cell is credible. The newest impact candidate (median +26%: 1.9 -> 2.4 bps)
+changes net by <0.5 bps because the spread/commission floor (~84 bps) dominates.
+
 ---
 
 Prev: [09-universe-screener.md ←](./09-universe-screener.md) ·
