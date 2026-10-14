@@ -237,10 +237,13 @@ Carina chose the sleeve by itself, despite the JWT being stamped
   accounts;
 - identifying the routing mechanism is open.
 
-- [ ] **Identify what routes an order to `008488L`** (app account selection
+- [x] **Identify what routes an order to `008488L`** (app account selection
       at token mint? sub-account default? a changed token claim?). Until then,
       a token minted differently could route to the core book silently.
-      **It did, 2026-10-14:** the §10 probe (16.6M BBCA buy, `--account
+      **Identified 2026-10-14:** the trading JWT's nested `data.acn` claim, i.e. the
+      account selected when the token was minted. `strategy-run` refuses to arm
+      on a mismatch (`2f607e1`). **A token minted differently did misroute,
+      2026-10-14:** the §10 probe (16.6M BBCA buy, `--account
       008488L`) landed in the core book `0001958`. The operator had copied the
       token from a web session with the main account selected. The working
       hypothesis is that routing follows the token's minting account (`acn`
