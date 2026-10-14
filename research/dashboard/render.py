@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 
+from dashboard import hover
 from dashboard.terms import require_term, term_anchor
 
 CSS = """
@@ -209,6 +210,7 @@ def page(title: str, active: str, body: str, footer: str) -> str:
             nav(active),
             f"<main>{body}",
             f"<footer>{footer}</footer></main>",
+            hover.script_tag() if "data-hv=" in body else "",
             "</body></html>",
             "",
         ]

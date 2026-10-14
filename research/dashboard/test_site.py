@@ -111,7 +111,9 @@ def test_every_page_is_written_with_the_shared_nav(world):
     assert any(n.startswith("strategy-aaaa") for n in names)  # a detail page for the survivor
     for n in names:
         page = text(out, n)
-        assert 'class="top"' in page and "<script" not in page
+        # No external scripts, ever; the only script is the small inline chart-hover one.
+        assert 'class="top"' in page and "<script src" not in page
+        assert page.count("<script>") == (1 if "data-hv=" in page else 0)
 
 
 def test_the_account_number_is_never_rendered(world):

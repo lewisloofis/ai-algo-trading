@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from lib.stats import MIN_T_STAT
 from strategy_fit.compare_d1_rescore import TOP_N
 
 from dashboard import results as R
@@ -53,9 +54,15 @@ def verdict_for(
     avg_net_pct: float | None = None,
     avg_net_without_best_pct: float | None = None,
     n_trades: int | None = None,
+    edge_vs_null_pct: float | None = None,
+    t_stat: float | None = None,
 ) -> Verdict:
     """
     The verdict for one cell.
+
+    ``edge_vs_null_pct`` / ``t_stat`` are the per-trade edge over buying on random days and
+    Welch's t for it (lib.stats.welch_t); a cell that clears the harness gates but whose t is
+    below lib.stats.MIN_T_STAT is "could easily be luck", never a candidate.
 
     ``avg_net_pct`` / ``avg_net_without_best_pct`` come from the re-derived trade
     list (scorecard.trade_stats) and are optional: a cell with no trade list (an
@@ -97,19 +104,40 @@ def verdict_for(
         else f"Needs more than {TOP_N} trades to judge."
     )
 
+    sig_ok = None if t_stat is None else t_stat >= MIN_T_STAT
+    if t_stat is None:
+        sig_detail = "Not judged."
+    else:
+        sig_detail = (
+            f"Averaged {_pct(edge_vs_null_pct)} per trade more than buying on random days (t = {t_stat:.1f}); "
+            + (
+                f"that is beyond what luck usually produces (a t of {MIN_T_STAT:.0f} or more)."
+                if sig_ok
+                else f"a t below {MIN_T_STAT:.0f} means the gap could easily be luck."
+            )
+            if edge_vs_null_pct is not None
+            else f"t = {t_stat:.1f}."
+        )
+
     checks = (
         Check("Makes money after costs", cost_ok, cost_detail),
         Check(
             "Not just luck",
             not_luck,
-            "Statistically convincing after correcting for the many strategies tried."
+            "Its profit is statistically distinguishable from zero after correcting for the many strategies "
+            "tried. This does not test whether it beats random days; see the random-days check."
             if not_luck
             else ("Could easily be chance." if not_luck is False else "Not reached."),
         ),
         Check(
             "Beats simply holding the stock",
             beats_hold,
-            "Gains are more than the stock's own rise would give."
+            (
+                "Its average is higher than buying on any day, but the gap is not shown to be more than luck "
+                "(see the random-days check)."
+                if sig_ok is False
+                else "Gains are more than the stock's own rise would give."
+            )
             if beats_hold
             else (
                 "Buying the stock on any day did about as well; the signal adds little."
@@ -117,6 +145,7 @@ def verdict_for(
                 else "Not reached."
             ),
         ),
+        Check("Beats buying on random days by more than luck", sig_ok, sig_detail),
         Check(
             "Still works on later, unseen data",
             later_ok,
@@ -152,6 +181,14 @@ def verdict_for(
         return no("it has not been testable yet (data or capital missing)")
     if gate != R.GATE_PASSED_ALL:
         return no("it did not reach a clean pass")
+    if sig_ok is False:
+        if edge_vs_null_pct is None:
+            return no(f"its edge over random days could easily be luck (t = {t_stat:.1f})")
+        verb = "beats" if edge_vs_null_pct > 0 else "trails"
+        return no(
+            f"{verb} random days by {_pct(edge_vs_null_pct)} per trade, but that could easily be luck "
+            f"(t = {t_stat:.1f})"
+        )
     if conc_ok is False:
         return no(f"profit disappears without its {TOP_N} best trades")
     if cell.oos_underpowered:

@@ -322,3 +322,40 @@ def required_effective_n(
         return 1
     n = (z * per_trade_sigma_bps / target_edge_bps) ** 2
     return max(1, int(np.ceil(n)))
+
+
+# ---------------------------------------------------------------------------
+# Significance of a strategy's per-trade edge over the always-long null
+# ---------------------------------------------------------------------------
+
+MIN_T_STAT = 2.0
+"""|t| a per-trade edge over the always-long null must clear before it is called more than luck."""
+
+
+def welch_t(sample, null, null_n_eff: float | None = None) -> float:
+    """
+    Welch's t for mean(sample) - mean(null), allowing unequal variances.
+
+    ``sample`` is the strategy's per-trade returns; ``null`` is the per-trade return of
+    buying on every priced day for the same hold (the harness's always-long null). Both
+    must be in the same units; a common cost cancels, so gross or net is fine.
+
+    Consecutive always-long trades overlap by the hold, so they are not independent
+    draws. Pass ``null_n_eff`` (e.g. ``len(null) / hold``) to use that many effective
+    observations for the null's standard error; default is ``len(null)``.
+
+    Returns NaN when undefined (fewer than 2 sample trades, an empty null, or zero
+    variance on both sides).
+    """
+    a = np.asarray(sample, dtype=float)
+    b = np.asarray(null, dtype=float)
+    a, b = a[np.isfinite(a)], b[np.isfinite(b)]
+    if len(a) < 2 or len(b) < 2:
+        return float("nan")
+    nb = float(null_n_eff) if null_n_eff is not None else float(len(b))
+    if nb <= 0:
+        return float("nan")
+    se2 = float(np.var(a, ddof=1)) / len(a) + float(np.var(b, ddof=1)) / nb
+    if se2 <= 0:
+        return float("nan")
+    return float((np.mean(a) - np.mean(b)) / np.sqrt(se2))

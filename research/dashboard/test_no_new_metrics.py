@@ -144,6 +144,16 @@ def test_gate_outcomes_are_the_harness_s_words_not_new_verdicts():
     assert {"cost_gated", "fdr_rejected", "loses_to_null"} <= prefixes
 
 
+def test_the_significance_check_is_lib_stats_not_a_copy():
+    """Welch's t and its bar belong to lib.stats; the dashboard only imports them."""
+    import lib.stats as stats
+
+    from dashboard import scorecard, verdicts
+
+    assert scorecard.welch_t is stats.welch_t
+    assert verdicts.MIN_T_STAT is stats.MIN_T_STAT
+
+
 def test_the_entry_convention_shown_is_the_harness_default():
     from strategy_fit.entry_convention import DEFAULT_ENTRY
     from strategy_fit.trade_export import ENTRY_USED

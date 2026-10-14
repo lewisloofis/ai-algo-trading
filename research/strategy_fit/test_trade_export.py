@@ -74,3 +74,22 @@ def test_export_cell_reads_local_parquet(tmp_path):
         [("TEST", "daily_momentum", 2), ("TEST", "mean_reversion", 5)], data_dir=tmp_path
     )
     assert len(many) == 2
+
+
+def test_null_returns_are_the_always_long_distribution():
+    from strategy_fit.trade_export import export_with_null
+
+    df = _bars()
+    trades, null = export_with_null(df, "daily_momentum", 5)
+    _, mean = export_with_baseline(df, "daily_momentum", 5)
+    assert len(null) > len(trades) * 2          # every priced day, not just the signal days
+    assert float(np.mean(null)) == pytest.approx(mean)
+
+
+def test_export_cell_carries_the_null_returns(tmp_path):
+    df = _bars()
+    df["date"] = pd.bdate_range("2024-01-01", periods=len(df)).strftime("%Y-%m-%d")
+    df.to_parquet(tmp_path / "TEST.parquet")
+    cell = export_cell("TEST", "daily_momentum", 5, data_dir=tmp_path)
+    assert len(cell.null_returns) > 100
+    assert float(np.mean(cell.null_returns)) == pytest.approx(cell.always_long_return)

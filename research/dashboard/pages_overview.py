@@ -99,8 +99,8 @@ def render(d) -> str:
         tested_what = f"of {total:,} stock/strategy/holding cases were actually scored; the rest lacked enough trades or data."
         pass_big = f"{passed}"
         pass_what = (
-            f"passed every backtest check. After the extra “best 5 trades” check, {standing} keep a "
-            "positive average, but none is statistically convincing — see Strategies."
+            f"passed the backtest gates. After two extra checks (the edge over buying on random days must beat luck, "
+            f"and the “best 5 trades” check), {standing} remain candidates — see Strategies."
         )
     else:
         tested_big = tested_what = pass_big = pass_what = "–"

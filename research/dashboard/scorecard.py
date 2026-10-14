@@ -19,6 +19,7 @@ import statistics
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+from lib.stats import welch_t
 from strategy_fit.compare_d1_rescore import TOP_N
 from strategy_fit.trade_export import BacktestTrade, CellTrades
 
@@ -59,6 +60,12 @@ class TradeStats:
     any_day_avg_pct: float | None = None
     """Buying the same stock on ANY day for the same hold, after the same costs (per trade)."""
     any_day_avg_idr: float | None = None
+    edge_vs_null_pct: float | None = None
+    """Strategy's average gross trade minus the any-day average, per trade (cost cancels)."""
+    t_stat: float | None = None
+    """Welch's t of that edge (lib.stats.welch_t); None when it cannot be computed."""
+    in_market_pct: float | None = None
+    """Share of the span's sessions the strategy actually held a position."""
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,8 @@ def trade_stats(
     cost_bps: float,
     bars_close: Mapping[str, float] | None = None,
     always_long_return: float | None = None,
+    null_returns: Sequence[float] = (),
+    hold: int | None = None,
 ) -> TradeStats | None:
     """Plain per-trade figures for one cell, or None when there are no trades."""
     if not trades:
@@ -100,6 +109,17 @@ def trade_stats(
     first, last = trades[0], trades[-1]
     if bars_close and first.entry_date in bars_close and last.exit_date in bars_close:
         hold_total = bars_close[last.exit_date] / bars_close[first.entry_date] - 1.0
+    null_mean = always_long_return
+    if null_mean is None and len(null_returns):
+        null_mean = statistics.fmean(null_returns)
+    t_stat = None
+    if len(null_returns):
+        # Always-long trades overlap by the hold, so only ~len/hold of them are independent.
+        t = welch_t(gross, null_returns, null_n_eff=len(null_returns) / max(hold or 1, 1))
+        t_stat = None if t != t else t
+    span = None
+    if bars_close and first.entry_date in bars_close and last.exit_date in bars_close:
+        span = sum(1 for d in bars_close if first.entry_date <= d <= last.exit_date)
     return TradeStats(
         n_trades=len(trades),
         cost_pct=cost * 100,
@@ -115,7 +135,41 @@ def trade_stats(
         last_exit=last.exit_date,
         any_day_avg_pct=None if always_long_return is None else (always_long_return - cost) * 100,
         any_day_avg_idr=None if always_long_return is None else (always_long_return - cost) * STAKE_IDR,
+        edge_vs_null_pct=None if null_mean is None else (statistics.fmean(gross) - null_mean) * 100,
+        t_stat=t_stat,
+        in_market_pct=in_market_pct(len(trades), hold, span),
     )
+
+
+def in_market_pct(n_trades: int, hold: int | None, span_sessions: int | None) -> float | None:
+    """Share of sessions in the span the strategy held a position (each trade holds ``hold`` sessions)."""
+    if not n_trades or not hold or not span_sessions:
+        return None
+    return min(100.0, n_trades * hold / span_sessions * 100)
+
+
+def cumulative_series(
+    trades: Sequence[BacktestTrade], cost_pct: float, null_mean: float | None
+) -> tuple[list[tuple[str, float]], list[tuple[str, float]], list[tuple[BacktestTrade, float, float]]]:
+    """
+    Cumulative profit of the strategy and of the like-for-like baseline, on the strategy's trade dates.
+
+    Both stake STAKE_IDR per trade, after the same cost. The baseline is "the same number of trades,
+    same hold, entered on random days": after k trades it has made k x (any-day mean - cost) x stake
+    (the mean, not a sampled path, so it is the expectation the strategy has to beat).
+    Returns (strategy points, baseline points, per-trade rows of (trade, net return, running total)).
+    """
+    cost = cost_pct / 100
+    run, strat, rows = 0.0, [(trades[0].entry_date, 0.0)], []
+    base = [(trades[0].entry_date, 0.0)]
+    per_trade_base = 0.0 if null_mean is None else (null_mean - cost) * STAKE_IDR
+    for k, t in enumerate(trades, start=1):
+        net = t.gross_return - cost
+        run += net * STAKE_IDR
+        strat.append((t.exit_date, run))
+        base.append((t.exit_date, per_trade_base * k))
+        rows.append((t, net, run))
+    return strat, base, rows
 
 
 def reproduces_report(cell: R.ResultCell, stats: TradeStats | None) -> bool | None:
@@ -165,12 +219,16 @@ def build_rows(
         cost = cell.hurdle_bps if cell.hurdle_bps is not None else run.symbol_hurdles.get(cell.symbol)
         if ct is not None and cost is not None:
             closes = dict(zip(ct.bars["date"].astype(str), ct.bars["close"].astype(float)))
-            stats = trade_stats(ct.trades, cost, closes, ct.always_long_return)
+            stats = trade_stats(
+                ct.trades, cost, closes, ct.always_long_return, ct.null_returns, hold=ct.hold
+            )
         verdict = verdict_for(
             cell,
             avg_net_pct=stats.net_avg_pct if stats else None,
             avg_net_without_best_pct=stats.net_without_best_pct if stats else None,
             n_trades=stats.n_trades if stats else None,
+            edge_vs_null_pct=stats.edge_vs_null_pct if stats else None,
+            t_stat=stats.t_stat if stats else None,
         )
         rows.append(
             ScoreRow(

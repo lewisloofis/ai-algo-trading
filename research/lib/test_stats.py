@@ -87,3 +87,37 @@ class TestDegenerateInputs:
     def test_result_is_int(self) -> None:
         n = required_effective_n(target_edge_bps=20.0, per_trade_sigma_bps=150.0)
         assert isinstance(n, int)
+
+
+# ---------------------------------------------------------------------------
+# Welch's t: strategy trades vs the always-long (null) trade distribution
+# ---------------------------------------------------------------------------
+
+import pytest
+
+from lib.stats import MIN_T_STAT, welch_t
+
+
+class TestWelchT:
+    def test_known_answer(self) -> None:
+        # a: mean 3, var 2.5, n 5; b: mean 2, var 1, n 3 -> se = sqrt(0.5 + 1/3)
+        t = welch_t([1, 2, 3, 4, 5], [1, 2, 3])
+        assert t == pytest.approx(1.0 / math.sqrt(0.5 + 1.0 / 3.0))
+
+    def test_null_effective_n_widens_the_error(self) -> None:
+        # overlapping null trades are not independent: fewer effective draws -> smaller t
+        t_full = welch_t([1, 2, 3, 4, 5], [1, 2, 3])
+        t_eff = welch_t([1, 2, 3, 4, 5], [1, 2, 3], null_n_eff=1.5)
+        assert t_eff == pytest.approx(1.0 / math.sqrt(0.5 + 1.0 / 1.5))
+        assert t_eff < t_full
+
+    def test_sign_follows_the_edge(self) -> None:
+        assert welch_t([0, 1, 2], [3, 4, 5]) < 0
+
+    def test_undefined_cases_are_nan(self) -> None:
+        assert math.isnan(welch_t([1.0], [1, 2, 3]))        # one trade: no variance
+        assert math.isnan(welch_t([1, 1, 1], [2, 2, 2]))    # zero variance both sides
+        assert math.isnan(welch_t([1, 2, 3], []))
+
+    def test_threshold_is_two(self) -> None:
+        assert MIN_T_STAT == 2.0

@@ -76,6 +76,8 @@ class CellTrades:
     harness's always-long null (families_single_name.run_single_name_family ``null_fwd``), as a
     fraction. The like-for-like answer to "what did just holding the stock do, per trade?".
     """
+    null_returns: tuple[float, ...] = ()
+    """Every one of those always-long forward returns (the null's per-trade distribution), for a t-test."""
 
 
 def export_trades(df: pd.DataFrame, family: str, hold: int) -> list[BacktestTrade]:
@@ -92,6 +94,14 @@ def export_with_baseline(
     df: pd.DataFrame, family: str, hold: int
 ) -> tuple[list[BacktestTrade], float | None]:
     """``export_trades`` plus the always-long mean return (the harness's null) from the same frame."""
+    trades, null_fwd = export_with_null(df, family, hold)
+    return trades, (float(np.mean(null_fwd)) if len(null_fwd) else None)
+
+
+def export_with_null(
+    df: pd.DataFrame, family: str, hold: int
+) -> tuple[list[BacktestTrade], np.ndarray]:
+    """``export_trades`` plus every always-long forward return (the null's per-trade distribution)."""
     if ENTRY_USED != ENTRY_NEXT_CLOSE:
         raise RuntimeError("trade_export assumes next_close entry; the default convention changed")
     if family not in SINGLE_NAME_SIGNAL_FNS:
@@ -137,7 +147,7 @@ def export_with_baseline(
         )
     null_fwd = signal_df["forward_return"].to_numpy(dtype=float)
     null_fwd = null_fwd[np.isfinite(null_fwd)]
-    return out, (float(np.mean(null_fwd)) if len(null_fwd) else None)
+    return out, null_fwd
 
 
 def load_bars(
@@ -175,7 +185,8 @@ def export_cells(
         if symbol not in bars_by_symbol:
             bars_by_symbol[symbol] = load_bars(symbol, data_dir, start, end)
         bars = bars_by_symbol[symbol]
-        trades, always_long = export_with_baseline(bars, family, hold)
+        trades, null_fwd = export_with_null(bars, family, hold)
+        always_long = float(np.mean(null_fwd)) if len(null_fwd) else None
         out[(symbol, family, hold)] = CellTrades(
             symbol=symbol,
             family=family,
@@ -183,5 +194,6 @@ def export_cells(
             trades=tuple(trades),
             bars=bars[["date", "close"]].copy(),
             always_long_return=always_long,
+            null_returns=tuple(float(x) for x in null_fwd),
         )
     return out

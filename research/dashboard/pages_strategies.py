@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dashboard import svg
 from dashboard.render import Column, banner, colored, esc, money, page, pct, table, tile
-from dashboard.scorecard import STAKE_IDR, ScoreRow
+from dashboard.scorecard import STAKE_IDR, ScoreRow, cumulative_series
 from dashboard.terms import term_link
 from dashboard.verdicts import TOP_N
 
@@ -176,31 +176,45 @@ def _checks(r: ScoreRow) -> str:
 
 
 def _curves(d, r: ScoreRow):
+    """Strategy and like-for-like baseline (same trade dates), and the per-trade rows."""
     ct = d.exported[r.cell.key]
-    cost = r.stats.cost_pct / 100
-    run, pts = 0.0, [(ct.trades[0].entry_date, 0.0)]
-    rows = []
-    for t in ct.trades:
-        net = t.gross_return - cost
-        run += net * STAKE_IDR
-        pts.append((t.exit_date, run))
-        rows.append((t, net, run))
-    first, last = ct.trades[0].entry_date, ct.trades[-1].exit_date
-    bars = [(str(x), float(c)) for x, c in zip(ct.bars["date"].astype(str), ct.bars["close"]) if first <= str(x) <= last]
-    base = bars[0][1]
-    hold = [(x, (c / base - 1.0) * STAKE_IDR) for x, c in bars]
-    return pts, hold, rows
+    return cumulative_series(ct.trades, r.stats.cost_pct, ct.always_long_return)
+
+
+RANDOM_DAYS = "Same trades on random days (fair comparison)"
+
+
+def chart_caption(c, st) -> str:
+    """One plain sentence stating both per-trade numbers, what 'beats' means, and why holding is not comparable."""
+    if st.any_day_avg_pct is None:
+        return ""
+    t = f" (t = {st.t_stat:.1f})" if st.t_stat is not None else ""
+    out = (
+        f"Per trade, the strategy made {pct(st.net_avg_pct)} vs {pct(st.any_day_avg_pct)} for entering on random days "
+        f"with the same hold, after the same costs. “Beats” means a higher average per trade than that; it only counts "
+        f"as real if the gap is bigger than luck{t}."
+    )
+    if st.hold_total_pct is not None:
+        mkt = f" (the strategy is in the market {st.in_market_pct:.0f}% of days)" if st.in_market_pct is not None else ""
+        out += (
+            f" Holding {c.symbol} the whole time made {pct(st.hold_total_pct, 0)} over the same dates, but that leaves "
+            f"everything invested and compounding through the stock's whole move{mkt}, with more risk. "
+            "It is not a fair comparison, so it is left off the chart."
+        )
+    return out
 
 
 def render_detail(d, r: ScoreRow) -> str:
     st, c = r.stats, r.cell
-    pts, hold, rows = _curves(d, r)
+    pts, base, rows = _curves(d, r)
     chart = svg.line_chart(
-        f"{c.symbol} {family_word(c.family)} {c.hold}-day hold: cumulative profit vs just holding",
+        f"{c.symbol} {family_word(c.family)} {c.hold}-day hold: cumulative profit vs the same trades on random days",
         [
             svg.Series("Strategy, after costs", pts, svg.BLUE),
-            svg.Series("Just holding the stock", hold, svg.MUTED, dashed=True),
+            svg.Series(RANDOM_DAYS, base, svg.AMBER),
         ],
+        diff=(0, 1),
+        diff_label="Strategy minus random days",
     )
     cls = "v-cand" if r.verdict.headline == "Candidate" else "v-no"
     tiles = (
@@ -249,9 +263,11 @@ def render_detail(d, r: ScoreRow) -> str:
         + repro
         + f'<div class="tiles">{tiles}</div>'
         + "<h2>Profit over time</h2>"
-        + f'<p class="small">Each trade stakes Rp {STAKE_IDR:,}, after costs, added up. The dashed line is Rp {STAKE_IDR:,} '
-        "bought at the first entry and simply held.</p>"
+        + f'<p class="small">Both lines stake Rp {STAKE_IDR:,} per trade, after the same costs, added up trade by trade. '
+        "The orange line is the average result of entering the same number of trades, with the same hold, on random days "
+        "instead of on the signal. Hover the chart for the date and both values.</p>"
         + chart
+        + f'<p>{esc(chart_caption(c, st))}</p>'
         + "<h2>What it was tested against</h2>"
         + _checks(r)
         + f'<p class="small">{detail_bits}</p>'

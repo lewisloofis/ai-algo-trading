@@ -10,6 +10,7 @@ Two charts are enough for this site:
 from __future__ import annotations
 
 import html
+import json
 import math
 from dataclasses import dataclass
 from datetime import date
@@ -21,6 +22,7 @@ GRID = "#e5e7eb"
 BLUE = "#1d4ed8"
 GREEN = "#15803d"
 RED = "#b91c1c"
+AMBER = "#c2410c"
 
 W, H = 720, 280
 PAD_L, PAD_R, PAD_T, PAD_B = 70, 16, 14, 34
@@ -79,9 +81,61 @@ def _nice_domain(lo: float, hi: float, n: int = 5) -> tuple[float, float, list[f
     return ticks[0], ticks[-1], ticks
 
 
-def _frame(title: str, body: str, desc: str) -> str:
+HOVER_MAX_POINTS = 120
+"""Per-series cap on points embedded for hover; the drawn line itself is never thinned."""
+POINT_TITLE_MAX = 60
+"""Per-chart cap on no-JS tooltip markers."""
+
+
+def _downsample(pts: Sequence[tuple[str, float]], limit: int) -> list[tuple[str, float]]:
+    """At most *limit* points, evenly spaced, always keeping the first and the last."""
+    n = len(pts)
+    if n <= limit:
+        return list(pts)
+    idx = sorted({round(i * (n - 1) / (limit - 1)) for i in range(limit)})
+    return [pts[i] for i in idx]
+
+
+def _value_at(pts: Sequence[tuple[str, float]], day: str) -> float | None:
+    """Linear interpolation of a dated series at *day*; None outside the series' own span."""
+    o = _ord(day)
+    prev = None
+    for d, v in pts:
+        od = _ord(d)
+        if od == o:
+            return v
+        if od > o:
+            if prev is None:
+                return None
+            po, pv = prev
+            return pv + (v - pv) * (o - po) / (od - po)
+        prev = (od, v)
+    return None
+
+
+def _hover_attr(
+    sc: "_Scale", fmt: str, series: Sequence[Series], diff: tuple[int, int] | None, diff_label: str
+) -> str:
+    """The data-hv attribute: axis geometry plus each series' downsampled points."""
+    ndp = 0 if fmt == "idr" else 2
+    data: dict = {
+        "x0": sc.x0, "x1": sc.x1, "y0": sc.y0, "y1": sc.y1, "fmt": fmt,
+        "g": [W, H, PAD_L, PAD_R, PAD_T, PAD_B],
+        "s": [
+            {"n": s.name, "c": s.color,
+             "p": [[_ord(d), round(v, ndp)] for d, v in _downsample(s.points, HOVER_MAX_POINTS)]}
+            for s in series if s.points
+        ],
+    }
+    if diff is not None:
+        data["d"] = list(diff)
+        data["dl"] = diff_label
+    return f' data-hv="{html.escape(json.dumps(data, separators=(",", ":")), quote=True)}"'
+
+
+def _frame(title: str, body: str, desc: str, extra_attrs: str = "") -> str:
     return (
-        f'<svg role="img" aria-label="{html.escape(title)}" viewBox="0 0 {W} {H}" '
+        f'<svg role="img" aria-label="{html.escape(title)}" viewBox="0 0 {W} {H}"{extra_attrs} '
         f'width="100%" style="max-width:{W}px;height:auto" xmlns="http://www.w3.org/2000/svg">'
         f"<title>{html.escape(title)}</title><desc>{html.escape(desc)}</desc>{body}</svg>"
     )
@@ -139,8 +193,39 @@ def _legend(items: Sequence[tuple[str, str, bool]]) -> str:
     return "".join(out)
 
 
-def line_chart(title: str, series: Sequence[Series], y_fmt: Callable[[float], str] = rupiah) -> str:
-    """Several dated series on one set of axes, with a zero line."""
+def _point_markers(sc: _Scale, series: Sequence[Series], y_fmt: Callable[[float], str],
+                   diff: tuple[int, int] | None, diff_label: str) -> str:
+    """Small dots on the first series whose <title> is the no-JavaScript hover: date and every value."""
+    out = []
+    for day, v in _downsample(series[0].points, POINT_TITLE_MAX):
+        lines = [day]
+        vals = []
+        for s in series:
+            sv = _value_at(s.points, day)
+            vals.append(sv)
+            lines.append(f"{s.name}: {y_fmt(sv) if sv is not None else '-'}")
+        if diff is not None and vals[diff[0]] is not None and vals[diff[1]] is not None:
+            gap = vals[diff[0]] - vals[diff[1]]
+            lines.append(f"{diff_label}: {'+' if gap >= 0 else ''}{y_fmt(gap)}")
+        out.append(
+            f'<circle class="pt" cx="{sc.x(day):.1f}" cy="{sc.y(v):.1f}" r="3.5" fill="{series[0].color}" '
+            f'fill-opacity="0.55"><title>{html.escape(chr(10).join(lines))}</title></circle>'
+        )
+    return "".join(out)
+
+
+def line_chart(
+    title: str,
+    series: Sequence[Series],
+    y_fmt: Callable[[float], str] = rupiah,
+    diff: tuple[int, int] | None = None,
+    diff_label: str = "Difference",
+) -> str:
+    """
+    Several dated series on one set of axes, with a zero line, plus hover.
+
+    ``diff=(i, j)`` also reads out series i minus series j (labelled ``diff_label``) at the cursor.
+    """
     pts = [p for s in series for p in s.points]
     if not pts:
         return '<p class="empty">No data to chart.</p>'
@@ -155,8 +240,10 @@ def line_chart(title: str, series: Sequence[Series], y_fmt: Callable[[float], st
     body = _axes(sc, y_fmt, zero_line=True)
     body += "".join(_path(sc, s.points, s.color, s.dashed) for s in series)
     body += _legend([(s.name, s.color, s.dashed) for s in series])
+    body += _point_markers(sc, series, y_fmt, diff, diff_label)
     ends = "; ".join(f"{s.name} ends at {y_fmt(s.points[-1][1])}" for s in series if s.points)
-    return _frame(title, body, ends)
+    fmt = "idr" if y_fmt is rupiah else "num"
+    return _frame(title, body, ends, _hover_attr(sc, fmt, series, diff, diff_label))
 
 
 def price_chart(
@@ -199,4 +286,5 @@ def price_chart(
         body += f'<polygon points="{tri}" fill="{fill}" stroke="{color}" stroke-width="2"><title>{tip}</title></polygon>'
     body += _legend([("Daily close (Rp)", MUTED, False)])
     desc = f"{len(shown)} daily closes; {len(marks)} order marker(s)."
-    return _frame(title, body, desc)
+    hover = _hover_attr(sc, "num", [Series("Close", shown, MUTED)], None, "") if shown else ""
+    return _frame(title, body, desc, hover)
