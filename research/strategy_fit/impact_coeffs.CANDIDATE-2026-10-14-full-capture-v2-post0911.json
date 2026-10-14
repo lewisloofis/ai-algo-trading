@@ -1,0 +1,1045 @@
+{
+  "generated": "2026-10-14",
+  "min_impact_obs": 20,
+  "global_default": 1.0,
+  "vol_window_days": 60,
+  "vol_estimator": "compute_daily_vol_bps_from_daily_bars",
+  "pooling": {
+    "method": "vol-consistent: each block normalised by its own trailing-60d daily-bar vol as_of block end, pooled sum Sxy/sum Sxx",
+    "blocks": {
+      "early": "06-22..07-30, 7 survivor names, as_of 2026-07-30",
+      "late7": "07-31..09-04, 7 names, as_of 2026-09-04",
+      "w02": "09-07..09-11, 47 names, as_of 2026-09-11",
+      "post": "09-14..10-07 (18 sessions), 47 names, as_of 2026-10-07; 10-08..10-14 collector outage, no data"
+    }
+  },
+  "buckets": {
+    "high_liq": {
+      "coeff": 0.35326371954631625,
+      "eff_N": 52390,
+      "confidence": "confirmed"
+    },
+    "mid_liq": {
+      "coeff": 0.3581569726331889,
+      "eff_N": 53881,
+      "confidence": "confirmed"
+    },
+    "low_liq": {
+      "coeff": 0.3446979737353613,
+      "eff_N": 13349,
+      "confidence": "confirmed"
+    }
+  },
+  "per_name": {
+    "AALI": {
+      "coeff": 0.38146366303683515,
+      "eff_N": 1241,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 201.0465549344799,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.36530716521503126,
+          "eff_N": 166,
+          "vol_bps": 168.08382038804228
+        },
+        "post": {
+          "coeff": 0.38591150677933883,
+          "eff_N": 1075,
+          "vol_bps": 201.0465549344799
+        }
+      }
+    },
+    "ADRO": {
+      "coeff": 0.36063670148401394,
+      "eff_N": 1634,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 199.21663557825508,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.27092580891510726,
+          "eff_N": 274,
+          "vol_bps": 194.69296561593058
+        },
+        "post": {
+          "coeff": 0.38522255448378545,
+          "eff_N": 1360,
+          "vol_bps": 199.21663557825508
+        }
+      }
+    },
+    "AMMN": {
+      "coeff": 0.4427799594860006,
+      "eff_N": 3356,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 298.7618162262194,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.4431301345387427,
+          "eff_N": 742,
+          "vol_bps": 343.73861860043064
+        },
+        "post": {
+          "coeff": 0.4426929455192177,
+          "eff_N": 2614,
+          "vol_bps": 298.7618162262194
+        }
+      }
+    },
+    "ANTM": {
+      "coeff": 0.44349409925317507,
+      "eff_N": 2224,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 212.5578787922597,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.4418951523320765,
+          "eff_N": 362,
+          "vol_bps": 248.0271224041673
+        },
+        "post": {
+          "coeff": 0.4438713107159432,
+          "eff_N": 1862,
+          "vol_bps": 212.5578787922597
+        }
+      }
+    },
+    "ARCI": {
+      "coeff": 0.31487443874168297,
+      "eff_N": 1499,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 300.12102166353765,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.2326427193419516,
+          "eff_N": 232,
+          "vol_bps": 360.12247219993463
+        },
+        "post": {
+          "coeff": 0.33378098395548617,
+          "eff_N": 1267,
+          "vol_bps": 300.12102166353765
+        }
+      }
+    },
+    "ASII": {
+      "coeff": 0.34372351313814803,
+      "eff_N": 1534,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 162.97308883181523,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.23721805481153543,
+          "eff_N": 188,
+          "vol_bps": 196.7270147648862
+        },
+        "post": {
+          "coeff": 0.3690684058003998,
+          "eff_N": 1346,
+          "vol_bps": 162.97308883181523
+        }
+      }
+    },
+    "BBCA": {
+      "coeff": 0.47392617627372485,
+      "eff_N": 602,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 141.61007771966993,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.4622714179949381,
+          "eff_N": 107,
+          "vol_bps": 200.08191022306804
+        },
+        "post": {
+          "coeff": 0.4759839273225754,
+          "eff_N": 495,
+          "vol_bps": 141.61007771966993
+        }
+      }
+    },
+    "BBNI": {
+      "coeff": 0.3371503687024001,
+      "eff_N": 1176,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 145.2143022648724,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.2653929338085774,
+          "eff_N": 97,
+          "vol_bps": 189.37696855023208
+        },
+        "post": {
+          "coeff": 0.34835990348399487,
+          "eff_N": 1079,
+          "vol_bps": 145.2143022648724
+        }
+      }
+    },
+    "BBRI": {
+      "coeff": 0.40594585332149846,
+      "eff_N": 1326,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 159.50514462387866,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.3825906936914227,
+          "eff_N": 186,
+          "vol_bps": 177.82756880418614
+        },
+        "post": {
+          "coeff": 0.41119670267495856,
+          "eff_N": 1140,
+          "vol_bps": 159.50514462387866
+        }
+      }
+    },
+    "BMRI": {
+      "coeff": 0.3224502246212918,
+      "eff_N": 1250,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 153.9258638307773,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.2133936559272702,
+          "eff_N": 309,
+          "vol_bps": 181.3519115900234
+        },
+        "post": {
+          "coeff": 0.34985316364454233,
+          "eff_N": 941,
+          "vol_bps": 153.9258638307773
+        }
+      }
+    },
+    "BNBR": {
+      "coeff": 0.45032243586752796,
+      "eff_N": 394,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 459.10871567491506,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.21817613401627498,
+          "eff_N": 28,
+          "vol_bps": 562.8757311783336
+        },
+        "post": {
+          "coeff": 0.4899124102542483,
+          "eff_N": 366,
+          "vol_bps": 459.10871567491506
+        }
+      }
+    },
+    "BREN": {
+      "coeff": 0.26681312238172805,
+      "eff_N": 8169,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 287.03001421244596,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "early": {
+          "coeff": 0.2192195086137751,
+          "eff_N": 4072,
+          "vol_bps": 672.217648465184
+        },
+        "late7": {
+          "coeff": 0.3076821093576882,
+          "eff_N": 2483,
+          "vol_bps": 383.25136232051767
+        },
+        "w02": {
+          "coeff": 0.1848776690702218,
+          "eff_N": 174,
+          "vol_bps": 336.4573054500126
+        },
+        "post": {
+          "coeff": 0.3148716207756265,
+          "eff_N": 1440,
+          "vol_bps": 287.03001421244596
+        }
+      }
+    },
+    "BRMS": {
+      "coeff": 0.4129153076378124,
+      "eff_N": 882,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 351.0127546485685,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.3364000537523472,
+          "eff_N": 123,
+          "vol_bps": 414.8416608325043
+        },
+        "post": {
+          "coeff": 0.4244842259113905,
+          "eff_N": 759,
+          "vol_bps": 351.0127546485685
+        }
+      }
+    },
+    "BRPT": {
+      "coeff": 0.2920663303002074,
+      "eff_N": 8791,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 253.70048447111483,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "early": {
+          "coeff": 0.2736429218608467,
+          "eff_N": 4879,
+          "vol_bps": 751.0730753101861
+        },
+        "late7": {
+          "coeff": 0.2451373600222568,
+          "eff_N": 2017,
+          "vol_bps": 422.9859581784573
+        },
+        "w02": {
+          "coeff": 0.20186768350580428,
+          "eff_N": 280,
+          "vol_bps": 398.9281949319231
+        },
+        "post": {
+          "coeff": 0.4026217647147188,
+          "eff_N": 1615,
+          "vol_bps": 253.70048447111483
+        }
+      }
+    },
+    "BSDE": {
+      "coeff": 0.3869454924931412,
+      "eff_N": 648,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 201.7953873039814,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.24297381308336685,
+          "eff_N": 113,
+          "vol_bps": 254.9108700063406
+        },
+        "post": {
+          "coeff": 0.41597327858830313,
+          "eff_N": 535,
+          "vol_bps": 201.7953873039814
+        }
+      }
+    },
+    "BULL": {
+      "coeff": 0.37591278150734087,
+      "eff_N": 1680,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 401.9708161188272,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.255942561132714,
+          "eff_N": 233,
+          "vol_bps": 482.71144119623415
+        },
+        "post": {
+          "coeff": 0.40159045356734,
+          "eff_N": 1447,
+          "vol_bps": 401.9708161188272
+        }
+      }
+    },
+    "BUMI": {
+      "coeff": 0.47529563237948336,
+      "eff_N": 789,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 338.54038609487503,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.7038506225766095,
+          "eff_N": 50,
+          "vol_bps": 383.77655856301726
+        },
+        "post": {
+          "coeff": 0.44817160701747405,
+          "eff_N": 739,
+          "vol_bps": 338.54038609487503
+        }
+      }
+    },
+    "BUVA": {
+      "coeff": 0.40288637490419005,
+      "eff_N": 1312,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 449.49067663140266,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.2913743376869509,
+          "eff_N": 197,
+          "vol_bps": 508.31452731726927
+        },
+        "post": {
+          "coeff": 0.4214838716782019,
+          "eff_N": 1115,
+          "vol_bps": 449.49067663140266
+        }
+      }
+    },
+    "CUAN": {
+      "coeff": 0.41655518372938716,
+      "eff_N": 1518,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 418.5701686547081,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.3358083189759326,
+          "eff_N": 380,
+          "vol_bps": 522.0562560135395
+        },
+        "post": {
+          "coeff": 0.43837139472059156,
+          "eff_N": 1138,
+          "vol_bps": 418.5701686547081
+        }
+      }
+    },
+    "DEWA": {
+      "coeff": 0.4027639347139682,
+      "eff_N": 1541,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 378.7959704014726,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.2960523991399733,
+          "eff_N": 206,
+          "vol_bps": 434.18626196585006
+        },
+        "post": {
+          "coeff": 0.4235303844297171,
+          "eff_N": 1335,
+          "vol_bps": 378.7959704014726
+        }
+      }
+    },
+    "EMTK": {
+      "coeff": 0.38084824549919016,
+      "eff_N": 1217,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 233.73657673952127,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.31605621771007414,
+          "eff_N": 87,
+          "vol_bps": 250.69790411711398
+        },
+        "post": {
+          "coeff": 0.39872120353976914,
+          "eff_N": 1130,
+          "vol_bps": 233.73657673952127
+        }
+      }
+    },
+    "ENRG": {
+      "coeff": 0.3689843475775039,
+      "eff_N": 10144,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 341.79664775266446,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "early": {
+          "coeff": 0.3421064055339433,
+          "eff_N": 5305,
+          "vol_bps": 678.856055864135
+        },
+        "late7": {
+          "coeff": 0.29592418814107396,
+          "eff_N": 2619,
+          "vol_bps": 471.45497203522535
+        },
+        "w02": {
+          "coeff": 0.45713181101220374,
+          "eff_N": 632,
+          "vol_bps": 480.277732453266
+        },
+        "post": {
+          "coeff": 0.49916676894956996,
+          "eff_N": 1588,
+          "vol_bps": 341.79664775266446
+        }
+      }
+    },
+    "GGRM": {
+      "coeff": 0.2938524244221827,
+      "eff_N": 1579,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 235.934609225551,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.14665283272255772,
+          "eff_N": 383,
+          "vol_bps": 264.2980914454473
+        },
+        "post": {
+          "coeff": 0.34743720559229974,
+          "eff_N": 1196,
+          "vol_bps": 235.934609225551
+        }
+      }
+    },
+    "HRTA": {
+      "coeff": 0.3213265525621308,
+      "eff_N": 918,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 296.6530367741942,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.2762970524202984,
+          "eff_N": 182,
+          "vol_bps": 309.8458440283207
+        },
+        "post": {
+          "coeff": 0.3331570496115223,
+          "eff_N": 736,
+          "vol_bps": 296.6530367741942
+        }
+      }
+    },
+    "HRUM": {
+      "coeff": 0.3707928376789551,
+      "eff_N": 786,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 246.5849711002548,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.3977546955430362,
+          "eff_N": 273,
+          "vol_bps": 283.21023398956964
+        },
+        "post": {
+          "coeff": 0.36441298900029,
+          "eff_N": 513,
+          "vol_bps": 246.5849711002548
+        }
+      }
+    },
+    "INCO": {
+      "coeff": 0.29376232653062834,
+      "eff_N": 2568,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 268.8742073570428,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.24346613395184916,
+          "eff_N": 700,
+          "vol_bps": 296.14972008840186
+        },
+        "post": {
+          "coeff": 0.3051528587911548,
+          "eff_N": 1868,
+          "vol_bps": 268.8742073570428
+        }
+      }
+    },
+    "INDF": {
+      "coeff": 0.46991351833340844,
+      "eff_N": 1261,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 124.74659072867152,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.441503585969487,
+          "eff_N": 314,
+          "vol_bps": 134.88308662016647
+        },
+        "post": {
+          "coeff": 0.47729929699041024,
+          "eff_N": 947,
+          "vol_bps": 124.74659072867152
+        }
+      }
+    },
+    "INET": {
+      "coeff": 0.4044263655312642,
+      "eff_N": 2076,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 501.5276762757436,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.4227706759061351,
+          "eff_N": 455,
+          "vol_bps": 537.88464880553
+        },
+        "post": {
+          "coeff": 0.40050975923155757,
+          "eff_N": 1621,
+          "vol_bps": 501.5276762757436
+        }
+      }
+    },
+    "ITMG": {
+      "coeff": 0.42951684159825876,
+      "eff_N": 2077,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 122.30029725983478,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.5449158244286182,
+          "eff_N": 470,
+          "vol_bps": 99.35784874044623
+        },
+        "post": {
+          "coeff": 0.4031724960636504,
+          "eff_N": 1607,
+          "vol_bps": 122.30029725983478
+        }
+      }
+    },
+    "KIJA": {
+      "coeff": 0.2957231828565619,
+      "eff_N": 1836,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 648.8600958142476,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.3281418307702285,
+          "eff_N": 264,
+          "vol_bps": 650.0727780768376
+        },
+        "post": {
+          "coeff": 0.28919963793105413,
+          "eff_N": 1572,
+          "vol_bps": 648.8600958142476
+        }
+      }
+    },
+    "LSIP": {
+      "coeff": 0.44153544671363765,
+      "eff_N": 2033,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 201.08364300638178,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.4601443113844816,
+          "eff_N": 366,
+          "vol_bps": 206.93188980145752
+        },
+        "post": {
+          "coeff": 0.4364403244260979,
+          "eff_N": 1667,
+          "vol_bps": 201.08364300638178
+        }
+      }
+    },
+    "MBMA": {
+      "coeff": 0.3919683739829817,
+      "eff_N": 442,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 334.40535157915264,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.38644519464735166,
+          "eff_N": 79,
+          "vol_bps": 389.42673103656915
+        },
+        "post": {
+          "coeff": 0.3934288153451672,
+          "eff_N": 363,
+          "vol_bps": 334.40535157915264
+        }
+      }
+    },
+    "MDKA": {
+      "coeff": 0.38856658574802444,
+      "eff_N": 2053,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 270.51284552074327,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.3368879835416809,
+          "eff_N": 547,
+          "vol_bps": 314.2321955600483
+        },
+        "post": {
+          "coeff": 0.40537013249634296,
+          "eff_N": 1506,
+          "vol_bps": 270.51284552074327
+        }
+      }
+    },
+    "MEDC": {
+      "coeff": 0.43471686588634695,
+      "eff_N": 2644,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 271.54265457600735,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.44680977163013735,
+          "eff_N": 494,
+          "vol_bps": 275.9613809167035
+        },
+        "post": {
+          "coeff": 0.43130175559218487,
+          "eff_N": 2150,
+          "vol_bps": 271.54265457600735
+        }
+      }
+    },
+    "MPMX": {
+      "coeff": 0.40757592690349287,
+      "eff_N": 236,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 73.3239335115284,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.40964481137678543,
+          "eff_N": 52,
+          "vol_bps": 83.63274973957981
+        },
+        "post": {
+          "coeff": 0.40710018476135906,
+          "eff_N": 184,
+          "vol_bps": 73.3239335115284
+        }
+      }
+    },
+    "PTRO": {
+      "coeff": 0.32002935358167317,
+      "eff_N": 9380,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 313.22640666965435,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "early": {
+          "coeff": 0.2178789531764239,
+          "eff_N": 4853,
+          "vol_bps": 689.6475251285563
+        },
+        "late7": {
+          "coeff": 0.3744711589840646,
+          "eff_N": 2880,
+          "vol_bps": 385.43682603865375
+        },
+        "w02": {
+          "coeff": 0.33722692588886005,
+          "eff_N": 453,
+          "vol_bps": 358.780628300777
+        },
+        "post": {
+          "coeff": 0.40402339244298047,
+          "eff_N": 1194,
+          "vol_bps": 313.22640666965435
+        }
+      }
+    },
+    "RAJA": {
+      "coeff": 0.35663305185087424,
+      "eff_N": 7848,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 258.2301061328389,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "early": {
+          "coeff": 0.2924417038820385,
+          "eff_N": 5952,
+          "vol_bps": 686.4802072380719
+        },
+        "late7": {
+          "coeff": 0.2793172942990879,
+          "eff_N": 683,
+          "vol_bps": 386.25323614931006
+        },
+        "w02": {
+          "coeff": 0.297720124055191,
+          "eff_N": 176,
+          "vol_bps": 385.33349998676505
+        },
+        "post": {
+          "coeff": 0.5218392814035762,
+          "eff_N": 1037,
+          "vol_bps": 258.2301061328389
+        }
+      }
+    },
+    "RATU": {
+      "coeff": 0.2638792753923319,
+      "eff_N": 6693,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 264.32141722719376,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "early": {
+          "coeff": 0.22117178763367237,
+          "eff_N": 3029,
+          "vol_bps": 708.6268888608198
+        },
+        "late7": {
+          "coeff": 0.23437197168321025,
+          "eff_N": 1955,
+          "vol_bps": 424.06830483718903
+        },
+        "w02": {
+          "coeff": 0.38822967596670893,
+          "eff_N": 670,
+          "vol_bps": 416.69588361687016
+        },
+        "post": {
+          "coeff": 0.3434289393159981,
+          "eff_N": 1039,
+          "vol_bps": 264.32141722719376
+        }
+      }
+    },
+    "SMGR": {
+      "coeff": 0.29125572158177065,
+      "eff_N": 1567,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 317.37540927664384,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.30387802575426615,
+          "eff_N": 452,
+          "vol_bps": 330.7331180650915
+        },
+        "post": {
+          "coeff": 0.2877866146416731,
+          "eff_N": 1115,
+          "vol_bps": 317.37540927664384
+        }
+      }
+    },
+    "SSIA": {
+      "coeff": 0.2646951035524386,
+      "eff_N": 1773,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 325.68199494791213,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.20428171911768808,
+          "eff_N": 242,
+          "vol_bps": 302.4760294505963
+        },
+        "post": {
+          "coeff": 0.27777150576384974,
+          "eff_N": 1531,
+          "vol_bps": 325.68199494791213
+        }
+      }
+    },
+    "TINS": {
+      "coeff": 0.4126607805398682,
+      "eff_N": 3203,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 264.46221440676237,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.4280755675572679,
+          "eff_N": 772,
+          "vol_bps": 304.12889563147263
+        },
+        "post": {
+          "coeff": 0.40852032877958855,
+          "eff_N": 2431,
+          "vol_bps": 264.46221440676237
+        }
+      }
+    },
+    "TLKM": {
+      "coeff": 0.49825430378740315,
+      "eff_N": 714,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 176.8362676045156,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.3694403094205709,
+          "eff_N": 116,
+          "vol_bps": 204.5324453812682
+        },
+        "post": {
+          "coeff": 0.534350765680698,
+          "eff_N": 598,
+          "vol_bps": 176.8362676045156
+        }
+      }
+    },
+    "TOBA": {
+      "coeff": 0.3305287919037867,
+      "eff_N": 681,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 343.678635851931,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.28818613379068253,
+          "eff_N": 177,
+          "vol_bps": 394.08028482523235
+        },
+        "post": {
+          "coeff": 0.3407837041868746,
+          "eff_N": 504,
+          "vol_bps": 343.678635851931
+        }
+      }
+    },
+    "TPIA": {
+      "coeff": 0.31519539817958436,
+      "eff_N": 8359,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 292.6877223068572,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "early": {
+          "coeff": 0.27244745335606174,
+          "eff_N": 4754,
+          "vol_bps": 879.4187334925625
+        },
+        "late7": {
+          "coeff": 0.3557913734588496,
+          "eff_N": 1457,
+          "vol_bps": 439.09032453795646
+        },
+        "w02": {
+          "coeff": 0.20304121413737947,
+          "eff_N": 292,
+          "vol_bps": 391.49616759697193
+        },
+        "post": {
+          "coeff": 0.3443177079486811,
+          "eff_N": 1856,
+          "vol_bps": 292.6877223068572
+        }
+      }
+    },
+    "UNTR": {
+      "coeff": 0.3340066589436108,
+      "eff_N": 2590,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 184.6041864665848,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.3092713219553998,
+          "eff_N": 665,
+          "vol_bps": 203.50858070119187
+        },
+        "post": {
+          "coeff": 0.34223379087858946,
+          "eff_N": 1925,
+          "vol_bps": 184.6041864665848
+        }
+      }
+    },
+    "VKTR": {
+      "coeff": 0.3149060153853845,
+      "eff_N": 1447,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 513.6154625885877,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.2252542890875219,
+          "eff_N": 344,
+          "vol_bps": 669.5889466229643
+        },
+        "post": {
+          "coeff": 0.33847555969652615,
+          "eff_N": 1103,
+          "vol_bps": 513.6154625885877
+        }
+      }
+    },
+    "WIFI": {
+      "coeff": 0.3092009694365307,
+      "eff_N": 1929,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 327.64944251002436,
+      "vol_source": "daily_bars",
+      "blocks": {
+        "w02": {
+          "coeff": 0.32420713094429326,
+          "eff_N": 241,
+          "vol_bps": 342.2155276517503
+        },
+        "post": {
+          "coeff": 0.30632947195072,
+          "eff_N": 1688,
+          "vol_bps": 327.64944251002436
+        }
+      }
+    }
+  }
+}

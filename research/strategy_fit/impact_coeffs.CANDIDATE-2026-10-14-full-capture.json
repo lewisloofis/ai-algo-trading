@@ -1,0 +1,425 @@
+{
+  "generated": "2026-10-14",
+  "min_impact_obs": 20,
+  "global_default": 1.0,
+  "vol_window_days": 60,
+  "vol_estimator": "compute_daily_vol_bps_from_daily_bars",
+  "pooling": {
+    "method": "vol-consistent: each block normalised by its own trailing-60d vol as_of block end, then pooled (sum Sxy / sum Sxx)",
+    "blocks": {
+      "early": "2026-06-22..2026-07-30, 7 survivor names, as_of 2026-07-30",
+      "late": "2026-07-31..2026-09-11 survivors + 2026-09-07..11 other 40 names, as_of 2026-09-11"
+    },
+    "sessions_used": "58 survivor sessions (53 plan10-survivors + 5 w02-widened); 5 sessions for the other 40 names",
+    "note": "naive single-as_of pooling inflates buckets ~+21%/+30%; see impact_coeffs.NAIVE-2026-10-14-single-asof-vol.json"
+  },
+  "buckets": {
+    "high_liq": {
+      "coeff": 0.3171994189657332,
+      "eff_N": 31944,
+      "confidence": "confirmed"
+    },
+    "mid_liq": {
+      "coeff": 0.30298236225214614,
+      "eff_N": 27251,
+      "confidence": "confirmed"
+    },
+    "low_liq": {
+      "coeff": 0.2925559826975938,
+      "eff_N": 1799,
+      "confidence": "confirmed"
+    }
+  },
+  "per_name": {
+    "AALI": {
+      "coeff": 0.36530716521503126,
+      "eff_N": 166,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 168.08382038804228,
+      "vol_source": "daily_bars"
+    },
+    "ADRO": {
+      "coeff": 0.27092580891510726,
+      "eff_N": 274,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 194.69296561593058,
+      "vol_source": "daily_bars"
+    },
+    "AMMN": {
+      "coeff": 0.4431301345387427,
+      "eff_N": 742,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 343.73861860043064,
+      "vol_source": "daily_bars"
+    },
+    "ANTM": {
+      "coeff": 0.4418951523320765,
+      "eff_N": 362,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 248.0271224041673,
+      "vol_source": "daily_bars"
+    },
+    "ARCI": {
+      "coeff": 0.2326427193419516,
+      "eff_N": 232,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 360.12247219993463,
+      "vol_source": "daily_bars"
+    },
+    "ASII": {
+      "coeff": 0.23721805481153543,
+      "eff_N": 188,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 196.7270147648862,
+      "vol_source": "daily_bars"
+    },
+    "BBCA": {
+      "coeff": 0.4622714179949381,
+      "eff_N": 107,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 200.08191022306804,
+      "vol_source": "daily_bars"
+    },
+    "BBNI": {
+      "coeff": 0.2653929338085774,
+      "eff_N": 97,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 189.37696855023208,
+      "vol_source": "daily_bars"
+    },
+    "BBRI": {
+      "coeff": 0.3825906936914227,
+      "eff_N": 186,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 177.82756880418614,
+      "vol_source": "daily_bars"
+    },
+    "BMRI": {
+      "coeff": 0.2133936559272702,
+      "eff_N": 309,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 181.3519115900234,
+      "vol_source": "daily_bars"
+    },
+    "BNBR": {
+      "coeff": 0.21817613401627498,
+      "eff_N": 28,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 562.8757311783336,
+      "vol_source": "daily_bars"
+    },
+    "BREN": {
+      "coeff": 0.26278168583172934,
+      "eff_N": 6535,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 336.4573054500126,
+      "vol_source": "daily_bars",
+      "coeff_early": 0.2192195086137751,
+      "coeff_late": 0.30887041345458033
+    },
+    "BRMS": {
+      "coeff": 0.3364000537523472,
+      "eff_N": 123,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 414.8416608325043,
+      "vol_source": "daily_bars"
+    },
+    "BRPT": {
+      "coeff": 0.26150721419341744,
+      "eff_N": 7086,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 398.9281949319231,
+      "vol_source": "daily_bars",
+      "coeff_early": 0.2736429218608467,
+      "coeff_late": 0.25176547013947437
+    },
+    "BSDE": {
+      "coeff": 0.24297381308336685,
+      "eff_N": 113,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 254.9108700063406,
+      "vol_source": "daily_bars"
+    },
+    "BULL": {
+      "coeff": 0.255942561132714,
+      "eff_N": 233,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 482.71144119623415,
+      "vol_source": "daily_bars"
+    },
+    "BUMI": {
+      "coeff": 0.7038506225766095,
+      "eff_N": 50,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 383.77655856301726,
+      "vol_source": "daily_bars"
+    },
+    "BUVA": {
+      "coeff": 0.2959335936794248,
+      "eff_N": 197,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 500.483256707136,
+      "vol_source": "daily_bars"
+    },
+    "CUAN": {
+      "coeff": 0.3358083189759326,
+      "eff_N": 380,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 522.0562560135395,
+      "vol_source": "daily_bars"
+    },
+    "DEWA": {
+      "coeff": 0.2960523991399733,
+      "eff_N": 206,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 434.18626196585006,
+      "vol_source": "daily_bars"
+    },
+    "EMTK": {
+      "coeff": 0.31605621771007414,
+      "eff_N": 87,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 250.69790411711398,
+      "vol_source": "daily_bars"
+    },
+    "ENRG": {
+      "coeff": 0.31563907123740553,
+      "eff_N": 8744,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 481.4111327253249,
+      "vol_source": "daily_bars",
+      "coeff_early": 0.3421064055339433,
+      "coeff_late": 0.29653598481549465
+    },
+    "GGRM": {
+      "coeff": 0.14665283272255772,
+      "eff_N": 383,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 264.2980914454473,
+      "vol_source": "daily_bars"
+    },
+    "HRTA": {
+      "coeff": 0.2762970524202984,
+      "eff_N": 182,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 309.8458440283207,
+      "vol_source": "daily_bars"
+    },
+    "HRUM": {
+      "coeff": 0.3977546955430362,
+      "eff_N": 273,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 283.21023398956964,
+      "vol_source": "daily_bars"
+    },
+    "INCO": {
+      "coeff": 0.24346613395184916,
+      "eff_N": 700,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 296.14972008840186,
+      "vol_source": "daily_bars"
+    },
+    "INDF": {
+      "coeff": 0.441503585969487,
+      "eff_N": 314,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 134.88308662016647,
+      "vol_source": "daily_bars"
+    },
+    "INET": {
+      "coeff": 0.4227706759061351,
+      "eff_N": 455,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 537.88464880553,
+      "vol_source": "daily_bars"
+    },
+    "ITMG": {
+      "coeff": 0.5449158244286182,
+      "eff_N": 470,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 99.35784874044623,
+      "vol_source": "daily_bars"
+    },
+    "KIJA": {
+      "coeff": 0.3281418307702285,
+      "eff_N": 264,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 650.0727780768376,
+      "vol_source": "daily_bars"
+    },
+    "LSIP": {
+      "coeff": 0.4601443113844816,
+      "eff_N": 366,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 206.93188980145752,
+      "vol_source": "daily_bars"
+    },
+    "MBMA": {
+      "coeff": 0.38644519464735166,
+      "eff_N": 79,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 389.42673103656915,
+      "vol_source": "daily_bars"
+    },
+    "MDKA": {
+      "coeff": 0.3368879835416809,
+      "eff_N": 547,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 314.2321955600483,
+      "vol_source": "daily_bars"
+    },
+    "MEDC": {
+      "coeff": 0.44680977163013735,
+      "eff_N": 494,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 275.9613809167035,
+      "vol_source": "daily_bars"
+    },
+    "MPMX": {
+      "coeff": 0.40964481137678543,
+      "eff_N": 52,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 83.63274973957981,
+      "vol_source": "daily_bars"
+    },
+    "PTRO": {
+      "coeff": 0.3026834814814646,
+      "eff_N": 8194,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 358.780628300777,
+      "vol_source": "daily_bars",
+      "coeff_early": 0.2178789531764239,
+      "coeff_late": 0.3906086404887857
+    },
+    "RAJA": {
+      "coeff": 0.2920242060972606,
+      "eff_N": 6794,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 385.33349998676505,
+      "vol_source": "daily_bars",
+      "coeff_early": 0.2924417038820385,
+      "coeff_late": 0.29174090450690204
+    },
+    "RATU": {
+      "coeff": 0.2385485141446614,
+      "eff_N": 5587,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 416.69588361687016,
+      "vol_source": "daily_bars",
+      "coeff_early": 0.22117178763367237,
+      "coeff_late": 0.2559024322045831
+    },
+    "SMGR": {
+      "coeff": 0.30387802575426615,
+      "eff_N": 452,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 330.7331180650915,
+      "vol_source": "daily_bars"
+    },
+    "SSIA": {
+      "coeff": 0.20428171911768808,
+      "eff_N": 242,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 302.4760294505963,
+      "vol_source": "daily_bars"
+    },
+    "TINS": {
+      "coeff": 0.4280755675572679,
+      "eff_N": 772,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 304.12889563147263,
+      "vol_source": "daily_bars"
+    },
+    "TLKM": {
+      "coeff": 0.3694403094205709,
+      "eff_N": 116,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 204.5324453812682,
+      "vol_source": "daily_bars"
+    },
+    "TOBA": {
+      "coeff": 0.28818613379068253,
+      "eff_N": 177,
+      "confidence": "confirmed",
+      "bucket": "low_liq",
+      "vol_bps": 394.08028482523235,
+      "vol_source": "daily_bars"
+    },
+    "TPIA": {
+      "coeff": 0.3216526466375034,
+      "eff_N": 6386,
+      "confidence": "confirmed",
+      "bucket": "high_liq",
+      "vol_bps": 391.49616759697193,
+      "vol_source": "daily_bars",
+      "coeff_early": 0.27244745335606174,
+      "coeff_late": 0.36664498664566564
+    },
+    "UNTR": {
+      "coeff": 0.3092713219553998,
+      "eff_N": 665,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 203.50858070119187,
+      "vol_source": "daily_bars"
+    },
+    "VKTR": {
+      "coeff": 0.22702775165050143,
+      "eff_N": 344,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 664.3583485097926,
+      "vol_source": "daily_bars"
+    },
+    "WIFI": {
+      "coeff": 0.32420713094429326,
+      "eff_N": 241,
+      "confidence": "confirmed",
+      "bucket": "mid_liq",
+      "vol_bps": 342.2155276517503,
+      "vol_source": "daily_bars"
+    }
+  }
+}

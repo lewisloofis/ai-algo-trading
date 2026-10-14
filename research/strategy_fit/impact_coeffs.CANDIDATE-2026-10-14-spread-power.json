@@ -1,0 +1,98 @@
+{
+  "generated": "2026-10-14",
+  "status": "CANDIDATE - research only, NOT wired into impact.py (requires an exponent change in compute_impact_bps)",
+  "model": "impact_bps = 2 * Y * V0 * (V/V0)**beta * sqrt(Q/ADV); additive spread term rejected (kappa 0.14-0.22)",
+  "best_variant": "V3b (s=0, beta free)",
+  "V0_bps": 300.0,
+  "vol_estimator": "compute_daily_vol_bps_from_daily_bars",
+  "vol_window_days": 60,
+  "adv_basis": "tape median daily notional (calibration basis), see report section 6",
+  "n_events": 119620,
+  "bootstrap": "200 session-cluster resamples stratified by block",
+  "buckets": {
+    "high_liq": {
+      "Y": 0.37664365316766585,
+      "Y_ci": [
+        0.3645450027639574,
+        0.3873471522022632
+      ],
+      "beta": 0.7593351496064702,
+      "beta_ci": [
+        0.7061476688608612,
+        0.8106648267446209
+      ],
+      "n": 52390,
+      "oob_agg_pred_over_obs": 0.8043351070645227,
+      "trend_post_over_first": 1.239704686307283,
+      "trend_ci": [
+        1.1592522474958238,
+        1.3246934557268486
+      ],
+      "Y_by_block_at_pooled_beta": {
+        "early": 0.32288324885996605,
+        "late7": 0.34596306749118666,
+        "w02": 0.35232059017883605,
+        "post": 0.4002798767418206
+      }
+    },
+    "mid_liq": {
+      "Y": 0.349962592177566,
+      "Y_ci": [
+        0.3339893220444314,
+        0.36820176878851635
+      ],
+      "beta": 0.7512748336211706,
+      "beta_ci": [
+        0.7019925009630679,
+        0.8050132850346975
+      ],
+      "n": 53881,
+      "oob_agg_pred_over_obs": 0.7886813705722548,
+      "trend_post_over_first": 1.2254954113979952,
+      "trend_ci": [
+        1.1009936884588312,
+        1.351149248232377
+      ],
+      "Y_by_block_at_pooled_beta": {
+        "early": 0.30651612869466965,
+        "late7": 0.301426769597961,
+        "w02": 0.31442160069586833,
+        "post": 0.375634109234795
+      }
+    },
+    "low_liq": {
+      "Y": 0.33776542896940825,
+      "Y_ci": [
+        0.30844117040762115,
+        0.372727019704335
+      ],
+      "beta": 0.8099758308310163,
+      "beta_ci": [
+        0.6215575808979894,
+        0.9700238342510854
+      ],
+      "n": 13349,
+      "oob_agg_pred_over_obs": 0.8414825953702799,
+      "trend_post_over_first": 1.1471223980431746,
+      "trend_ci": [
+        0.9519235214831444,
+        1.4331090457250943
+      ],
+      "Y_by_block_at_pooled_beta": {
+        "w02": 0.3007884595755854,
+        "post": 0.34504117905205806
+      }
+    }
+  },
+  "no_code_change_alternative": {
+    "note": "keep beta=1; latest block (09-14..10-07, as_of 2026-10-07) coefficients",
+    "high_liq": 0.3959954900823131,
+    "mid_liq": 0.4178743716173443,
+    "low_liq": 0.3550199693865987
+  },
+  "caveats": [
+    "beta weakly identified (4 vol regimes)",
+    "residual Y trend across blocks still significant (1.15-1.24)",
+    "orders of 1-5M IDR are below the fitted size range"
+  ]
+}
