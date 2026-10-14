@@ -186,8 +186,13 @@ ADR-0016 was written to cut.
 
 ## Open questions
 
-- **Does `008488L` have a trading limit of its own?** Unresolved above;
-  answerable only by an order attempt, so it is a B4 measurement.
+- ~~**Does `008488L` have a trading limit of its own?**~~ **Answered
+  2026-10-14: no.** A buy of 64 lots BBRI at 2,630 (16,832,000 IDR) placed in
+  `008488L`, which held 14.9M withdrawable, was rejected with
+  `[C-006] insufficient trading balance`. The sleeve is capped at its own cash,
+  which confirms the conservative reading above. The core book's ~377M limit
+  does not carry over. See
+  [runbook §14](../runbooks/first-live-order.md).
 - **How many concurrent names should the sleeve hold?** This sets per-name
   notional and therefore every impact number. It is a portfolio-construction
   decision (Track A, plan 13's successor), not an execution one.

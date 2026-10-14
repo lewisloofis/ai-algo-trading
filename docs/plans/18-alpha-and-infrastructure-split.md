@@ -206,7 +206,11 @@ by our own `order_id`s, which the post-trade store knows.
       `008488L` both read 15,000,000, and the core book's cash fell by exactly
       that amount (29,746,598.11 → 14,746,598.11), so the transfer is clean and
       the two balances are genuinely separate.
-- [ ] **Confirm whether the sleeve has a trading limit of its own.** Measured:
+- [x] **Confirm whether the sleeve has a trading limit of its own.**
+      **Confirmed 2026-10-14: it does not.** A 16,832,000 IDR BBRI buy in
+      `008488L`, which held 14.9M of cash, was rejected with `[C-006]
+      insufficient trading balance` ([runbook §14](../runbooks/first-live-order.md)).
+      Earlier measurement:
       the limit does *not* follow the cash. `trade_limit` fell 392,013,889.11 →
       377,013,889.11 — exactly the 15,000,000 transferred out — and `cash/info`
       reports identical figures for both account numbers because it ignores
@@ -236,6 +240,13 @@ Carina chose the sleeve by itself, despite the JWT being stamped
 - [ ] **Identify what routes an order to `008488L`** (app account selection
       at token mint? sub-account default? a changed token claim?). Until then,
       a token minted differently could route to the core book silently.
+      **It did, 2026-10-14:** the §10 probe (16.6M BBCA buy, `--account
+      008488L`) landed in the core book `0001958`. The operator had copied the
+      token from a web session with the main account selected. The working
+      hypothesis is that routing follows the token's minting account (`acn`
+      claim). The §10 result is void. No live run until `strategy-run` refuses
+      to arm when the token's `acn` ≠ `--account`
+      ([runbook §14](../runbooks/first-live-order.md)).
 
 > **This likely warrants an ADR amending [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md).**
 > The capital model there reasons about a sleeve funded by a trading limit on the

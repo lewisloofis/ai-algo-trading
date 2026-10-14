@@ -525,3 +525,76 @@ shares) and paid about 11 IDR in fees. §5 cost nothing.
 - ~~Ctrl-C leaves a resting order resting~~. Fixed the same day: Ctrl-C now
   cancels open orders and waits for them to settle (see §1's flag notes).
 
+
+## 14. Execution log — 2026-10-14 (Wed): §10 attempted, VOID, order misrouted to the core book
+
+**Result: §10 did not measure the sleeve.** The probe order was placed in the
+core book `0001958` (app account "LEWIS"), not `008488L`. Nothing was learned
+about the sleeve's trading limit, and ADR-0017's conservative reading stands.
+
+- 11:53 WIB: `market-probe --symbols BBCA --price 5350` returned ALLOW (ARB 5,075,
+  ARA 7,125). Pre-snapshots of both accounts were taken
+  (`runs/2026-10-14-pre-*.json`).
+- `strategy-run` was started at 11:59 with `--account 008488L --equity-idr
+  14900000`, the 1.25 risk overrides and `runs/target_limitprobe_bbca.json`
+  (base notional 17M). Run id `20261014T045923Z-1e2c7931`.
+- 13:32:03 WIB: intent `rebalance-BBCA-2026-10-14`, buy 31 lots @ 5,350 =
+  16,585,000 IDR. Carina accepted it: `order_reject` stayed empty. It was
+  resting at about 14:09.
+- The operator found the order under the main account "LEWIS" and cancelled
+  it in the app. There was no fill.
+
+**Cause (operator's account, not yet verified by claim decode).** The trading
+token was copied from a web session where the main account was selected.
+Yesterday's token presumably came from a session with `008488L` selected. So
+routing appears to follow the account the token was minted for. `--account` has
+no effect on routing, as `strategy/live/doc.go` already warned.
+
+**Consequences.**
+- The run's store labels this order `008488L`, which is wrong. Exclude
+  `runs/2026-10-14-limitprobe.db` from any sleeve reconciliation or P&L.
+- The risk layer sized its caps on the sleeve's 14.9M, while the order went into
+  the 1.1B book. Nothing in `strategy-run` can detect this today.
+
+**Before any further live run.**
+- [x] Find the routing claim. The trading JWT's top-level claims are
+      `aud, data, exp, iss, jti, ver`; the account is the nested **`data.acn`**,
+      not a top-level `acn`. The operator decoded it in their own terminal. A
+      fresh token copied under `008488L` reads `data.acn = 008488L`. The token
+      that misrouted was copied under the main account, and the 2026-09-14
+      token read `0001958`.
+- Later runs that afternoon placed no orders. The 14:26 and 14:54 runs were
+  refused at baseline because the token was rejected (401/403). The 15:00 run
+  reused the same store and died on `UNIQUE constraint failed: decision.seq`:
+  every run needs its own `--store` file.
+- [ ] Add a pre-flight guard to `strategy-run`: refuse to arm unless the
+      token's `acn` equals `--account`.
+- [x] Re-run §10 under that guard (below).
+
+**§10 re-run, 15:13 WIB: ANSWERED, the sleeve has no limit of its own.**
+- Fresh token copied under `008488L` (`data.acn = 008488L`), with the
+  refuse-to-arm guard in place (`strategy-run` refuses to arm when `data.acn` ≠
+  `--account`).
+- BBRI was used instead of BBCA. A same-day BBCA retry would reuse the cancelled
+  order's id `rebalance-BBCA-2026-10-14`, and so its deterministic ui_ref. A
+  rejection would then be ambiguous between a duplicate and the limit.
+- Target `runs/target_limitprobe_bbri.json` (17M). Store
+  `runs/2026-10-14-bbri-limitprobe.db`, run `20261014T081304Z-8575169b`.
+- 15:13:07: intent `rebalance-BBRI-2026-10-14`, buy 64 lots @ 2,630 =
+  **16,832,000 IDR**, against 14.9M withdrawable. Submission returned OK, so
+  `order_reject` is empty.
+- The app then showed **`Order Rejected — [C-006] insufficient trading
+  balance`**. There was no fill. The run closed `complete` at 15:14:07 after
+  Ctrl-C.
+- That a sleeve rejected for insufficient balance is itself attribution
+  evidence: the core book has ~377M of limit and would have accepted.
+
+**Answer.** The sleeve's buying power is its own cash. ADR-0017's conservative
+reading is confirmed, not reversed, and B2's caps (in `withdrawable`) are the
+only correct choice.
+
+**New open item.** A broker rejection that arrives *after* a successful
+submission is not written to `order_reject`, which today only captures
+`Submit` errors. The store shows this order as attempted with 0 fills and
+nothing else. The live poller should record a post-submission REJECTED status,
+with its reason, as a reject row.
