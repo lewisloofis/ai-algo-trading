@@ -10,9 +10,28 @@ The factor is each name's trailing 1-day return rank (momentum proxy); the
 target is each name's forward 1-day return.  The test statistic is the
 Spearman Information Coefficient (IC) between factor rank and forward return.
 
-MIN_EFF_N = 30 is applied on the number of independent cross-sectional
-periods (days), NOT on symbol-count.  Days are treated as independent under
-the assumption that the 1-day hold horizon means no carry-forward overlap.
+Entry convention and rebalance schedule (harness defect D1)
+-----------------------------------------------------------
+The rank at session s uses close_s, so a live bot can only enter at s+1.
+Forward returns are routed through strategy_fit/entry_convention.py
+(default ``next_close``: close_{s+1} -> close_{s+1+hold}).  The old same-close
+return survives only as ``entry="signal_close_LOOKAHEAD"``.
+
+The live-feasible periodic rebalance is: rank on s, hold s+1 .. s+1+hold,
+re-rank ONLY on the exit day s+1+hold (``harness.deoverlap_sequential`` on
+calendar positions).  Under LOOKAHEAD the old behaviour (every day, no
+de-overlap) is kept so the legacy numbers reproduce exactly.
+
+MIN_EFF_N = 30 is applied on the number of rebalance periods actually taken
+(non-overlapping), NOT on symbol-count and NOT on all signal days.
+
+Long-leg diagnostic and null
+----------------------------
+Besides the IC, each rebalance period records the equal-weight forward return
+of the top-quintile names by factor (``long_ret``) and the equal-weight return
+of ALL names with data that period (``null_ret``) on the SAME entry/hold/period.
+The paired difference is the only honest read of a long-only leg in a trending
+universe.  This is a DIAGNOSTIC: status stays long_short_infeasible.
 
 Cost-stack floor
 ----------------
@@ -53,7 +72,14 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sps
 
+from strategy_fit.entry_convention import (
+    DEFAULT_ENTRY,
+    ENTRY_SIGNAL_CLOSE_LOOKAHEAD,
+    forward_return_series,
+    validate_entry,
+)
 from strategy_fit.families_single_name import N_BOOTSTRAP_FAMILIES, bootstrap_hit_rate_pvalue
+from strategy_fit.harness import deoverlap_sequential
 from strategy_fit.long_only import long_short_infeasible_result
 
 try:
@@ -74,65 +100,127 @@ FACTOR_LOOKBACK: int = 1
 """Trailing return window used as the cross-sectional factor (1-day momentum)."""
 
 
+TOP_FRAC: float = 0.2
+"""Fraction of names (top quintile by factor) in the long-leg diagnostic."""
+
+TOP_TRIM: int = 5
+"""Number of best periods dropped for the concentration check."""
+
+PERIOD_COLUMNS = ["date", "pos", "ic", "n_symbols", "long_ret", "null_ret"]
+
+
 # ---------------------------------------------------------------------------
 # Cross-sectional IC computation
 # ---------------------------------------------------------------------------
 
-def _compute_daily_ic(
-    hist_dict: dict[str, pd.DataFrame],
-    horizon_trading_days: int,
-) -> pd.DataFrame:
-    """
-    Compute daily Spearman IC between trailing-return rank and forward return.
-
-    Returns a DataFrame with columns: date, ic, n_symbols.
-    Each row is one cross-sectional period.  Periods with fewer than
-    MIN_SYMBOLS_PER_PERIOD valid observations are excluded.
-
-    Parameters
-    ----------
-    hist_dict : dict[str, pd.DataFrame]
-        Symbol → daily OHLCV DataFrame (close column required).
-    horizon_trading_days : int
-        Forward return horizon in trading days.
-
-    Returns
-    -------
-    pd.DataFrame
-        Columns: date (str), ic (float), n_symbols (int).
-    """
-    # Build a wide DataFrame of closes, indexed by date.
-    close_dfs: list[pd.DataFrame] = []
-    for sym, df in hist_dict.items():
-        s = df.set_index("date")[["close"]].rename(columns={"close": sym})
-        close_dfs.append(s)
-
-    if not close_dfs:
-        return pd.DataFrame(columns=["date", "ic", "n_symbols"])
-
+def _wide_close(hist_dict: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    close_dfs = [
+        df.set_index("date")[["close"]].rename(columns={"close": sym})
+        for sym, df in hist_dict.items()
+    ]
     wide = pd.concat(close_dfs, axis=1).sort_index()
     wide.index = wide.index.astype(str)
+    return wide
 
-    # Factor: trailing 1-day return (momentum proxy).
+
+def _wide_forward(
+    hist_dict: dict[str, pd.DataFrame],
+    wide: pd.DataFrame,
+    hold: int,
+    entry: str,
+) -> pd.DataFrame:
+    """Forward return per (date, symbol), entry-convention aware (D1)."""
+    if entry == ENTRY_SIGNAL_CLOSE_LOOKAHEAD:
+        # Pre-fix formula, verbatim, so the legacy numbers reproduce exactly.
+        return wide.pct_change(hold).shift(-hold)
+    cols = {}
+    for sym, df in hist_dict.items():
+        d = df.sort_values("date").reset_index(drop=True)
+        fwd = forward_return_series(d, hold, entry)
+        cols[sym] = pd.Series(fwd.to_numpy(dtype=float), index=d["date"].astype(str).to_numpy())
+    return pd.DataFrame(cols).reindex(wide.index)
+
+
+def compute_period_returns(
+    hist_dict: dict[str, pd.DataFrame],
+    horizon_trading_days: int,
+    entry: str | None = None,
+) -> pd.DataFrame:
+    """
+    One row per signal day with enough data (ALL such days; no de-overlap).
+
+    Columns: date, pos (index of the date in the sorted union calendar),
+    ic (Spearman of 1-day trailing-return rank vs forward return), n_symbols,
+    long_ret (equal-weight forward return of the top-quintile names by factor),
+    null_ret (equal-weight forward return of every name in the same period).
+    All forward returns use ``entry`` (default next_close, see module docstring).
+    """
+    entry = validate_entry(DEFAULT_ENTRY if entry is None else entry)
+    if not hist_dict:
+        return pd.DataFrame(columns=PERIOD_COLUMNS)
+
+    wide = _wide_close(hist_dict)
     factor = wide.pct_change(FACTOR_LOOKBACK)
-    # Forward return: horizon-day return.
-    fwd = wide.pct_change(horizon_trading_days).shift(-horizon_trading_days)
+    fwd = _wide_forward(hist_dict, wide, horizon_trading_days, entry)
 
-    ic_records: list[dict] = []
-    for date in factor.index:
+    records: list[dict] = []
+    for pos, date in enumerate(factor.index):
         f_row = factor.loc[date].dropna()
-        fwd_row = fwd.loc[date].dropna() if date in fwd.index else pd.Series(dtype=float)
+        fwd_row = fwd.loc[date].dropna()
         common = f_row.index.intersection(fwd_row.index)
         if len(common) < MIN_SYMBOLS_PER_PERIOD:
             continue
         f_vals = f_row[common].to_numpy(dtype=float)
         fwd_vals = fwd_row[common].to_numpy(dtype=float)
-        # Spearman IC = Pearson corr on ranks.
         ic_val, _ = sps.spearmanr(f_vals, fwd_vals)
-        if np.isfinite(ic_val):
-            ic_records.append({"date": date, "ic": float(ic_val), "n_symbols": len(common)})
+        if not np.isfinite(ic_val):
+            continue
+        n_top = max(1, int(np.ceil(TOP_FRAC * len(common))))
+        top = np.argsort(-f_vals, kind="stable")[:n_top]
+        records.append({
+            "date": date,
+            "pos": pos,
+            "ic": float(ic_val),
+            "n_symbols": len(common),
+            "long_ret": float(np.mean(fwd_vals[top])),
+            "null_ret": float(np.mean(fwd_vals)),
+        })
+    return pd.DataFrame(records, columns=PERIOD_COLUMNS)
 
-    return pd.DataFrame(ic_records)
+
+def select_rebalance_periods(
+    periods: pd.DataFrame,
+    horizon_trading_days: int,
+    entry: str | None = None,
+) -> pd.DataFrame:
+    """
+    Live-feasible periodic rebalance: rank on s, hold s+1 .. s+1+hold, re-rank
+    only on the exit day s+1+hold (sequential, on calendar positions).
+    LOOKAHEAD keeps every day (the pre-fix behaviour).
+    """
+    entry = validate_entry(DEFAULT_ENTRY if entry is None else entry)
+    if entry == ENTRY_SIGNAL_CLOSE_LOOKAHEAD or periods.empty:
+        return periods.copy()
+    return deoverlap_sequential(periods, hold=horizon_trading_days, pos_col="pos")
+
+
+def long_leg_diagnostic(periods: pd.DataFrame, entry: str) -> dict:
+    """Paired long-top-quintile vs equal-weight-universe summary (bps)."""
+    long_r = periods["long_ret"].to_numpy(dtype=float) * 1e4
+    null_r = periods["null_ret"].to_numpy(dtype=float) * 1e4
+    diff = long_r - null_r
+    n = len(diff)
+    sd = float(np.std(diff, ddof=1)) if n > 1 else 0.0
+    return {
+        "entry": entry,
+        "n_periods": n,
+        "long_gross_bps": float(np.mean(long_r)),
+        "null_bps": float(np.mean(null_r)),
+        "edge_over_null_bps": float(np.mean(diff)),
+        "t_paired": float(np.mean(diff) / (sd / np.sqrt(n))) if sd > 0 else 0.0,
+        "long_gross_ex_top5_bps": float(np.mean(np.sort(long_r)[:-TOP_TRIM])) if n > TOP_TRIM else None,
+        "edge_ex_top5_bps": float(np.mean(np.sort(diff)[:-TOP_TRIM])) if n > TOP_TRIM else None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -143,9 +231,14 @@ def run_cross_sectional_family(
     hist_dict: dict[str, pd.DataFrame],
     horizon_trading_days: int,
     universe_min_edge_map: dict[str, float] | None = None,
+    entry: str | None = None,
 ) -> dict:
     """
     Run the cross-sectional momentum family across the universe.
+
+    ``entry`` selects the entry convention (strategy_fit/entry_convention.py);
+    None = next_close.  The IC series is taken on non-overlapping rebalance
+    periods (see select_rebalance_periods).
 
     Parameters
     ----------
@@ -168,7 +261,12 @@ def run_cross_sectional_family(
         still checked and reported normally), the family is reported as
         STATUS_LONG_SHORT_INFEASIBLE — see strategy_fit/long_only.py.
     """
-    ic_df = _compute_daily_ic(hist_dict, horizon_trading_days)
+    entry = validate_entry(DEFAULT_ENTRY if entry is None else entry)
+    ic_df = select_rebalance_periods(
+        compute_period_returns(hist_dict, horizon_trading_days, entry),
+        horizon_trading_days,
+        entry,
+    )
 
     if ic_df.empty or len(ic_df) == 0:
         return {
@@ -182,6 +280,7 @@ def run_cross_sectional_family(
             "hit_rate": None,
             "gross_edge_bps": None,
             "net_edge_bps": None,
+            "diagnostic": None,
         }
 
     eff_n = len(ic_df)
@@ -197,6 +296,7 @@ def run_cross_sectional_family(
             "hit_rate": None,
             "gross_edge_bps": None,
             "net_edge_bps": None,
+            "diagnostic": None,
         }
 
     ic_series = ic_df["ic"].to_numpy(dtype=float)
@@ -237,13 +337,18 @@ def run_cross_sectional_family(
     # computed above are diagnostic only (logged, and summarized in
     # skip_reason for a human reading the report); they are never returned as
     # a scored, tradeable result.
-    return long_short_infeasible_result(
+    diagnostic = long_leg_diagnostic(ic_df, entry)
+    result = long_short_infeasible_result(
         reason_detail=(
-            f"Cross-sectional IC computed (eff_n={eff_n}, mean_IC={mean_ic:.4f}, "
-            f"ICIR={icir:.3f}, p={p_value:.3f}) but"
+            f"Cross-sectional IC computed (entry={entry}, eff_n={eff_n}, "
+            f"mean_IC={mean_ic:.4f}, ICIR={icir:.3f}, p={p_value:.3f}; "
+            f"diagnostic long top-quintile {diagnostic['long_gross_bps']:.1f} bps vs "
+            f"equal-weight null {diagnostic['null_bps']:.1f} bps per period) but"
         ),
         eff_n=eff_n,
         ic=None,
         ic_tstat=None,
         icir=None,
     )
+    result["diagnostic"] = diagnostic
+    return result

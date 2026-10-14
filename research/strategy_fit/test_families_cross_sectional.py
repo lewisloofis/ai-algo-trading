@@ -115,14 +115,20 @@ class TestRunCrossSectionalFamily:
         )
 
     def test_injected_signal_reaches_min_eff_n(self):
-        """With 60+ independent cross-sectional periods, eff_n >= 30.
+        """With 120 sessions and hold=1, the periodic rebalance (rank on s,
+        hold s+1..s+2, re-rank on the exit day) yields ~59 periods, eff_n >= 30.
+
+        D1 note: this fixture used n_days=60 when every signal day counted as an
+        independent period; the live-feasible rebalance takes every 2nd day for
+        hold=1, so 60 sessions give ~29 periods and the family correctly
+        reports insufficient_n.
 
         eff_n is a period count, not a scored P&L number, so it is preserved
         even though the family is long_short_infeasible (never 'tested').
         """
         from strategy_fit.families_cross_sectional import run_cross_sectional_family
         from strategy_fit.long_only import STATUS_LONG_SHORT_INFEASIBLE
-        hist = _make_cross_sectional_hist(n_symbols=8, n_days=60, signal_strength=0.7)
+        hist = _make_cross_sectional_hist(n_symbols=8, n_days=120, signal_strength=0.7)
         result = run_cross_sectional_family(hist_dict=hist, horizon_trading_days=1)
         assert result["status"] == STATUS_LONG_SHORT_INFEASIBLE
         assert (result["eff_n"] or 0) >= 30, (

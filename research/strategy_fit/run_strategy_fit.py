@@ -493,8 +493,9 @@ def _run_cross_sectional_cell(
     hist_dict: dict[str, pd.DataFrame],
     family: StrategyFamily,
     universe_min_edge_map: dict[str, float],
+    entry: str | None = None,
 ) -> CellResult:
-    """Run one cross-sectional family cell end-to-end."""
+    """Run one cross-sectional family cell end-to-end (``entry``: D1 convention)."""
     symbol = "(cross_sectional)"
 
     rejection = reject_horizon_exceeded(family)
@@ -512,6 +513,7 @@ def _run_cross_sectional_cell(
         hist_dict=hist_dict,
         horizon_trading_days=family.horizon_trading_days,
         universe_min_edge_map=universe_min_edge_map,
+        entry=entry,
     )
 
     if result["status"] != "tested":
@@ -879,6 +881,7 @@ def run_grid(
             hist_dict=hist_dict,
             family=family,
             universe_min_edge_map=min_edge_map,
+            entry=entry,
         )
         all_cells.append(cell)
 
