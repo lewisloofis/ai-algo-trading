@@ -1,78 +1,62 @@
 """
-CLI: render the observability dashboard to a single HTML file.
+CLI: build the multi-page dashboard.
 
-    python -m dashboard --portfolio out_live/strategy_portfolio.json \
-                        --store 'out_live/runs/*.db' \
-                        --status out_live/status.json \
-                        --out out_live/dashboard.html
+    python -m dashboard build [--out DIR]
 
-Every input is optional. A panel with nothing to read says what is missing and
-how to supply it, rather than rendering an empty table that looks like a
-result.
+One command builds every page. It finds its own inputs (runs/*.db, the newest status json, the
+latest corrected strategy-fit run, research/data/daily) and runs the collector health check
+itself. Options exist only to point somewhere else or to skip the (slow, network) health check.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 
-from dashboard.annotations import DEFAULT_PATH as DEFAULT_ANNOTATIONS
-from dashboard.build import Inputs, write_dashboard
+from dashboard import config
+from dashboard.site import SiteOptions, build_site
 from dashboard.strategy_map import UnmappedStrategyError
 
-DEFAULT_OUT = "out_live/dashboard.html"
 
-
-def _default_previous(portfolio: str | None) -> str | None:
-    """
-    The prior sidecar, if one was kept beside the current one as
-    ``strategy_portfolio.prev.json``. Convention over configuration: the run
-    diff is the most valuable view here and should not need a flag to appear.
-    """
-    if not portfolio:
-        return None
-    candidate = portfolio.replace(".json", ".prev.json")
-    return candidate if os.path.exists(candidate) else None
+def _parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="python -m dashboard", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd")
+    b = sub.add_parser("build", help="build every page (the default command)")
+    for q in (b, p):
+        q.add_argument("--out", default=config.DEFAULT_OUT_DIR, help=f"output directory (default {config.DEFAULT_OUT_DIR})")
+        q.add_argument("--runs", default=config.DEFAULT_RUNS_DIR, help="directory holding the post-trade stores (runs/*.db)")
+        q.add_argument("--daily-dir", default=config.DEFAULT_DAILY_DIR, help="daily price files (research/data/daily)")
+        q.add_argument("--annotations", default=None, help="annotations JSON (default: the checked-in file)")
+        g = q.add_mutually_exclusive_group()
+        g.add_argument("--no-healthcheck", action="store_true",
+                       help="do not run the collector health check (rows say 'Not checked')")
+        g.add_argument("--healthcheck-json", default=None,
+                       help="use a saved `collector_healthcheck.py --json` output instead of running it")
+    return p
 
 
 def main(argv: "list[str] | None" = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--portfolio", default=None, help="strategy_portfolio.json sidecar (Panel A)")
-    p.add_argument("--previous", default=None, help="prior sidecar for the run diff")
-    p.add_argument("--store", action="append", default=[],
-                   help="post-trade store path, glob, or directory (repeatable; Panel C)")
-    p.add_argument("--status", default=None, help="status.json heartbeat (Panel B)")
-    p.add_argument("--healthcheck", default=None,
-                   help="output of `collector_healthcheck.py --json` (Panel B)")
-    p.add_argument("--eligibility", default=None, help="a universe eligibility.json (Panel B)")
-    p.add_argument("--annotations", default=DEFAULT_ANNOTATIONS,
-                   help="operator annotations JSON keyed by run_id (default: the checked-in file)")
-    p.add_argument("--out", default=DEFAULT_OUT, help=f"output HTML path (default {DEFAULT_OUT})")
-    args = p.parse_args(argv)
-
-    inputs = Inputs(
-        portfolio_json=args.portfolio,
-        previous_portfolio_json=args.previous or _default_previous(args.portfolio),
-        store_globs=list(args.store),
-        status_json=args.status,
-        healthcheck_json=args.healthcheck,
-        eligibility_json=args.eligibility,
-        annotations_json=args.annotations,
+    args = _parser().parse_args(argv)
+    healthcheck = "skip" if args.no_healthcheck else (args.healthcheck_json or "run")
+    opt = SiteOptions(
+        runs_dir=args.runs,
+        daily_dir=args.daily_dir,
+        out_dir=args.out,
+        annotations_path=args.annotations,
+        healthcheck=healthcheck,
     )
     try:
-        path = write_dashboard(inputs, args.out)
+        written = build_site(opt, log=lambda m: print(f"dashboard: {m}", file=sys.stderr))
     except UnmappedStrategyError as exc:
-        # Plan-19 §8 join safety: fail the render rather than guess which
-        # research family an unknown strategy id corresponds to.
+        # Join safety: an order from a strategy this dashboard cannot describe is never guessed at.
         print(f"dashboard: {exc}", file=sys.stderr)
         return 2
     except KeyError as exc:
-        # Glossary completeness: a rendered column with no definition.
         print(f"dashboard: {exc}", file=sys.stderr)
         return 3
-
-    print(f"dashboard: wrote {path}")
+    print(f"dashboard: wrote {len(written)} pages to {args.out}")
+    print(f"dashboard: open {args.out}/index.html")
     return 0
 
 

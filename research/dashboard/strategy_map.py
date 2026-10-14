@@ -44,7 +44,16 @@ class StrategyJoin:
     """
     note: str
     """Why — in one sentence, for the banner the panel renders."""
+    label: str = ""
+    """A few plain words for the Trades page: what this strategy id is."""
 
+
+_TEST_LABELS = {
+    "manual-first-order-fill": "Order-path test: 1-lot buy meant to fill",
+    "manual-first-order-shadow": "Order-path test: 1-lot buy, shadow/first attempt",
+    "manual-limit-probe": "Order-path test: limit-price probe",
+    "roundtrip-goto": "Order-path test: buy then sell 1 lot of GOTO",
+}
 
 # The join table. Keep it short and keep it honest.
 STRATEGY_JOINS: Mapping[str, StrategyJoin] = {
@@ -52,6 +61,7 @@ STRATEGY_JOINS: Mapping[str, StrategyJoin] = {
         strategy_id="orb",
         research_family=None,
         definitions_match=False,
+        label="Opening-range breakout (paper/replay)",
         note=(
             "The Go 'orb' strategy enters on any liveprice tick 0.5% above the day's "
             "first tick and exits at 15:49 WIB. The research family "
@@ -66,6 +76,7 @@ STRATEGY_JOINS: Mapping[str, StrategyJoin] = {
             strategy_id=sid,
             research_family=None,
             definitions_match=False,
+            label=_TEST_LABELS[sid],
             note=(
                 "Plan-18 B4 live-order infrastructure test (runbook "
                 "first-live-order.md): orders placed to prove the order path, "

@@ -11,6 +11,10 @@
 *.binpb.zst
 *.manifest.json
 
+# Live-bot run records: post-trade stores plus pre/post account snapshots that carry the
+# trading account number. The dashboard reads them; they are never committed.
+/runs
+
 # Token store (treat like a password — never commit).
 .sb-tokens.json
 

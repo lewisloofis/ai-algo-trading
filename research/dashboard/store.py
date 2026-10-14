@@ -99,6 +99,40 @@ class RejectRow:
 
 
 @dataclass(frozen=True)
+class IntentRow:
+    """One row of the `order_intent` table — an order the strategy asked the sink to place."""
+
+    run_id: str
+    seq: int
+    recv_ns: int
+    strategy_id: str
+    symbol: str
+    side: str
+    price_idr: int
+    lots: int
+    order_id: str
+    sink_kind: str
+    store_path: str
+
+
+@dataclass(frozen=True)
+class FillRow:
+    """One row of the `fill` table — an execution against an order."""
+
+    run_id: str
+    seq: int
+    recv_ns: int
+    order_id: str
+    fill_price_idr: int
+    fill_lots: int
+    fee_idr: int
+    net_pnl_idr: int | None
+    """Realised profit in rupiah, set by the runtime on a fill that closes a position."""
+    sink_kind: str
+    store_path: str
+
+
+@dataclass(frozen=True)
 class DecisionFunnel:
     """
     Counts along decision -> order_intent -> fill for one run.
@@ -156,6 +190,8 @@ class StoreData:
     attributions: list[Attribution] = field(default_factory=list)
     funnels: list[DecisionFunnel] = field(default_factory=list)
     rejects: list[RejectRow] = field(default_factory=list)
+    intents: list[IntentRow] = field(default_factory=list)
+    fills: list[FillRow] = field(default_factory=list)
     paths: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -252,10 +288,53 @@ def read_store(path: str) -> StoreData:
                     )
                 )
 
+        data.intents = _read_intents(conn, path)
+        data.fills = _read_fills(conn, path)
         data.funnels = _read_funnels(conn)
     finally:
         conn.close()
     return data
+
+
+def _read_intents(conn: sqlite3.Connection, path: str) -> list[IntentRow]:
+    if not _has_table(conn, "order_intent"):
+        return []
+    return [
+        IntentRow(
+            run_id=_get(r, "run_id", LEGACY_RUN_ID) or LEGACY_RUN_ID,
+            seq=r["seq"],
+            recv_ns=r["recv_ns"],
+            strategy_id=r["strategy_id"],
+            symbol=r["symbol"],
+            side=r["side"],
+            price_idr=r["price_idr"],
+            lots=r["lots"],
+            order_id=r["order_id"],
+            sink_kind=_get(r, "sink_kind", "unknown"),
+            store_path=path,
+        )
+        for r in conn.execute("SELECT * FROM order_intent ORDER BY seq")
+    ]
+
+
+def _read_fills(conn: sqlite3.Connection, path: str) -> list[FillRow]:
+    if not _has_table(conn, "fill"):
+        return []
+    return [
+        FillRow(
+            run_id=_get(r, "run_id", LEGACY_RUN_ID) or LEGACY_RUN_ID,
+            seq=r["seq"],
+            recv_ns=r["recv_ns"],
+            order_id=r["order_id"],
+            fill_price_idr=r["fill_price_idr"],
+            fill_lots=r["fill_lots"],
+            fee_idr=r["fee_idr"],
+            net_pnl_idr=_get(r, "net_pnl_idr"),
+            sink_kind=_get(r, "sink_kind", "unknown"),
+            store_path=path,
+        )
+        for r in conn.execute("SELECT * FROM fill ORDER BY seq")
+    ]
 
 
 def _run_header(r: Any, path: str) -> RunHeader:
@@ -388,6 +467,8 @@ def read_stores(patterns: Sequence[str]) -> StoreData:
         merged.attributions.extend(one.attributions)
         merged.funnels.extend(one.funnels)
         merged.rejects.extend(one.rejects)
+        merged.intents.extend(one.intents)
+        merged.fills.extend(one.fills)
         merged.paths.extend(one.paths)
     return merged
 

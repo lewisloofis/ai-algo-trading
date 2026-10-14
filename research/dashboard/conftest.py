@@ -7,12 +7,6 @@ import sqlite3
 
 import pytest
 
-from strategy_fit.harness import (
-    CellResult,
-    SHAPE_INTRADAY_SAME_DAY,
-    SHAPE_SINGLE_NAME,
-)
-
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STORE_GO = os.path.join(REPO_ROOT, "strategy", "engine", "store.go")
 
@@ -122,48 +116,3 @@ def make_store(tmp_path):
         return path
 
     return _make
-
-
-def make_tested_cell(**overrides) -> CellResult:
-    """A cell that clears every gate unless an override breaks one."""
-    base = dict(
-        symbol="ITMG",
-        family_name="intraday_momentum",
-        shape=SHAPE_INTRADAY_SAME_DAY,
-        horizon_trading_days=0,
-        status="tested",
-        hit_rate=0.62,
-        eff_n=60,
-        gross_edge_bps=120.0,
-        net_edge_bps=40.0,
-        p_value=0.002,
-        passes_cost_gate=True,
-        min_edge_hurdle_bps=80.0,
-        fdr_accepted=True,
-        modelled_impact_bps=15.0,
-        impact_priced=True,
-        impact_priced_coeff=0.3,
-        impact_priced_position_notional_idr=3_000_000.0,
-        oos_eff_n=25,
-        null_edge_bps=20.0,
-        edge_over_null_bps=100.0,
-    )
-    base.update(overrides)
-    return CellResult(**base)
-
-
-def make_blocked_cell(**overrides) -> CellResult:
-    # family_name is a RUNNER family name (run_strategy_fit's vocabulary), not
-    # a catalog family_id — the two differ, which is what dashboard/catalog_map
-    # exists to join. Using a catalog id here would make these fixtures test a
-    # mapping that never happens in a real run.
-    base = dict(
-        symbol="ANTM",
-        family_name="mean_reversion",
-        shape=SHAPE_SINGLE_NAME,
-        horizon_trading_days=20,
-        status="data_blocked",
-        skip_reason="needs 3+ yrs history",
-    )
-    base.update(overrides)
-    return CellResult(**base)

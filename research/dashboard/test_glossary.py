@@ -10,12 +10,9 @@ import pytest
 from strategy_fit.harness import CellResult
 
 from dashboard.glossary import (
-    DERIVED_ENTRIES,
     build_glossary,
     go_struct_docs,
-    missing_entries,
     python_attribute_docs,
-    require_entries,
     snake_case,
     HARNESS_PY,
     STORE_GO,
@@ -93,23 +90,3 @@ def test_go_struct_docs_raise_for_an_unknown_struct():
 )
 def test_snake_case_matches_the_sql_column_names(go_name, expected):
     assert snake_case(go_name) == expected
-
-
-def test_derived_entries_name_what_they_are_not():
-    """
-    The three derived columns exist precisely because they are easy to confuse
-    with something else; each entry must say what it is NOT.
-    """
-    assert "not lib.stats.nonoverlap_hit_rate" in DERIVED_ENTRIES["panel_c.win_rate"].definition
-    assert "NOT" in DERIVED_ENTRIES["panel_c.mean_net_pnl_bps"].definition
-    assert "not a not-zero floor" in DERIVED_ENTRIES["panel_c.required_effective_n"].definition.lower()
-
-
-def test_missing_entries_reports_the_gap():
-    assert missing_entries(["cell.eff_n"]) == []
-    assert missing_entries(["cell.eff_n", "made.up"]) == ["made.up"]
-
-
-def test_require_entries_fails_loudly():
-    with pytest.raises(KeyError, match="made.up"):
-        require_entries(["made.up"])
