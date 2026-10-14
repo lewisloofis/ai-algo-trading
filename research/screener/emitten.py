@@ -17,6 +17,8 @@ import os
 import ssl
 import urllib.request
 
+from screener.sb_http import SB_USER_AGENT, urlopen_bytes
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_API_HOST = os.environ.get("SB_API_HOST", "exodus.stockbit.com")
@@ -26,7 +28,7 @@ SUBSECTOR_DAY_TRADE = "1000004658"      # day-trade eligible
 SUBSECTOR_TRADING_LIMIT = "1000005139"  # trading-limit eligible
 
 _HEADERS = {
-    "User-Agent": "okhttp/4.9.3",
+    "User-Agent": SB_USER_AGENT,
     "X-Platform": "android",
     "X-AppVersion": "7.0.0",
     "X-DeviceType": "algo-prototype",
@@ -68,8 +70,8 @@ class EmittenClient:
         req = urllib.request.Request(
             url, headers={**_HEADERS, "Authorization": f"Bearer {self._token}"}
         )
-        with urllib.request.urlopen(req, timeout=15, context=self._ssl_ctx) as resp:
-            return json.loads(resp.read().decode())
+        raw = urlopen_bytes(req, timeout=15, context=self._ssl_ctx)
+        return json.loads(raw.decode())
 
     def fetch_subsector(self, label: str, subsector_id: str) -> set[str]:
         """

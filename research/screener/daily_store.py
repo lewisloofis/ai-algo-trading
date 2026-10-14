@@ -60,6 +60,7 @@ from typing import Any
 import pandas as pd
 
 from lib.market_calendar import CALENDAR, MarketCalendar
+from screener.sb_http import classify_error
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,11 @@ DEFAULT_DIVERGENCE_EPSILON = 0.0005  # 5 bps relative difference
 
 _DIVERGENCE_LOG_FILENAME = "divergence_log.jsonl"
 
+# An empty response is only believable when the store is already (nearly) current.
+# If the store's last bar is more than this many trading days behind the requested
+# end, an empty frame means the fetch silently failed (2026-10-14 incident).
+MAX_EMPTY_STALENESS_TRADING_DAYS = 3
+
 
 # ---------------------------------------------------------------------------
 # Dataclasses
@@ -127,6 +133,10 @@ class DailyAccrualSummary:
     new_rows: int
     date_range: tuple[str | None, str | None]
     divergences: tuple[DivergenceRecord, ...] = field(default_factory=tuple)
+    # failed=True: the fetch raised or came back stale-empty; the store file
+    # was NOT touched. ``error`` is a token-free label (e.g. "401 ...", "403 ...").
+    failed: bool = False
+    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -322,6 +332,39 @@ def _append_divergence_log(store_dir: str, divergences: tuple[DivergenceRecord, 
 
 
 # ---------------------------------------------------------------------------
+# Failure detection
+# ---------------------------------------------------------------------------
+
+def _failed_summary(
+    symbol: str, existing: pd.DataFrame | None, rows_before: int, error: str
+) -> DailyAccrualSummary:
+    dr = _date_range(existing) if existing is not None else (None, None)
+    return DailyAccrualSummary(
+        symbol=symbol, rows_before=rows_before, rows_after=rows_before, new_rows=0,
+        date_range=dr, failed=True, error=error,
+    )
+
+
+def _empty_is_stale(
+    existing: pd.DataFrame | None, end: str, calendar: MarketCalendar
+) -> str | None:
+    """Error label when an empty fetch cannot be trusted, else None."""
+    if existing is None or existing.empty or _DEDUP_COL not in existing.columns:
+        return "empty response and no stored history"
+    last = max(existing[_DEDUP_COL])
+    end_d = datetime.date.fromisoformat(end)
+    if end_d <= last:
+        return None
+    gap = len(_trading_days_in_range(last + datetime.timedelta(days=1), end_d, calendar))
+    if gap > MAX_EMPTY_STALENESS_TRADING_DAYS:
+        return (
+            f"empty response but store ends {last}, {gap} trading days before "
+            f"requested end {end} (silent fetch failure?)"
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Public snapshot API
 # ---------------------------------------------------------------------------
 
@@ -332,6 +375,7 @@ def snapshot_daily(
     start: str = DEFAULT_DAILY_HISTORY_START,
     end: str | None = None,
     divergence_epsilon: float = DEFAULT_DIVERGENCE_EPSILON,
+    calendar: MarketCalendar = CALENDAR,
 ) -> dict[str, DailyAccrualSummary]:
     """
     Pull daily history for each symbol and merge-dedup into the store.
@@ -365,10 +409,19 @@ def snapshot_daily(
         try:
             raw = data_source.daily_history(symbol, start=start, end=end)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("daily_history(%s) raised %s; skipping merge", symbol, exc)
-            raw = pd.DataFrame()
+            label = classify_error(exc)
+            logger.error("daily_history(%s) FAILED: %s; store left untouched", symbol, label)
+            summaries[symbol] = _failed_summary(symbol, existing, rows_before, label)
+            continue
 
         fresh = _normalise_daily(raw)
+
+        if fresh.empty:
+            stale = _empty_is_stale(existing, end, calendar)
+            if stale:
+                logger.error("daily_history(%s) FAILED: %s; store left untouched", symbol, stale)
+                summaries[symbol] = _failed_summary(symbol, existing, rows_before, stale)
+                continue
 
         divergences = _detect_divergences(existing, fresh, symbol, divergence_epsilon)
         if divergences:
@@ -623,6 +676,9 @@ def main(argv: list[str] | None = None) -> None:
             symbols, store_dir=args.store_dir, data_source=ds, start=args.start, end=args.end
         )
         for sym, s in summaries.items():
+            if s.failed:
+                print(f"  {sym}: FAILED - {s.error} (store untouched, last bar {s.date_range[1]})")
+                continue
             note = (
                 f" | {len(s.divergences)} DIVERGENCE(S) — see "
                 f"{_divergence_log_path(args.store_dir)}"
@@ -633,6 +689,10 @@ def main(argv: list[str] | None = None) -> None:
                 f"  {sym}: {s.rows_before} → {s.rows_after} rows "
                 f"(+{s.new_rows} new) | {s.date_range[0]} – {s.date_range[1]}{note}"
             )
+        failed = [sym for sym, s in summaries.items() if s.failed]
+        if failed:
+            print(f"SNAPSHOT FAILED for {len(failed)}/{len(summaries)} symbol(s): {', '.join(failed)}")
+            sys.exit(1)
     elif args.command == "status":
         symbols = (
             [s.strip().upper() for s in args.symbols.split(",") if s.strip()]

@@ -242,6 +242,30 @@ def test_check_zero_record_sessions_skips_holidays_and_weekends() -> None:
     assert _exit_code_for(findings) == EXIT_FAILURE
 
 
+def test_reconnect_loop_week_of_zero_data_segments_is_flagged_failure() -> None:
+    """2026-10-08..14 incident: hourly segments exist (control records only) but
+    total_data_records == 0 on every one. Must be FAILURE for each trading day."""
+    calendar = MarketCalendar(holidays=frozenset())
+    today = date(2026, 10, 15)  # Thursday
+    objects = {}
+    for day in (date(2026, 10, 8), date(2026, 10, 9), date(2026, 10, 12), date(2026, 10, 13), date(2026, 10, 14)):
+        for hour in range(2, 9):  # in-session hourly segments
+            key = f"raw/dt={day.isoformat()}/plan10-survivors/seg-{hour:02d}0000.manifest.json"
+            objects[key] = _manifest_bytes("plan10-survivors", ["runningTradeBatch", "orderBook"], 0)
+    s3 = FakeS3Client(objects=objects)
+
+    findings, details = check_zero_record_sessions(
+        s3, BUCKET, calendar, lookback_days=7, today=today,
+    )
+
+    trading = [d for d in details if d["status"] != "skipped_non_trading_day"]
+    assert len(trading) == 5
+    assert all(d["status"] == "near_zero_records" and d["total_data_records"] == 0 for d in trading)
+    assert len(findings) == 5
+    assert all(f.severity == SEVERITY_FAILURE for f in findings)
+    assert _exit_code_for(findings) == EXIT_FAILURE
+
+
 def test_check_zero_record_sessions_excludes_today() -> None:
     """Today is in progress and must never be scored, even with zero data."""
     calendar = MarketCalendar(holidays=frozenset())
