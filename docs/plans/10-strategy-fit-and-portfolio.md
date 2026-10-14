@@ -558,6 +558,49 @@ negative and 31 periods. Results move strongly with the rebalance phase (h5 edge
 no phase-picked cell is credible. The newest impact candidate (median +26%: 1.9 -> 2.4 bps)
 changes net by <0.5 bps because the spread/commission floor (~84 bps) dominates.
 
+## 2026-10-14 — Impact priced point-in-time (trailing 60-bar ADV and vol); no verdict is rescued
+
+**Fix (`impact.py`, `run_strategy_fit.py`, `compare_d1_xsec.py`).** The grid priced every trade of a
+cell from ONE full-history (2024+) median ADV and vol. Two scale errors (plan 18 §4.3a): ADV is
+stale across volume regime changes (BNBR: 0.45B full-history vs 92.5B over the last 60 bars), and
+the vol window did not match the calibration (60-day trailing close-to-close daily vol). Now each
+trade is priced at its signal day s from `TrailingImpactModel`: the last 60 bars with date <= s for
+BOTH ADV and vol (`IMPACT_ADV_WINDOW_DAYS` = `IMPACT_VOL_WINDOW_DAYS` = 60, a test pins the latter to
+`fill_calibration.CALIBRATION_VOL_WINDOW_DAYS`), same estimators as the calibration. Point-in-time,
+so no lookahead (test: an early date's ADV is unchanged when later volume changes 65x). < 20 valid
+bars => the trade is excluded and counted (`CellResult.impact_excluded_n`), never priced from full
+history; bars from 120 calendar days before `--start` warm the windows (`build_impact_model`), so
+only genuinely new listings lose trades (AADI, CBDK, RATU: 85 trades). The hurdle is linear in
+impact, so the cell charges the MEAN per-trade impact (`modelled_impact_bps`; median in
+`impact_median_bps`). Cross-sectional: per rebalance day, median over names of the same trailing
+impact, mean over periods. `--impact-basis legacy_full_history` reproduces the old numbers (the
+legacy re-score matches `out_d1/` row for row). Not changed: event cells (they charge no impact at
+all, `MODELLED_IMPACT_BPS = 0`), intraday cells (own 1-min helpers, same full-history ADV; not in the
+offline path), `execution_lag.py` (historical PTRO study, stays full-history). Live side:
+`target_emitter.py` and `strategy/` compute no ADV/vol (the emitter passes a fixed
+`max_participation_rate` = 5%), so there is nothing to align.
+
+**Re-score** (115 names, `--use-calibrated`, `next_close`, `research/out_costwin/`, `comparison.md`):
+
+| | old (full-history) | new (trailing PIT, mean/trade) |
+|---|---|---|
+| impact charged per cell, p10 / median / p90 / max (bps) | 0.9 / 1.9 / 4.1 / 19.5 | 0.9 / 2.0 / 4.2 / 26.4 |
+| BNBR daily_momentum h2 impact / net | 19.5 / -158.8 | 16.9 / -156.1 (cost-fail) |
+| HRTA volume_breakout h5 impact / net | 3.1 / 72.4 | 3.1 / 72.4 (cost-pass, gated) |
+| INCO mean_reversion h2 impact / net | 1.3 / -29.1 | 1.2 / -29.0 (cost-fail) |
+| PASS-eligible cells | 10 | 9 (RATU daily_momentum h1 dropped; no new passer) |
+
+**Verdict.** The correction is real but small and does not move any verdict that matters. BNBR's
+latest trailing impact is ~0.9 bps (vs 19.5 legacy), but its mean per-trade charge only falls to
+16.9 because its trades happened in the thin-volume 2024-25 regime, where the point-in-time charge
+(12-40 bps) is the honest one; its net is dominated by the 84 bps floor either way. Impact is 1-3%
+of the hurdle for a median cell, so the old overstatement could not have been hiding a winner. The
+only PASS lost is RATU h1, and it is not an impact effect: its 8 earliest trades (post-IPO, no
+history to price from) were excluded, and they carried the gross (104 -> 31 bps). Cross-sectional:
+charged impact 1.9 -> 1.8 bps, no cell changes. No cell newly passes. Caveats: a window with zero
+close-to-close vol (suspended / flat-priced name) prices at 0 bps; DSSA volume_breakout h5's mean
+(11.5) is dominated by a few thin-ADV trades (median 1.3).
+
 ---
 
 Prev: [09-universe-screener.md ←](./09-universe-screener.md) ·

@@ -68,7 +68,12 @@ from strategy_fit.walk_forward import (
     DEFAULT_MIN_WINDOWS,
 )
 from strategy_fit.impact import (
+    IMPACT_BASES,
+    IMPACT_BASIS_LEGACY_FULL_HISTORY,
+    IMPACT_BASIS_TRAILING,
     POSITION_NOTIONAL_IDR,
+    TrailingImpactModel,
+    validate_impact_basis,
     compute_impact_bps_from_daily_df,
     compute_impact_bps_from_df,
     resolve_impact_coeff_from_daily_df,
@@ -221,8 +226,17 @@ def _run_single_name_cell(
     min_edge_to_clear_bps: float,
     use_calibrated: bool = False,
     entry: str | None = None,
+    impact_basis: str = IMPACT_BASIS_TRAILING,
+    impact_model: TrailingImpactModel | None = None,
 ) -> CellResult:
     """Run one (symbol, single_name_family) cell end-to-end.
+
+    ``impact_basis`` (impact.IMPACT_BASES): ``trailing_point_in_time`` (default)
+    prices each trade from 60-bar ADV/vol windows ending at its signal day and
+    charges the mean per-trade impact; ``legacy_full_history`` reproduces the
+    old single per-cell number (full-history median ADV and vol) and exists only
+    so pre-2026-10-14 reports can be regenerated.  ``impact_model`` lets the
+    grid share one model (and its cache) across a symbol's cells.
 
     ``entry`` selects the entry convention (strategy_fit/entry_convention.py);
     None = the live-feasible default (next-session close). See harness defect D1.
@@ -273,16 +287,29 @@ def _run_single_name_cell(
     # that go on to be decayed or insufficient_n.  This mirrors
     # _run_intraday_cell, where impact_priced=True is likewise unconditional
     # past this point.
-    daily_impact_bps = compute_impact_bps_from_daily_df(
-        df, use_calibrated=use_calibrated, symbol=symbol
-    )
-    # Provenance (ADR-0017): record the notional and coefficient this cell was
-    # ACTUALLY priced at, on the cell itself — not left to be re-derived later
-    # from whatever the module constants happen to be at that later time. See
-    # CellResult.impact_priced_position_notional_idr / impact_priced_coeff.
-    daily_impact_coeff = resolve_impact_coeff_from_daily_df(
-        df, use_calibrated=use_calibrated, symbol=symbol
-    )
+    validate_impact_basis(impact_basis)
+    legacy_impact = impact_basis == IMPACT_BASIS_LEGACY_FULL_HISTORY
+    if legacy_impact:
+        model = None
+        daily_impact_bps = compute_impact_bps_from_daily_df(
+            df, use_calibrated=use_calibrated, symbol=symbol
+        )
+        daily_impact_coeff = resolve_impact_coeff_from_daily_df(
+            df, use_calibrated=use_calibrated, symbol=symbol
+        )
+    else:
+        model = impact_model or TrailingImpactModel(df, symbol=symbol, use_calibrated=use_calibrated)
+        # Provisional (cells with no trades to price: decayed / insufficient_n):
+        # the median impact over every day with enough history.  Replaced below
+        # by the mean over the actual trades once a cell is scored.
+        series, coeffs = model.priced_days(since=str(df["date"].astype(str).min()))
+        if len(series) == 0:
+            daily_impact_bps = float("nan")
+            daily_impact_coeff = None
+        else:
+            daily_impact_bps = float(np.median(series))
+            daily_impact_coeff = float(np.median(coeffs))
+    impact_extras = {"impact_basis": impact_basis}
     logger.debug(
         "daily impact for %s/%s: %.1f bps (coeff=%.3f, notional=%.0f, calibrated=%s)",
         symbol, family.name, daily_impact_bps, daily_impact_coeff, POSITION_NOTIONAL_IDR, use_calibrated,
@@ -334,6 +361,7 @@ def _run_single_name_cell(
             impact_priced=True,
             impact_priced_position_notional_idr=POSITION_NOTIONAL_IDR,
             impact_priced_coeff=daily_impact_coeff,
+            **impact_extras,
             oos_eff_n=wf_daily.oos_eff_n,
             oos_split_skip_reason=wf_daily.skip_reason,
         )
@@ -347,6 +375,7 @@ def _run_single_name_cell(
         family_name=family.name,
         horizon_trading_days=family.horizon_trading_days,
         entry=entry,
+        impact_model=model,
     )
 
     if result["status"] != "tested":
@@ -365,6 +394,8 @@ def _run_single_name_cell(
             impact_priced=True,
             impact_priced_position_notional_idr=POSITION_NOTIONAL_IDR,
             impact_priced_coeff=daily_impact_coeff,
+            impact_excluded_n=result.get("impact_excluded_n") if model is not None else None,
+            **impact_extras,
             oos_eff_n=wf_daily.oos_eff_n,
             oos_split_skip_reason=wf_daily.skip_reason,
         )
@@ -374,6 +405,16 @@ def _run_single_name_cell(
     # The family's net_edge_bps already subtracted the friction floor, so we
     # must NOT use it for the gate — that would count the floor twice.
     # net_after_cost = gross - hurdle: > 0 for survivors, ≤ 0 for rejections.
+    # Point-in-time basis: the per-trade hurdle is floor + impact_i + financing
+    # and is linear in impact, so mean(gross_i - hurdle_i) == gross - hurdle(mean
+    # impact_i).  The cell therefore charges the MEAN per-trade impact.
+    if model is not None:
+        per_trade = np.asarray(result["per_trade_impact_bps"], dtype=float)
+        daily_impact_bps = float(np.mean(per_trade))
+        impact_extras = {**impact_extras, "impact_median_bps": float(np.median(per_trade))}
+        daily_impact_coeff = float(
+            np.median([model.coeff(d) for d in result["trade_signal_dates"]])
+        )
     hurdle, entry_dow = best_feasible_hurdle_bps(
         min_edge_to_clear_bps=min_edge_to_clear_bps,
         modelled_impact_bps=daily_impact_bps,
@@ -403,6 +444,8 @@ def _run_single_name_cell(
         impact_priced=True,
         impact_priced_position_notional_idr=POSITION_NOTIONAL_IDR,
         impact_priced_coeff=daily_impact_coeff,
+        impact_excluded_n=result.get("impact_excluded_n") if model is not None else None,
+        **impact_extras,
         null_edge_bps=result.get("null_edge_bps"),
         edge_over_null_bps=result.get("edge_over_null_bps"),
         oos_edge_bps=wf_daily.oos_edge_bps,
@@ -759,12 +802,41 @@ class EmptyUniverseError(RuntimeError):
     """
 
 
+IMPACT_WARMUP_CALENDAR_DAYS: int = 120
+"""Calendar days of bars BEFORE ``start`` fetched for the trailing-impact model
+only (>= 60 trading days).  Without it every trade in the first ~20 bars of the
+window has no history to price from and is excluded, which silently changes the
+scored sample.  Bars dated <= the signal day are point-in-time by construction,
+so using pre-``start`` bars is not lookahead; signals/trades still start at
+``start``."""
+
+
+def build_impact_model(
+    ds: "object", symbol: str, df: pd.DataFrame, start: str, end: str, use_calibrated: bool
+) -> TrailingImpactModel:
+    """Trailing-impact model for *symbol*, warmed up with bars before ``start``.
+    Falls back to ``df`` alone (trades then excluded loudly when history is
+    short) if the warm-up fetch fails."""
+    from datetime import date as _d, timedelta as _td
+
+    bars = df
+    try:
+        warm_start = (_d.fromisoformat(start) - _td(days=IMPACT_WARMUP_CALENDAR_DAYS)).isoformat()
+        ext = ds.daily_history(symbol, warm_start, end)
+        if len(ext) >= len(df):
+            bars = ext
+    except Exception as exc:  # noqa: BLE001 - loud, not silent: logged, trades then excluded
+        logger.warning("%s: impact warm-up fetch failed (%s); trailing windows start at %s", symbol, exc, start)
+    return TrailingImpactModel(bars, symbol=symbol, use_calibrated=use_calibrated)
+
+
 def run_grid(
     ds: "object",
     start: str = HISTORY_START,
     end: str = HISTORY_END,
     use_calibrated: bool = False,
     entry: str | None = None,
+    impact_basis: str = IMPACT_BASIS_TRAILING,
 ) -> list[CellResult]:
     """
     Run the full (symbol × family × horizon) strategy-fit grid.
@@ -837,6 +909,12 @@ def run_grid(
 
     # --- Single-name families ---
     for symbol, df in hist_dict.items():
+        # One trailing-impact model per symbol, shared by its cells (cache).
+        symbol_impact_model = (
+            build_impact_model(ds, symbol, df, start, end, use_calibrated)
+            if impact_basis == IMPACT_BASIS_TRAILING
+            else None
+        )
         for family_name, _signal_fn in SINGLE_NAME_SIGNAL_FNS.items():
             for hold in SINGLE_NAME_HOLDS:
                 family = StrategyFamily(
@@ -851,6 +929,8 @@ def run_grid(
                     min_edge_to_clear_bps=min_edge_map.get(symbol, ROUND_TRIP_BPS),
                     use_calibrated=use_calibrated,
                     entry=entry,
+                    impact_basis=impact_basis,
+                    impact_model=symbol_impact_model,
                 )
                 all_cells.append(cell)
 
@@ -1013,6 +1093,7 @@ def run_strategy_fit(
     intraday_store_dir: str | None = None,
     use_calibrated: bool = False,
     entry: str | None = None,
+    impact_basis: str = IMPACT_BASIS_TRAILING,
 ) -> str:
     """
     Run the full strategy-fit pipeline and emit strategy_portfolio.md.
@@ -1053,7 +1134,8 @@ def run_strategy_fit(
         logger.info("Intraday store-aware wrapper active: %s", intraday_store_dir)
 
     cells = run_grid(
-        ds=effective_ds, start=start, end=end, use_calibrated=use_calibrated, entry=entry
+        ds=effective_ds, start=start, end=end, use_calibrated=use_calibrated, entry=entry,
+        impact_basis=impact_basis,
     )
     cells = apply_fdr_to_grid(cells)
     path = emit_strategy_portfolio(cells=cells, outdir=outdir, is_synthetic=is_synthetic)
@@ -1142,6 +1224,17 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
+        "--impact-basis",
+        default=IMPACT_BASIS_TRAILING,
+        choices=list(IMPACT_BASES),
+        help=(
+            "How daily single-name impact inputs are estimated. Default "
+            "trailing_point_in_time: each trade is priced from 60-bar ADV/vol "
+            "windows ending at its signal day. legacy_full_history reproduces "
+            "reports from before 2026-10-14 (one full-history ADV/vol per cell)."
+        ),
+    )
+    parser.add_argument(
         "--local-data-dir",
         default=None,
         help="--source local: directory of <SYMBOL>.parquet daily bars (default research/data/daily).",
@@ -1192,6 +1285,7 @@ def main(argv: list[str] | None = None) -> None:
         intraday_store_dir=args.intraday_store_dir,
         use_calibrated=args.use_calibrated,
         entry=args.entry,
+        impact_basis=args.impact_basis,
     )
     print(f"strategy_portfolio.md written to: {path}")
     if args.impact_sweep:

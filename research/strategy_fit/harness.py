@@ -489,6 +489,19 @@ class CellResult:
     rescale that assumes a single global coefficient is wrong for exactly the
     cells calibration was meant to help.
     """
+    impact_basis: str | None = None
+    """
+    How the impact inputs were estimated: ``trailing_point_in_time`` (each trade
+    priced from 60-bar ADV/vol windows ending at its signal day;
+    ``modelled_impact_bps`` is then the MEAN per-trade impact, which is exactly
+    what the cost gate charges because the hurdle is linear in impact) or
+    ``legacy_full_history`` (one ADV/vol over the whole history; reproduces
+    reports from before 2026-10-14).  None on cells that never priced impact.
+    """
+    impact_median_bps: float | None = None
+    """Median per-trade impact (bps) under ``trailing_point_in_time``; None otherwise."""
+    impact_excluded_n: int | None = None
+    """Trades dropped because fewer than MIN_IMPACT_HISTORY_BARS bars preceded the signal day."""
     # --- Always-long null (beta-vs-alpha) gate ---
     null_edge_bps: float | None = None
     """

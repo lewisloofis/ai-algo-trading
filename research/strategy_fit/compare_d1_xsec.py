@@ -7,9 +7,15 @@ long-only top-quintile DIAGNOSTIC leg: gross, net, equal-weight null (same
 entry/hold/periods), paired edge over null, paired t-stat, eff_n, and the
 concentration check (means excluding the 5 best periods). Cost is the same
 stack the other daily cells use: best_feasible_hurdle_bps(median floor, impact,
-hold), impact = median over names of the per-name daily impact at the standard
-position notional. The full round trip is charged every period (an upper bound
-for a book that only partly turns over).
+hold). Impact basis (--impact-basis):
+  trailing_point_in_time (default): at each rebalance day s, impact = median over
+    names of the per-name impact priced from 60-bar ADV/vol windows ending at s
+    (names with < 20 bars skipped, periods with no priceable name excluded and
+    counted); the cell charges the MEAN of those per-period numbers.
+  legacy_full_history: one median over names of the full-history per-name impact
+    (reproduces out_d1_xsec/).
+The full round trip is charged every period (an upper bound for a book that
+only partly turns over).
 
     python -m strategy_fit.compare_d1_xsec --symbols-file S.txt --data-dir data/daily \
         --use-calibrated [--coeffs PATH] [--end 2026-10-14]
@@ -27,7 +33,11 @@ from strategy_fit.entry_convention import (
     ENTRY_NEXT_OPEN,
     ENTRY_SIGNAL_CLOSE_LOOKAHEAD,
 )
-from strategy_fit.families_cross_sectional import compute_period_returns, run_cross_sectional_family
+from strategy_fit.families_cross_sectional import (
+    compute_period_returns,
+    run_cross_sectional_family,
+    select_rebalance_periods,
+)
 from strategy_fit.financing import best_feasible_hurdle_bps
 from strategy_fit.local_source import LocalParquetDataSource
 from strategy_fit.run_strategy_fit import (
@@ -64,12 +74,54 @@ def load_universe(symbols_file: str, data_dir: str, start: str, end: str):
     return hist, floor
 
 
+def load_warmup(symbols_file: str, data_dir: str, start: str, end: str, keep: set) -> dict:
+    """Bars from IMPACT_WARMUP_CALENDAR_DAYS before ``start``, for the trailing-impact
+    windows only (point-in-time: windows end at the rebalance day)."""
+    from datetime import date, timedelta
+
+    from strategy_fit.run_strategy_fit import IMPACT_WARMUP_CALENDAR_DAYS
+
+    warm_start = (date.fromisoformat(start) - timedelta(days=IMPACT_WARMUP_CALENDAR_DAYS)).isoformat()
+    ds = LocalParquetDataSource(sorted(keep), data_dir)
+    return {sym: ds.daily_history(sym, warm_start, end) for sym in sorted(keep)}
+
+
 def median_impact_bps(hist: dict, use_calibrated: bool) -> float:
     vals = [
         impact.compute_impact_bps_from_daily_df(df, use_calibrated=use_calibrated, symbol=s)
         for s, df in hist.items()
     ]
     return float(np.median(vals))
+
+
+def period_impact_stats(hist: dict, hold: int, entry: str, use_calibrated: bool, warm: dict | None = None) -> dict:
+    """Point-in-time per-period impact: median over names at each rebalance day s,
+    using only bars <= s.  Returns mean/median across periods and how many periods
+    had no priceable name (excluded, counted)."""
+    models = {
+        sym: impact.TrailingImpactModel((warm or {}).get(sym, df), symbol=sym, use_calibrated=use_calibrated)
+        for sym, df in hist.items()
+    }
+    periods = select_rebalance_periods(compute_period_returns(hist, hold, entry), hold, entry)
+    per_period, excluded = [], 0
+    for d in periods["date"].astype(str):
+        vals = []
+        for m in models.values():
+            try:
+                vals.append(m.impact_bps(d))
+            except impact.InsufficientImpactHistory:
+                continue
+        if vals:
+            per_period.append(float(np.median(vals)))
+        else:
+            excluded += 1
+    arr = np.asarray(per_period, dtype=float)
+    return {
+        "mean": float(arr.mean()) if len(arr) else float("nan"),
+        "median": float(np.median(arr)) if len(arr) else float("nan"),
+        "excluded": excluded,
+        "n": len(arr),
+    }
 
 
 def f(x, nd=1):
@@ -100,9 +152,11 @@ def phase_stats(hist, hold: int, entry: str) -> dict | None:
     return {"gross": float(np.mean(gross)), "edge_min": min(edge), "edge_max": max(edge), "t_max": max(tt)}
 
 
-def rows(hist, floor, use_calibrated: bool):
+def rows(hist, floor, use_calibrated: bool, impact_basis: str = impact.IMPACT_BASIS_TRAILING, warm: dict | None = None):
+    impact.validate_impact_basis(impact_basis)
     median_floor = float(np.median(list(floor.values())))
-    imp = median_impact_bps(hist, use_calibrated)
+    legacy_imp = median_impact_bps(hist, use_calibrated)
+    imp = legacy_imp
     out = []
     for entry in ENTRIES:
         for hold in SINGLE_NAME_HOLDS:
@@ -111,13 +165,17 @@ def rows(hist, floor, use_calibrated: bool):
             if d is None:
                 out.append({"entry": entry, "hold": hold, "status": res["status"], "eff_n": res.get("eff_n")})
                 continue
+            cell_imp = legacy_imp
+            if impact_basis == impact.IMPACT_BASIS_TRAILING:
+                cell_imp = period_impact_stats(hist, hold, entry, use_calibrated, warm)["mean"]
             hurdle, _ = best_feasible_hurdle_bps(
-                min_edge_to_clear_bps=median_floor, modelled_impact_bps=imp, hold_trading_days=hold
+                min_edge_to_clear_bps=median_floor, modelled_impact_bps=cell_imp, hold_trading_days=hold
             )
             net = d["long_gross_bps"] - hurdle
             ph = phase_stats(hist, hold, entry)
             ex5 = d["long_gross_ex_top5_bps"]
             out.append({
+                "impact": cell_imp,
                 "entry": entry, "hold": hold, "status": res["status"], "eff_n": d["n_periods"],
                 "gross": d["long_gross_bps"], "hurdle": hurdle, "net": net, "null": d["null_bps"],
                 "edge": d["edge_over_null_bps"], "t": d["t_paired"],
@@ -140,22 +198,28 @@ def main(argv=None) -> None:
     ap.add_argument("--use-calibrated", action="store_true")
     ap.add_argument("--coeffs", default=None, help="alternative impact coeffs JSON (read only)")
     ap.add_argument("--label", default="production")
+    ap.add_argument(
+        "--impact-basis", default=impact.IMPACT_BASIS_TRAILING, choices=list(impact.IMPACT_BASES),
+        help="trailing_point_in_time (default) or legacy_full_history (reproduces out_d1_xsec/)",
+    )
     args = ap.parse_args(argv)
 
     use_coeffs_file(args.coeffs)
     hist, floor = load_universe(args.symbols_file, args.data_dir, args.start, args.end)
-    imp, median_floor, table = rows(hist, floor, args.use_calibrated)
+    warm = load_warmup(args.symbols_file, args.data_dir, args.start, args.end, set(hist))
+    imp, median_floor, table = rows(hist, floor, args.use_calibrated, args.impact_basis, warm)
 
     print(f"### cost stack: {args.label}; {len(hist)} names; median floor {median_floor:.1f} bps; "
-          f"median per-name impact {imp:.1f} bps (calibrated={args.use_calibrated})\n")
-    print("| entry | hold | eff_n | gross (top-quintile long) | hurdle | net | null (EW universe) | edge over null | t(paired) | net ex top-5 | edge ex top-5 | mechanical pass | credible | phase-avg net | edge range over phases | max t over phases |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+          f"impact basis {args.impact_basis}; legacy-basis median per-name impact {imp:.1f} bps "
+          f"(calibrated={args.use_calibrated}); the charged impact is the 'impact charged' column\n")
+    print("| entry | hold | eff_n | gross (top-quintile long) | impact charged | hurdle | net | null (EW universe) | edge over null | t(paired) | net ex top-5 | edge ex top-5 | mechanical pass | credible | phase-avg net | edge range over phases | max t over phases |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in table:
         if "gross" not in r:
-            print(f"| {r['entry']} | {r['hold']} | {r['eff_n']} | {r['status']} | | | | | | | | | | | | |")
+            print(f"| {r['entry']} | {r['hold']} | {r['eff_n']} | {r['status']} | | | | | | | | | | | | | |")
             continue
         print(
-            f"| {r['entry']} | {r['hold']} | {r['eff_n']} | {f(r['gross'])} | {f(r['hurdle'])} | {f(r['net'])} | "
+            f"| {r['entry']} | {r['hold']} | {r['eff_n']} | {f(r['gross'])} | {f(r['impact'])} | {f(r['hurdle'])} | {f(r['net'])} | "
             f"{f(r['null'])} | {f(r['edge'])} | {f(r['t'], 2)} | {f(r['net_ex5'])} | {f(r['edge_ex5'])} | "
             f"{'YES' if r['mechanical_pass'] else 'no'} | {'YES' if r['credible'] else 'no'} | "
             + (

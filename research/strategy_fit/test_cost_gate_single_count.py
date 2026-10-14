@@ -160,19 +160,32 @@ class TestSingleNameCostGateSingleCount:
     # verify the invariant via the CellResult: if net_edge_bps == gross - hurdle
     # then the floor was counted exactly once.
 
-    def _run_cell(self, hold: int, floor_bps: float = 50.0) -> CellResult:
+    def _run_cell(self, hold: int, floor_bps: float = 50.0, impact_basis: str | None = None) -> CellResult:
         family = StrategyFamily(
             name="daily_momentum",
             shape=SHAPE_SINGLE_NAME,
             horizon_trading_days=hold,
         )
         df = _make_strong_signal_df(n=250, seed=42)
+        kw = {} if impact_basis is None else {"impact_basis": impact_basis}
         return _run_single_name_cell(
             symbol="TEST",
             df=df,
             family=family,
             min_edge_to_clear_bps=floor_bps,
+            **kw,
         )
+
+    def test_trailing_basis_net_is_gross_minus_floor_plus_mean_trade_impact(self):
+        """Default (trailing point-in-time) basis: the cell charges the MEAN
+        per-trade impact, and the floor is still counted exactly once."""
+        floor = 50.0
+        cell = self._run_cell(hold=2, floor_bps=floor)
+        if cell.status != "tested":
+            pytest.skip(f"Cell not tested: {cell.skip_reason}")
+        hurdle, _ = _floor_plus_financing(floor, hold=2, impact_bps=cell.modelled_impact_bps)
+        assert cell.impact_basis == "trailing_point_in_time"
+        assert abs(cell.net_edge_bps - (cell.gross_edge_bps - hurdle)) < 0.1
 
     def test_net_edge_equals_gross_minus_full_hurdle_hold1(self):
         """net_edge_bps must be gross - full_hurdle (floor counted once), hold=1."""
@@ -185,7 +198,10 @@ class TestSingleNameCostGateSingleCount:
         # would be a stale expectation, not a double-count.
         impact = compute_impact_bps_from_daily_df(_make_strong_signal_df(n=250, seed=42))
         hurdle, _ = _floor_plus_financing(floor, hold=1, impact_bps=impact)
-        cell = self._run_cell(hold=1, floor_bps=floor)
+        # Pinned to the legacy full-history basis: the expected `impact` above is
+        # the single full-history number; the default basis is now trailing
+        # point-in-time (see test_impact_point_in_time.py).
+        cell = self._run_cell(hold=1, floor_bps=floor, impact_basis="legacy_full_history")
         assert cell.impact_priced is True, "plan 13: daily cells must be impact-priced"
         assert cell.modelled_impact_bps == pytest.approx(impact)
         if cell.status != "tested":
@@ -210,7 +226,10 @@ class TestSingleNameCostGateSingleCount:
         # would be a stale expectation, not a double-count.
         impact = compute_impact_bps_from_daily_df(_make_strong_signal_df(n=250, seed=42))
         hurdle, _ = _floor_plus_financing(floor, hold=2, impact_bps=impact)
-        cell = self._run_cell(hold=2, floor_bps=floor)
+        # Pinned to the legacy full-history basis: the expected `impact` above is
+        # the single full-history number; the default basis is now trailing
+        # point-in-time (see test_impact_point_in_time.py).
+        cell = self._run_cell(hold=2, floor_bps=floor, impact_basis="legacy_full_history")
         assert cell.impact_priced is True, "plan 13: daily cells must be impact-priced"
         assert cell.modelled_impact_bps == pytest.approx(impact)
         if cell.status != "tested":

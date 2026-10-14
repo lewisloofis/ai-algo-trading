@@ -44,6 +44,7 @@ from strategy_fit.entry_convention import (
     validate_entry,
 )
 from strategy_fit.harness import deoverlap_daily, deoverlap_sequential
+from strategy_fit.impact import InsufficientImpactHistory, TrailingImpactModel
 from strategy_fit.long_only import long_only_mask
 
 try:
@@ -318,6 +319,32 @@ def _compute_hit_rate(deoverlapped_df: pd.DataFrame) -> tuple[float, int]:
 # Per-family runner
 # ---------------------------------------------------------------------------
 
+def _price_trades_point_in_time(
+    deoverlapped: pd.DataFrame,
+    model: TrailingImpactModel,
+    symbol: str,
+    family_name: str,
+) -> tuple[pd.DataFrame, np.ndarray, int]:
+    """Impact at each kept row's signal day; rows without enough history are
+    dropped (and counted if they were long trades).  Returns the surviving rows,
+    their impacts, and the number of excluded LONG trades."""
+    impacts = np.full(len(deoverlapped), np.nan)
+    for i, d in enumerate(deoverlapped["date"].astype(str).to_numpy()):
+        try:
+            impacts[i] = model.impact_bps(d)
+        except InsufficientImpactHistory:
+            pass
+    keep = np.isfinite(impacts)
+    sig = deoverlapped["signal"].to_numpy(dtype=float)
+    excluded = int(np.sum(~keep & long_only_mask(sig)))
+    if excluded:
+        logger.warning(
+            "%s/%s: %d trade(s) excluded from scoring: < %d bars of history before the signal day",
+            symbol, family_name, excluded, model.min_bars,
+        )
+    return deoverlapped[keep], impacts[keep], excluded
+
+
 def run_single_name_family(
     df: pd.DataFrame,
     signal_fn: "callable",
@@ -326,9 +353,17 @@ def run_single_name_family(
     family_name: str,
     horizon_trading_days: int,
     entry: str | None = None,
+    impact_model: "TrailingImpactModel | None" = None,
 ) -> dict:
     """
     Run a single-name signal function against daily OHLCV and return a result dict.
+
+    ``impact_model`` (point-in-time impact, see impact.TrailingImpactModel): when
+    given, every kept trade is priced at its own signal day s from ADV/vol
+    windows ending at s.  A trade with too little history before s is EXCLUDED
+    (counted in ``impact_excluded_n``, never priced from full history) and the
+    returned ``per_trade_impact_bps`` is aligned with the trades behind
+    ``gross_edge_bps`` / ``eff_n``.  None (default) leaves the result unchanged.
 
     Steps:
     1. Apply signal_fn to produce signal and forward_return columns. The
@@ -423,12 +458,20 @@ def run_single_name_family(
             hold=horizon_trading_days,
             eligible=long_only_mask(signal_df["signal"].to_numpy(dtype=float)),
         )
+    trade_impact: np.ndarray | None = None
+    impact_excluded_n = 0
+    if impact_model is not None:
+        deoverlapped, trade_impact, impact_excluded_n = _price_trades_point_in_time(
+            deoverlapped, impact_model, symbol, family_name
+        )
     hit_rate, eff_n = _compute_hit_rate(deoverlapped)
 
     if eff_n < MIN_EFF_N:
         return {
             "status": "insufficient_n",
-            "skip_reason": f"eff_n={eff_n} < MIN_EFF_N={MIN_EFF_N}",
+            "skip_reason": f"eff_n={eff_n} < MIN_EFF_N={MIN_EFF_N}"
+            + (f" ({impact_excluded_n} trade(s) excluded: <{impact_model.min_bars} bars of history for impact)"
+               if impact_excluded_n else ""),
             "hit_rate": hit_rate,
             "eff_n": eff_n,
             "gross_edge_bps": None,
@@ -448,6 +491,7 @@ def run_single_name_family(
     # return is just forward_return — no sign multiplication needed.
     valid_mask = np.isfinite(sig_vals) & np.isfinite(fwd) & long_only_mask(sig_vals)
     signed_returns = fwd[valid_mask]
+    per_trade_impact = None if trade_impact is None else trade_impact[valid_mask]
     gross_edge_bps = float(np.nanmean(signed_returns) * 1e4)
     # net_edge_bps is NOT pre-computed here: the runner computes true
     # net-after-full-cost as (gross - hurdle) to avoid double-counting the
@@ -503,4 +547,8 @@ def run_single_name_family(
         "per_trade_sigma_bps": per_trade_sigma_bps,
         "null_edge_bps": null_edge_bps,
         "edge_over_null_bps": edge_over_null_bps,
+        "per_trade_impact_bps": None if per_trade_impact is None else [float(x) for x in per_trade_impact],
+        "impact_excluded_n": impact_excluded_n,
+        "trade_returns_bps": [float(x) * 1e4 for x in signed_returns],
+        "trade_signal_dates": [str(x) for x in deoverlapped["date"].to_numpy()[valid_mask]],
     }

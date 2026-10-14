@@ -556,17 +556,19 @@ def compute_adv_notional_idr_from_daily_bars(daily_df: pd.DataFrame) -> float:
     if daily_df is None or len(daily_df) == 0:
         return 0.0
 
-    df = daily_df.copy()
+    return _median_turnover(_turnover_series(daily_df))
 
-    if "value" in df.columns:
-        value = pd.to_numeric(df["value"], errors="coerce")
+
+def _turnover_series(daily_df: pd.DataFrame) -> pd.Series:
+    """Daily IDR turnover: the ``value`` column when it has any positive entry,
+    else close x volume.  Shared by the full-history and trailing ADV paths."""
+    if "value" in daily_df.columns:
+        value = pd.to_numeric(daily_df["value"], errors="coerce")
         if bool((value > 0).any()):
-            logger.debug("compute_adv_notional_idr_from_daily_bars: using value column")
-            return _median_turnover(value)
-
-    logger.debug("compute_adv_notional_idr_from_daily_bars: using close x volume fallback")
-    turnover = pd.to_numeric(df["close"], errors="coerce") * pd.to_numeric(df["volume"], errors="coerce")
-    return _median_turnover(turnover)
+            return value
+    return pd.to_numeric(daily_df["close"], errors="coerce") * pd.to_numeric(
+        daily_df["volume"], errors="coerce"
+    )
 
 
 def _median_turnover(turnover: pd.Series) -> float:
@@ -656,3 +658,134 @@ def resolve_impact_coeff_from_daily_df(
     """
     adv = compute_adv_notional_idr_from_daily_bars(daily_df)
     return get_impact_coeff(symbol, adv_notional_idr=adv) if use_calibrated else SQRT_IMPACT_COEFF
+
+
+# ---------------------------------------------------------------------------
+# Point-in-time (trailing) impact inputs
+# ---------------------------------------------------------------------------
+#
+# The full-history helpers above take ONE ADV and ONE vol for a whole 2024+
+# history.  Two scale errors follow (calibration study, plan 18 §4.3a):
+#   1. ADV goes stale across volume regime changes (BNBR: 0.45B full-history
+#      median vs 92.7B over the last 60 bars -- participation overstated ~10x).
+#   2. The vol window does not match what the coefficients were fitted against
+#      (full-history vol is a median 1.33x the 60-day trailing vol).
+# The fix is a trailing window that ENDS at the signal day s and uses only
+# bars dated <= s, so a trade is priced from what was known when it was
+# signalled (no lookahead -- same bug class as harness defect D1).
+
+IMPACT_VOL_WINDOW_DAYS: int = 60
+"""Trailing daily bars for ``daily_vol_bps``.  Matches the calibration basis
+(``fill_calibration.CALIBRATION_VOL_WINDOW_DAYS``, 60-day trailing close-to-close
+daily vol): the coefficients are fitted as ``impact / (2 * vol * sqrt(part))``,
+so pricing with a different vol window silently rescales every coefficient.
+A test pins the two constants equal."""
+
+IMPACT_ADV_WINDOW_DAYS: int = 60
+"""Trailing daily bars for ADV.  Same 60-day basis as the vol window and as the
+calibration's ADV; a multi-year median averages across regime changes."""
+
+MIN_IMPACT_HISTORY_BARS: int = 20
+"""Fewer valid bars than this in either window => the trade cannot be priced and
+is excluded with a counted reason (never a silent full-history fallback)."""
+
+IMPACT_BASIS_TRAILING = "trailing_point_in_time"
+IMPACT_BASIS_LEGACY_FULL_HISTORY = "legacy_full_history"
+IMPACT_BASES = (IMPACT_BASIS_TRAILING, IMPACT_BASIS_LEGACY_FULL_HISTORY)
+
+
+class InsufficientImpactHistory(ValueError):
+    """Fewer than ``MIN_IMPACT_HISTORY_BARS`` valid bars before the signal day."""
+
+
+def validate_impact_basis(basis: str) -> str:
+    if basis not in IMPACT_BASES:
+        raise ValueError(f"unknown impact basis {basis!r}; expected one of {IMPACT_BASES}")
+    return basis
+
+
+class TrailingImpactModel:
+    """
+    Per-trade impact for one symbol, from trailing windows ending at the signal day.
+
+    ``inputs(as_of)`` -> ``(daily_vol_bps, adv_notional_idr)`` over the last
+    ``vol_window`` / ``adv_window`` bars dated ``<= as_of`` (inclusive), computed
+    by the SAME estimators the calibration and the legacy path use
+    (``compute_daily_vol_bps_from_daily_bars`` /
+    ``compute_adv_notional_idr_from_daily_bars``) on the trailing slice.
+    Raises ``InsufficientImpactHistory`` below ``min_bars`` valid bars.
+    """
+
+    def __init__(
+        self,
+        daily_df: pd.DataFrame,
+        *,
+        symbol: str | None = None,
+        use_calibrated: bool = False,
+        position_notional_idr: float = POSITION_NOTIONAL_IDR,
+        vol_window: int = IMPACT_VOL_WINDOW_DAYS,
+        adv_window: int = IMPACT_ADV_WINDOW_DAYS,
+        min_bars: int = MIN_IMPACT_HISTORY_BARS,
+    ) -> None:
+        df = daily_df.copy()
+        df["date"] = df["date"].astype(str)
+        self._df = df.sort_values("date").reset_index(drop=True)
+        self._dates = self._df["date"].to_numpy(dtype=str)
+        self.symbol = symbol
+        self.use_calibrated = use_calibrated
+        self.position_notional_idr = position_notional_idr
+        self.vol_window = vol_window
+        self.adv_window = adv_window
+        self.min_bars = min_bars
+        self._cache: dict[str, tuple[float, float]] = {}
+
+    def inputs(self, as_of: str) -> tuple[float, float]:
+        key = str(as_of)
+        hit = self._cache.get(key)
+        if hit is not None:
+            return hit
+        end = int(np.searchsorted(self._dates, key, side="right"))  # bars with date <= as_of
+        vol_df = self._df.iloc[max(0, end - self.vol_window):end]
+        adv_df = self._df.iloc[max(0, end - self.adv_window):end]
+        n_close = int(np.isfinite(pd.to_numeric(vol_df["close"], errors="coerce")).sum())
+        turnover = _turnover_series(adv_df) if len(adv_df) else pd.Series(dtype=float)
+        n_turn = int(np.isfinite(turnover).sum())
+        if n_close < self.min_bars or n_turn < self.min_bars:
+            raise InsufficientImpactHistory(
+                f"{self.symbol}: {n_close} close / {n_turn} turnover bars up to {key}; "
+                f"need >= {self.min_bars}"
+            )
+        out = (
+            compute_daily_vol_bps_from_daily_bars(vol_df),
+            compute_adv_notional_idr_from_daily_bars(adv_df),
+        )
+        self._cache[key] = out
+        return out
+
+    def impact_bps(self, as_of: str) -> float:
+        vol, adv = self.inputs(as_of)
+        return compute_impact_bps(
+            daily_vol_bps=vol,
+            adv_notional_idr=adv,
+            position_notional_idr=self.position_notional_idr,
+            use_calibrated=self.use_calibrated,
+            symbol=self.symbol,
+        )
+
+    def coeff(self, as_of: str) -> float:
+        _, adv = self.inputs(as_of)
+        return get_impact_coeff(self.symbol, adv_notional_idr=adv) if self.use_calibrated else SQRT_IMPACT_COEFF
+
+    def priced_days(self, since: str | None = None) -> tuple[np.ndarray, np.ndarray]:
+        """(impact_bps, coeff) at every bar with enough history -- for cells with
+        no trades to price (decayed / insufficient_n)."""
+        imp, co = [], []
+        for d in self._dates:
+            if since is not None and d < since:
+                continue
+            try:
+                imp.append(self.impact_bps(d))
+                co.append(self.coeff(d))
+            except InsufficientImpactHistory:
+                continue
+        return np.asarray(imp, dtype=float), np.asarray(co, dtype=float)
