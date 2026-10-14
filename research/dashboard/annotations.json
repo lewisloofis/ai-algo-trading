@@ -1,7 +1,7 @@
 {
   "_current_decision": {
     "headline": "No strategy is live-trading.",
-    "reason": "The one candidate that looked close, BNBR, only looked good because the backtest bought at a price nobody could actually get; with that fixed it loses money after costs. Ten other stock-and-strategy combinations clear the backtest checks, but none has been forward-tested, so none is trusted with real money yet. The live bot has only placed 1-lot test orders to prove the order path works.",
+    "reason": "The one candidate that looked close, BNBR, only looked good because the backtest bought at a price nobody could actually get; with that fixed it loses money after costs. Ten other stock-and-strategy combinations technically clear the backtest checks, but none is credible: each one's profit leans on a handful of big trades, most hold 5 days, and none is statistically convincing. The cross-sectional family was also re-scored and has no edge. The live bot has only placed 1-lot test orders to prove the order path works.",
     "as_of": "2026-10-14",
     "source": "research/out_d1/comparison.md (corrected re-score); docs/runbooks/first-live-order.md"
   },
