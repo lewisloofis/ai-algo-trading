@@ -50,11 +50,7 @@ BANNED_CONSTANT_PATTERNS = (
 )
 
 # Functions and constants that are allowed despite matching, with the reason.
-ALLOWED = {
-    # panel_c re-exports lib.stats.required_effective_n as a FIELD name on a
-    # dataclass, not a function it defines.
-    ("panel_c.py", "required_effective_n"),
-}
+ALLOWED: set[tuple[str, str]] = set()
 
 
 def _source_files() -> list[str]:
@@ -117,44 +113,42 @@ def test_defines_no_threshold_constant(path):
     )
 
 
-def test_thresholds_shown_are_the_imported_ones():
-    """
-    The values the panel renders must be the owning modules' live values, not a
-    copy that can go stale. Changing the constant must change the panel.
-    """
-    from strategy_fit.intraday_walk_forward import MIN_OOS_EFF_N
-    from strategy_fit.walk_forward import (
-        DECAY_MAJORITY_FRAC,
-        DECAY_THRESHOLD_HR,
-        DECAY_THRESHOLD_SHARPE,
-    )
+def test_the_top_n_trades_rule_is_the_harness_s():
+    """The 'without its best 5 trades' check uses compare_d1_rescore's own TOP_N, never a copy."""
+    import strategy_fit.compare_d1_rescore as harness
 
-    from dashboard.panel_a import thresholds_in_force
+    from dashboard import scorecard, verdicts
 
-    shown = thresholds_in_force()
-    assert shown["DECAY_THRESHOLD_SHARPE"] is DECAY_THRESHOLD_SHARPE
-    assert shown["DECAY_THRESHOLD_HR"] is DECAY_THRESHOLD_HR
-    assert shown["DECAY_MAJORITY_FRAC"] is DECAY_MAJORITY_FRAC
-    assert shown["MIN_OOS_EFF_N"] is MIN_OOS_EFF_N
+    assert verdicts.TOP_N is harness.TOP_N
+    assert scorecard.TOP_N is harness.TOP_N
 
 
-def test_gates_are_imported_from_report():
-    """Panel A's PASS and null-gate verdicts are report.py's, not its own."""
-    import strategy_fit.report as report
-
-    from dashboard import panel_a
-
-    assert panel_a._is_pass_eligible is report._is_pass_eligible
-    assert panel_a._clears_null_gate is report._clears_null_gate
-
-
-def test_power_is_imported_from_lib_stats():
-    """The deployability screen delegates to lib.stats, never reimplements it."""
+def test_the_trade_floor_shown_is_lib_stats():
+    """The research funnel quotes the independent-trade floor from lib.stats, not a literal."""
     import lib.stats as stats
 
-    from dashboard import panel_c
+    from dashboard import pages_research
 
-    assert panel_c.required_effective_n is stats.required_effective_n
+    assert pages_research.MIN_EFF_N is stats.MIN_EFF_N
+
+
+def test_gate_outcomes_are_the_harness_s_words_not_new_verdicts():
+    """
+    results.py only maps the harness's own reason text onto labels. Every label that can mean
+    "failed a gate" must come from a prefix the harness actually writes (also pinned in
+    test_verdicts.py), so a new gate has to be added to the harness first.
+    """
+    from dashboard import results
+
+    prefixes = {p for p, _ in results._REASON_PREFIXES}
+    assert {"cost_gated", "fdr_rejected", "loses_to_null"} <= prefixes
+
+
+def test_the_entry_convention_shown_is_the_harness_default():
+    from strategy_fit.entry_convention import DEFAULT_ENTRY
+    from strategy_fit.trade_export import ENTRY_USED
+
+    assert ENTRY_USED == DEFAULT_ENTRY == "next_close"
 
 
 def test_only_sanctioned_statistics_are_used():

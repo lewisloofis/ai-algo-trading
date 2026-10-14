@@ -1,27 +1,34 @@
 """
-dashboard — one readable surface over the three pipelines (plan-19).
+dashboard — a static, multi-page, plain-language view of the trading system.
 
-Panel A  (panel_a.py)  the alpha mining process, from the strategy-fit sidecar
-Panel B  (panel_b.py)  process health, from collector_healthcheck + status.json
-Panel C  (panel_c.py)  per-strategy profitability, from the post-trade store
+    python -m dashboard build          (or: make dashboard)
 
-The package's one architectural rule (plan-19 §2 D2): **it computes nothing.**
-Every threshold and every statistical definition is imported from the module
-that owns it — decay thresholds from ``strategy_fit.walk_forward``, the OOS
-floor from ``strategy_fit.intraday_walk_forward``, power from
-``lib.stats.required_effective_n``, PASS eligibility and the null gate from
-``strategy_fit.report``.  Counting rows by status is not computing a metric;
-defining what "decayed" means would be.  ``test_no_new_metrics.py`` enforces
-this mechanically.
+Pages: Overview, Trades, Strategies (+ one detail page per highlighted backtest case),
+Research progress, Glossary. Built for the account owner, who is technically strong but
+should not need to know this project's vocabulary.
+
+The package's one architectural rule (plan-19 §2 D2): **it computes no metric of its own.**
+Gates and verdicts (cost gate, FDR, always-long null, out-of-sample) are the strategy-fit
+harness's, read from its report; the per-trade backtest records come from the harness's own
+functions (strategy_fit/trade_export.py); realised profit is the runtime's ``fill.net_pnl_idr``.
+What this package adds is wording, and arithmetic a person can check by hand (averages, counts).
+``test_no_new_metrics.py`` enforces the rule mechanically.
 """
 
 __all__ = [
-    "build",
+    "annotations",
+    "config",
     "glossary",
-    "panel_a",
-    "panel_b",
-    "panel_c",
+    "health",
+    "inputs",
     "render",
+    "results",
+    "scorecard",
+    "site",
     "store",
     "strategy_map",
+    "svg",
+    "terms",
+    "trades_data",
+    "verdicts",
 ]

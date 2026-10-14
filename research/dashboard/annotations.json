@@ -1,4 +1,16 @@
 {
+  "_current_decision": {
+    "headline": "No strategy is live-trading.",
+    "reason": "The one candidate that looked close, BNBR, only looked good because the backtest bought at a price nobody could actually get; with that fixed it loses money after costs. Ten other stock-and-strategy combinations clear the backtest checks, but none has been forward-tested, so none is trusted with real money yet. The live bot has only placed 1-lot test orders to prove the order path works.",
+    "as_of": "2026-10-14",
+    "source": "research/out_d1/comparison.md (corrected re-score); docs/runbooks/first-live-order.md"
+  },
+  "_timeline": [
+    {"date": "2026-09-12", "note": "Strategies that hold for several days were declared closed: their expected profit did not cover trading costs.", "source": "plan 10 strategy-fit status"},
+    {"date": "2026-09-13", "note": "Partly reopened: market-impact cost had been over-estimated (assumed 1.0, measured about 0.3). BNBR flipped from losing to winning in the backtest.", "source": "plan 10 strategy-fit status"},
+    {"date": "2026-10-08", "note": "The data collector stopped recording real data (a User-Agent problem). It ran empty until 2026-10-14, when a fixed build was uploaded.", "source": "collector outage note"},
+    {"date": "2026-10-14", "note": "Backtest bug found and fixed: daily strategies were entered at the same closing price that produced the signal, which is impossible live. Entry is now the next session's close. Re-score: BNBR now loses money after costs.", "source": "research/out_d1/comparison.md"}
+  ],
   "20261013T065258Z-a383cdef": {
     "note": "First live attempt (13:52 WIB): the pre-trade baseline call to /order/v2/list returned 401 because the trading token had expired, so no order was sent. The run exited before writing its end row, leaving the header at 'running'. Fixed the same day: a failed baseline now records outcome 'error' (commit 94120fd).",
     "source": "docs/runbooks/first-live-order.md, section 13 (bug 4) and its attempt table"

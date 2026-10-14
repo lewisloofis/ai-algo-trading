@@ -47,47 +47,44 @@ sbcap: build
 test:
 	cd collector && go test ./...
 
-# dashboard regenerates the single static observability page (plan-19).
-# It reads artifacts and writes one file: no server, no metrics daemon, no
-# scrape config. Every input is optional — a panel with nothing to read says
-# what is missing rather than rendering an empty table that looks like a
-# result — so this target is safe to run at any time.
+# dashboard builds the static, multi-page, plain-language dashboard (plan-19, rebuilt
+# 2026-10-14): index, trades, strategies (+ one page per highlighted backtest case),
+# research, glossary. One command; it finds its own inputs (runs/*.db, the newest status
+# json, the latest corrected strategy-fit run, research/data/daily) and RUNS
+# scripts/collector_healthcheck.py itself, so run it from a shell with AWS credentials
+# loaded. Without them the collector/S3 rows say "Not checked: <why>. Run: <command>".
 #
-# Override any path on the command line, e.g.
-#   make dashboard STORE='research/out_live/runs/*.db'
+#   make dashboard                      full build (runs the health check; can take minutes)
+#   make dashboard HEALTHCHECK=skip     skip the health check (rows say "Not checked")
+#   make dashboard DASH_OUT=/some/dir
+#
+# The output directory is gitignored (research/out_live/). Open $(DASH_OUT)/index.html.
 DASH_PY       ?= $(CURDIR)/research/.venv/bin/python
-DASH_OUT      ?= research/out_live/dashboard.html
-PORTFOLIO     ?= research/out_live/strategy_portfolio.json
-STORE         ?= research/out_live/runs
-STATUS        ?= research/out_live/status.json
-HEALTHCHECK   ?= research/out_live/collector_health.json
-ELIGIBILITY   ?=
+DASH_OUT      ?= research/out_live/dashboard
+HEALTHCHECK   ?= run
 
 dashboard:
-	cd research && $(DASH_PY) -m dashboard \
-		--portfolio $(CURDIR)/$(PORTFOLIO) \
-		--store '$(CURDIR)/$(STORE)' \
-		--status $(CURDIR)/$(STATUS) \
-		--healthcheck $(CURDIR)/$(HEALTHCHECK) \
-		$(if $(ELIGIBILITY),--eligibility $(CURDIR)/$(ELIGIBILITY),) \
-		--out $(CURDIR)/$(DASH_OUT)
+	cd research && $(DASH_PY) -m dashboard build \
+		--out $(CURDIR)/$(DASH_OUT) \
+		$(if $(filter skip,$(HEALTHCHECK)),--no-healthcheck,)
+	@echo "Open $(CURDIR)/$(DASH_OUT)/index.html"
 
-# publish-dashboard copies the page to S3 beside the market data, so it is
+# publish-dashboard copies the built site to S3 beside the market data, so it is
 # readable without the laptop that generated it (plan-19 Stage 6, optional).
 #
 # Private by default: no public-read ACL, no bucket policy change, no website
-# hosting. The page carries run ids, position sizes and PnL; it is read with
+# hosting. The site carries run ids, position sizes and PnL; it is read with
 # credentials, via the console or a presigned URL, exactly like the segments
 # next to it.
 DASH_BUCKET ?= marketdata-047915756052
-DASH_KEY    ?= dashboard/index.html
+DASH_PREFIX ?= dashboard/
 
 publish-dashboard: dashboard
-	aws s3 cp $(CURDIR)/$(DASH_OUT) s3://$(DASH_BUCKET)/$(DASH_KEY) \
+	aws s3 sync $(CURDIR)/$(DASH_OUT) s3://$(DASH_BUCKET)/$(DASH_PREFIX) --delete \
 		--content-type 'text/html; charset=utf-8' \
 		--cache-control 'no-cache'
 	@echo "Published. Read it with:"
-	@echo "  aws s3 presign s3://$(DASH_BUCKET)/$(DASH_KEY) --expires-in 3600"
+	@echo "  aws s3 presign s3://$(DASH_BUCKET)/$(DASH_PREFIX)index.html --expires-in 3600"
 
 clean:
 	rm -rf bin
