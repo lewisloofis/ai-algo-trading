@@ -23,6 +23,7 @@ Flow:
 from __future__ import annotations
 
 import argparse
+import functools
 import dataclasses
 import logging
 import os
@@ -219,8 +220,12 @@ def _run_single_name_cell(
     family: StrategyFamily,
     min_edge_to_clear_bps: float,
     use_calibrated: bool = False,
+    entry: str | None = None,
 ) -> CellResult:
     """Run one (symbol, single_name_family) cell end-to-end.
+
+    ``entry`` selects the entry convention (strategy_fit/entry_convention.py);
+    None = the live-feasible default (next-session close). See harness defect D1.
 
     Market impact (plan 13)
     -----------------------
@@ -259,6 +264,8 @@ def _run_single_name_cell(
         )
 
     signal_fn = SINGLE_NAME_SIGNAL_FNS[family.name]
+    if entry is not None:
+        signal_fn = functools.partial(signal_fn, entry=entry)
 
     # 2. Per-symbol market impact (plan 13; replaces MODELLED_IMPACT_BPS=0).
     # Computed here, before any early return below, so that every cell which
@@ -297,6 +304,7 @@ def _run_single_name_cell(
         min_edge_to_clear_bps=min_edge_to_clear_bps,
         family_name=family.name,
         horizon_trading_days=family.horizon_trading_days,
+        entry=entry,
     )
 
     # 3b. Rolling decay check (distinct from the OOS split above).
@@ -307,6 +315,7 @@ def _run_single_name_cell(
         fit_window=DEFAULT_FIT_WINDOW,
         test_window=DEFAULT_TEST_WINDOW,
         min_windows=DEFAULT_MIN_WINDOWS,
+        entry=entry,
     )
 
     decay_status = "decayed" if wf.is_decayed else "persistent"
@@ -337,6 +346,7 @@ def _run_single_name_cell(
         min_edge_to_clear_bps=min_edge_to_clear_bps,
         family_name=family.name,
         horizon_trading_days=family.horizon_trading_days,
+        entry=entry,
     )
 
     if result["status"] != "tested":
@@ -411,6 +421,7 @@ def _run_event_cell(
     hist_dict: dict[str, pd.DataFrame],
     family: StrategyFamily,
     universe_min_edge_map: dict[str, float],
+    entry: str | None = None,
 ) -> CellResult:
     """Run one (pooled, event_family) cell end-to-end."""
     symbol = "(pooled)"
@@ -431,6 +442,7 @@ def _run_event_cell(
         event_detector_name=family.name,
         horizon_trading_days=family.horizon_trading_days,
         universe_min_edge_map=universe_min_edge_map,
+        entry=entry,
     )
 
     if result["status"] != "tested":
@@ -750,6 +762,7 @@ def run_grid(
     start: str = HISTORY_START,
     end: str = HISTORY_END,
     use_calibrated: bool = False,
+    entry: str | None = None,
 ) -> list[CellResult]:
     """
     Run the full (symbol × family × horizon) strategy-fit grid.
@@ -835,6 +848,7 @@ def run_grid(
                     family=family,
                     min_edge_to_clear_bps=min_edge_map.get(symbol, ROUND_TRIP_BPS),
                     use_calibrated=use_calibrated,
+                    entry=entry,
                 )
                 all_cells.append(cell)
 
@@ -850,6 +864,7 @@ def run_grid(
                 hist_dict=hist_dict,
                 family=family,
                 universe_min_edge_map=min_edge_map,
+                entry=entry,
             )
             all_cells.append(cell)
 
@@ -994,6 +1009,7 @@ def run_strategy_fit(
     impact_sweep: bool = False,
     intraday_store_dir: str | None = None,
     use_calibrated: bool = False,
+    entry: str | None = None,
 ) -> str:
     """
     Run the full strategy-fit pipeline and emit strategy_portfolio.md.
@@ -1033,7 +1049,9 @@ def run_strategy_fit(
         )
         logger.info("Intraday store-aware wrapper active: %s", intraday_store_dir)
 
-    cells = run_grid(ds=effective_ds, start=start, end=end, use_calibrated=use_calibrated)
+    cells = run_grid(
+        ds=effective_ds, start=start, end=end, use_calibrated=use_calibrated, entry=entry
+    )
     cells = apply_fdr_to_grid(cells)
     path = emit_strategy_portfolio(cells=cells, outdir=outdir, is_synthetic=is_synthetic)
 
@@ -1056,7 +1074,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--source",
-        choices=["fixture", "live"],
+        choices=["fixture", "live", "local"],
         default="fixture",
         help="Data source: 'fixture' (offline, no token) or 'live' (needs SB_BEARER_TOKEN).",
     )
@@ -1110,6 +1128,26 @@ def main(argv: list[str] | None = None) -> None:
             "(plan 13).  Default: off."
         ),
     )
+    parser.add_argument(
+        "--entry",
+        default=None,
+        choices=["next_close", "next_open", "signal_close_LOOKAHEAD"],
+        help=(
+            "Entry convention for daily/event families (harness D1). Default: "
+            "next_close (live-feasible). signal_close_LOOKAHEAD reproduces the "
+            "pre-fix same-close entry and is unattainable live."
+        ),
+    )
+    parser.add_argument(
+        "--local-data-dir",
+        default=None,
+        help="--source local: directory of <SYMBOL>.parquet daily bars (default research/data/daily).",
+    )
+    parser.add_argument(
+        "--symbols-file",
+        default=None,
+        help="--source local: text file, one symbol per line ('#' comments allowed). Required.",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -1117,7 +1155,18 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    if args.source == "fixture":
+    if args.source == "local":
+        from strategy_fit.local_source import DEFAULT_DATA_DIR, LocalParquetDataSource
+
+        if not args.symbols_file:
+            parser.error("--source local requires --symbols-file")
+        with open(args.symbols_file, encoding="utf-8") as fh:
+            symbols = [ln.split("#")[0].strip() for ln in fh]
+        ds = LocalParquetDataSource(
+            [x for x in symbols if x], args.local_data_dir or DEFAULT_DATA_DIR
+        )
+        is_synthetic = False
+    elif args.source == "fixture":
         from strategy_fit.fixtures_generator import StrategyFitFixtureDataSource
         ds = StrategyFitFixtureDataSource()
         is_synthetic = True
@@ -1139,6 +1188,7 @@ def main(argv: list[str] | None = None) -> None:
         impact_sweep=args.impact_sweep,
         intraday_store_dir=args.intraday_store_dir,
         use_calibrated=args.use_calibrated,
+        entry=args.entry,
     )
     print(f"strategy_portfolio.md written to: {path}")
     if args.impact_sweep:

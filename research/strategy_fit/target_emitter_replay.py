@@ -2,15 +2,15 @@
 strategy_fit/target_emitter_replay.py — replay the emitter over history and
 check it trades the same entries as the backtest cell.
 
-``backtest_entries`` re-runs the three steps run_single_name_family applies
-(signal_fn -> harness.deoverlap_daily -> long_only_mask) and keeps the rows;
+``backtest_entries`` re-runs the steps run_single_name_family applies
+(signal_fn -> long_only_mask -> harness.deoverlap_sequential) and keeps the rows;
 the scorer itself only returns aggregates. A test cross-checks the rows
 against the scorer's eff_n / gross_edge_bps so the two cannot drift.
 
 ``replay`` then calls ``target_emitter.decide`` for every trading day D using
-only bars before D, and compares with the backtest, shifted by the D1 timing
-difference: the backtest enters at close_s, the emitter on the next session
-E = next_trading_day(s).
+only bars before D, and compares with the backtest, the entry day of a
+signal on close s is E = next_trading_day(s) in both (D1 fix: the backtest now
+measures from close_E, no longer from close_s).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from lib.market_calendar import MarketCalendar
-from strategy_fit.harness import deoverlap_daily
+from strategy_fit.harness import deoverlap_sequential
 from strategy_fit.long_only import long_only_mask
 from strategy_fit.target_emitter import (
     HISTORY_START,
@@ -69,9 +69,10 @@ def backtest_entries(df: pd.DataFrame, spec: EmitterSpec) -> pd.DataFrame:
     window = normalise_bars(df)
     window = window[window["date"] >= HISTORY_START].reset_index(drop=True)
     sig = spec.signal_fn(window, hold=spec.hold)
-    kept = deoverlap_daily(sig, hold=spec.hold)
-    mask = long_only_mask(kept["signal"].to_numpy(dtype=float))
-    return kept[mask].reset_index(drop=True)
+    kept = deoverlap_sequential(
+        sig, hold=spec.hold, eligible=long_only_mask(sig["signal"].to_numpy(dtype=float))
+    )
+    return kept.reset_index(drop=True)
 
 
 def replay(df: pd.DataFrame, spec: EmitterSpec, calendar: MarketCalendar) -> ReplayResult:
@@ -80,9 +81,9 @@ def replay(df: pd.DataFrame, spec: EmitterSpec, calendar: MarketCalendar) -> Rep
     dates = [date.fromisoformat(d) for d in bars["date"]]
     bar_set = set(dates)
 
-    # The backtest has no forward return for the last `hold` bars, so rows
-    # entered at or after bars[-hold] are not comparable.
-    cutoff = dates[-spec.hold]
+    # The backtest needs close_{s+1+hold}, so it has no row for a signal at or
+    # after bars[-(hold+1)]; entries on later days are not comparable.
+    cutoff = dates[-(spec.hold + 1)]
     expected_entry_days: set[date] = set()
     expected_on: set[date] = set()
     n_total = 0
@@ -142,7 +143,7 @@ def format_result(r: ReplayResult, spec: EmitterSpec) -> str:
         f"replay {spec.strategy_id} ({spec.symbol} {spec.family} hold={spec.hold}) "
         f"from {HISTORY_START}",
         f"  days checked            {r.days_checked} (skipped for bar gaps: {r.days_skipped_gap})",
-        f"  backtest entries (cell) {r.n_backtest_total}, comparable {r.n_backtest_entries}  (entry day = next session after signal close, D1)",
+        f"  backtest entries (cell) {r.n_backtest_total}, comparable {r.n_backtest_entries}  (entry day = next session after signal close; sequential rule)",
         f"  emitter entries         {r.n_emitter_entries}",
         f"  matched                 {r.n_matched}",
         f"  entry match rate        {r.entry_match_rate:.4f}",

@@ -470,6 +470,58 @@ strengthened across most names week-on-week:
 Cross-sectional / pairs / event-driven remain cleanly rejected (p=1.0).
 The §8 divergence block is lifted — the token works, the live grid runs.
 
+## 2026-10-14 — Harness defects D1/D2/D3 fixed; daily band re-scored under live-feasible entry
+
+**Fix (code: `research/strategy_fit/`).**
+- **D1 (same-close lookahead).** Daily and event families measured `forward_return` from
+  the very close that produced the signal. `entry_convention.py` now defines the entry
+  explicitly: default `next_close` (close_{s+1} -> close_{s+1+hold}, what the live bot
+  does via `--rebalance-at`), `next_open` as a sensitivity, and the old behaviour only as
+  `entry="signal_close_LOOKAHEAD"` (CLI `--entry`; it also restores the old stride-grid
+  de-overlap). Never the default.
+- **D2 (de-overlap order).** `harness.deoverlap_sequential`: scan in order; when flat and a
+  long signal fires at s, enter s+1, exit s+1+hold, resume at the exit day. Applied to
+  long-only rows (single-name) and on calendar positions (event). The always-long null is
+  now the all-priced-days mean on the same entry/hold (phase-independent).
+- **D3 (event MIN_EFF_N).** Now gated on the pooled long-only count, not the mixed-sign count.
+- **Emitter.** `target_emitter.py` / replay mirror the sequential rule; replay matches
+  100/100 entries and 0 weight mismatches (BNBR h2, n=100, bars to 2026-10-14).
+- Not changed: cross-sectional (`families_cross_sectional.py:119`) has the same same-close
+  pattern and still needs the same fix before its cells are trusted; intraday families are
+  unaffected (their entry is already intraday).
+- Offline re-score path: `--source local --symbols-file F` (`local_source.py`, daily
+  parquet only, no intraday cells).
+
+**Tests.** 981 passed, 13 skipped, 0 failed (`cd research && python -m pytest -q`). Updated only where a test
+encoded the defect: `hold=1` stub fixtures that assumed every contiguous row survives
+de-overlap (`test_families_single_name`, `test_daily_walk_forward`, now sized for the
+stride), and `test_families_event`'s gap fixture whose +/-1% schedule was keyed to the
+same-close return. `test_stale_local_data_fails_for_today` used the calendar date against
+refreshed local bars; it now uses a fixed far-future day (unrelated to D1).
+
+**Re-score.** 115 names = the 2026-09-24 run's real universe (all have local parquet), 
+`--use-calibrated`, local bars through 2026-10-14 (the run it is compared with ended
+2026-09-24), output `research/out_d1/` (`next_close/`, `next_open/`, `lookahead_legacy/` =
+old convention on the same new data, `comparison*.md`). Daily + event cells only.
+
+| previously surviving cell | old gross / net / edge-over-null | legacy on new data (gross) | NEW next_close gross / net / edge-over-null | NEW status |
+|---|---|---|---|---|
+| BNBR daily_momentum h2 | 324.0 / 140.5 / 267.8 | 295.8 | 57.0 / -158.8 / 8.1 | cost-fail |
+| HRTA volume_breakout h5 | 341.3 / 254.8 / 156.3 | 328.3 | 164.8 / 72.4 / -8.7 | cost-pass, loses to null |
+| INCO mean_reversion h2 | 87.9 / 25.4 / 70.4 | 77.5 | 36.5 / -29.1 / 23.7 | cost-fail |
+
+**Verdict.** All three previous survivors die under live-feasible entry. BNBR's edge was
+the artefact (70.7 bps over 100 sequential trades on bars to 09-11; 57.0 here; excluding
+its 5 best trades the gross is -48.9 bps). The mechanical gate now passes 10 *different*
+cells (7 under `next_open`, a different set), but none is credible: every one has
+t(edge over always-long null) <= 1.6 (most ~1), 4 of 10 go negative net (DSSA ~0) after dropping the
+5 best trades, and 7 are h5, outside the ~2-day horizon ceiling of the capital model.
+The gate (`edge_over_null > 0`, no significance on the null difference) lets trend beta
+through again, as PTRO did (null 245 bps per 5 days). The survivor set also flips with the
+entry convention and the grid phase (DEWA h5: -33.6 bps in the 09-24 run, +319.0 sequential), i.e.
+it is noise on fat-tailed returns, not signal. Daily band: still no tradeable alpha; the
+BNBR forward test (plan 20) should be read against 57 bps gross, not 324.
+
 ---
 
 Prev: [09-universe-screener.md ←](./09-universe-screener.md) ·

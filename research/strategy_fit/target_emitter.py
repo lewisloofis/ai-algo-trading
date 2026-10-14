@@ -14,39 +14,27 @@ object the grid scored (families_single_name.daily_momentum_signal), the
 de-overlap is harness.deoverlap_daily and the long-only filter is
 long_only.long_only_mask.
 
-Timing (finding D1 — read this before trusting a backtest number)
------------------------------------------------------------------
-The backtest transacts at close_t on a signal computed from close_t
-(families_single_name.py:97-98: signal = close_t/close_{t-1}-1,
-forward_return = close_{t+hold}/close_t - 1), i.e. it assumes a fill at the
-very price that produced the signal. That is not executable. The emitter is
-timing-honest regardless: a signal on the close of s = D-1 is acted on at D's
-rebalance, using only bars strictly before D. The overnight gap close_s -> D's
-fill is exposure the backtest does not model.
+Timing and de-overlap (D1 and D2 are FIXED in the harness; this mirrors it)
+------------------------------------------------------------------------
+The research cell no longer transacts at the signal close: a signal on close s
+is entered on the next session E = s+1 at close_E and exited at
+close_{E+hold} (strategy_fit/entry_convention.py, default next_close). The
+emitter acts on a signal on the close of D-1 at D's rebalance, using only bars
+strictly before D.
+
+De-overlap is SEQUENTIAL (harness.deoverlap_sequential) on long-only signals:
+scan in order; when flat and a long signal fires at s, enter s+1, exit
+s+1+hold, resume scanning at the exit day. Unlike the pre-fix stride-over-all-
+rows grid, no signal is dropped for being "off grid". The history window is
+still anchored at HISTORY_START so the emitter trades exactly the entries the
+scored cell did (the sequential chain depends on where the scan starts).
 
 Hold and exit
 -------------
 An entry decided on s is entered on E = next trading day after s, held for
 ``hold`` sessions (E .. E+hold-1) and its target weight is 0 from
 exit day E+hold (trading-day arithmetic on calendar/idx_holidays.json).
-
-De-overlap and re-entry (finding D2 — which behaviour is mirrored)
--------------------------------------------------------------------
-The backtest does NOT de-overlap trades. run_single_name_family
-(families_single_name.py:379) applies harness.deoverlap_daily to ALL signal
-rows — every ``hold``-th row from the first row of the history window,
-regardless of whether the signal fired — and only afterwards applies the
-long-only mask (families_single_name.py:403). Two consequences, both mirrored
-here on purpose so the emitter trades exactly the cell that was scored:
-
-* the grid phase is anchored at the first row at or after HISTORY_START
-  (2024-01-01). A long signal on an off-grid row is NOT traded, and a
-  non-signal row occupies its slot. The emitter's history window therefore
-  must start at HISTORY_START, always.
-* two consecutive on-grid long rows give back-to-back entries. The backtest
-  books a round trip at each; the emitter simply stays long (a sell and a
-  rebuy at one rebalance would only add cost), so realised cost is lower
-  than the backtest's.
+Entries never overlap, so a second entry never extends the position.
 
 Weight -> exactly 1 lot
 -----------------------
@@ -84,7 +72,7 @@ import pandas as pd
 
 from lib.market_calendar import CALENDAR, MarketCalendar
 from strategy_fit.families_single_name import daily_momentum_signal
-from strategy_fit.harness import deoverlap_daily
+from strategy_fit.harness import deoverlap_sequential
 from strategy_fit.long_only import long_only_mask
 from strategy_fit.run_strategy_fit import HISTORY_START
 
@@ -205,15 +193,16 @@ def _bars_hash(bars: pd.DataFrame) -> str:
 # ---------------------------------------------------------------------------
 
 def _grid_entries(window: pd.DataFrame, spec: EmitterSpec) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """(all signal rows, long on-grid rows) — the backtest's own steps.
+    """(all signal rows, sequential long entries) — the backtest's own steps.
 
-    hold=0 only affects forward_return (unused here); unlike hold=hold it
-    keeps the most recent rows, which have no forward return yet. The signal
-    column and row positions are independent of hold.
+    drop_unpriced=False keeps the newest signal rows, which have no forward
+    return yet (it needs close_{s+1+hold}). The scan is causal, so entries
+    among earlier rows are identical to the backtest's.
     """
-    sig = spec.signal_fn(window, hold=0)
-    kept = deoverlap_daily(sig, hold=spec.hold)
-    longs = kept[long_only_mask(kept["signal"].to_numpy(dtype=float))]
+    sig = spec.signal_fn(window, hold=spec.hold, drop_unpriced=False)
+    longs = deoverlap_sequential(
+        sig, hold=spec.hold, eligible=long_only_mask(sig["signal"].to_numpy(dtype=float))
+    )
     return sig, longs
 
 
@@ -254,7 +243,7 @@ def decide_normalised(
     sig, longs = _grid_entries(window, spec)
     entries = [date.fromisoformat(d) for d in longs["date"]]
     last_row = sig.iloc[-1]
-    on_grid = sig.index[-1] in deoverlap_daily(sig, hold=spec.hold).index
+    on_grid = sig.index[-1] in longs.index  # newest signal is a sequential entry
     signal_value = float(last_row["signal"])
     base = dict(
         as_of=as_of,
@@ -285,8 +274,8 @@ def decide_normalised(
     if signal_value <= 0.0:
         why = f"signal <= 0 ({signal_value:+.4f}) at close {prev_day}"
     elif not on_grid:
-        why = (f"signal {signal_value:+.4f} at close {prev_day} is off the "
-               f"de-overlap grid (anchor {base['anchor_day']}, every {spec.hold}th row)")
+        why = (f"signal {signal_value:+.4f} at close {prev_day} fired while a "
+               f"prior entry was still open (sequential de-overlap, hold {spec.hold})")
     else:
         why = f"signal {signal_value:+.4f} at close {prev_day}: no entry"
     if exit_today:
@@ -347,8 +336,8 @@ def build_sidecar(decision: Decision, spec: EmitterSpec, doc: dict[str, Any]) ->
         "grid_anchor_day": decision.anchor_day.isoformat(),
         "n_bars": decision.n_bars,
         "bars_sha256": decision.bars_sha256,
-        "deoverlap": "grid_anchored_at_history_start_long_mask_after (D2)",
-        "timing": "signal at close D-1, trade D; backtest enters at close_t (D1)",
+        "deoverlap": "sequential_long_only (D2 fixed): enter s+1, exit s+1+hold, resume at exit day",
+        "timing": "signal at close D-1, trade D; backtest enters at close_{s+1} (D1 fixed)",
     }
 
 

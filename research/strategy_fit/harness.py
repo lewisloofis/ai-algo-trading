@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from strategy_fit.capital_model import ACTIVE_CAPITAL_MODEL, CapitalModel
@@ -173,6 +174,46 @@ def deoverlap_daily(df: pd.DataFrame, hold: int) -> pd.DataFrame:
         i += hold  # skip the next hold-1 rows (they overlap with kept row)
 
     return df.loc[kept].copy()
+
+
+def deoverlap_sequential(
+    df: pd.DataFrame,
+    hold: int,
+    eligible: "pd.Series | np.ndarray | None" = None,
+    pos_col: str | None = None,
+) -> pd.DataFrame:
+    """
+    Live-feasible sequential non-overlapping trade selection (harness D2 fix).
+
+    Scan rows in order. When flat and an *eligible* row s (the long-only signal
+    fired) is reached, take it: enter at session s+1, exit at session s+1+hold,
+    and resume scanning at the exit day, i.e. the next eligible row is the first
+    with position >= pos(s) + 1 + hold. Eligibility is applied BEFORE the skip,
+    so a signal on any day is tradeable if the bot is flat (unlike
+    ``deoverlap_daily``, which strides over all rows from the window start).
+
+    Parameters
+    ----------
+    df : DataFrame sorted ascending by time (not mutated).
+    hold : hold in trading days.
+    eligible : boolean mask aligned to df rows (positional); None = all rows.
+    pos_col : column holding each row's trading-day position. Needed when rows
+        are sparse (event frames); default is row order (contiguous daily rows).
+
+    Returns a new DataFrame of the taken rows (original index preserved).
+    """
+    n = len(df)
+    ok = np.ones(n, dtype=bool) if eligible is None else np.asarray(eligible, dtype=bool)
+    if len(ok) != n:
+        raise ValueError("eligible must have one entry per row")
+    pos = np.arange(n) if pos_col is None else df[pos_col].to_numpy(dtype=float)
+    kept: list[int] = []
+    next_ok = -np.inf
+    for i in range(n):
+        if ok[i] and pos[i] >= next_ok:
+            kept.append(i)
+            next_ok = pos[i] + 1 + hold
+    return df.iloc[kept].copy()
 
 
 # ---------------------------------------------------------------------------

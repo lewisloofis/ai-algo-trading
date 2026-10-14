@@ -42,7 +42,7 @@ never manufacture an edge):
    the split.
 2. Symmetrically, the LAST few rows of the IS slice get a NaN
    ``forward_return`` (the signal functions shift the close price forward by
-   ``hold`` rows to compute it, and the IS slice ends before that forward
+   ``hold + 1`` rows to compute it under the default next-session entry — D1 — and the IS slice ends before that forward
    window exists) and are dropped from the IS-side observation count. This
    guarantees that no IS observation's forward-return window can reach past
    the split boundary into the OOS slice — the same one-sided leakage risk
@@ -179,6 +179,7 @@ def walk_forward_daily(
     horizon_trading_days: int,
     is_frac: float = IS_FRAC,
     min_oos_eff_n: int = MIN_OOS_EFF_N,
+    entry: str | None = None,
 ) -> DailyWalkForwardResult:
     """
     Run a single chronological IS/OOS split on a daily-bar DataFrame.
@@ -266,7 +267,8 @@ def walk_forward_daily(
     # 2. Run the family independently on IS.
     try:
         is_result = run_single_name_family(
-            is_df, signal_fn, symbol, min_edge_to_clear_bps, family_name, horizon_trading_days
+            is_df, signal_fn, symbol, min_edge_to_clear_bps, family_name, horizon_trading_days,
+            entry=entry,
         )
     except Exception as exc:
         logger.warning("walk_forward_daily: IS run raised %s", exc)
@@ -281,7 +283,8 @@ def walk_forward_daily(
         )
     try:
         oos_result = run_single_name_family(
-            oos_df, signal_fn, symbol, min_edge_to_clear_bps, family_name, horizon_trading_days
+            oos_df, signal_fn, symbol, min_edge_to_clear_bps, family_name, horizon_trading_days,
+            entry=entry,
         )
     except Exception as exc:
         logger.warning("walk_forward_daily: OOS run raised %s", exc)

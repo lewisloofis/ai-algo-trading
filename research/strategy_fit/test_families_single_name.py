@@ -12,6 +12,13 @@ families_intraday.py:run_orb_family established in commit c62eba8), so a
 negative-signal observation must be SKIPPED — not sign-flipped into a
 synthetic long return — and must not count toward eff_n.
 
+D1/D2 note: `_run` uses hold=1, and the live-feasible sequential de-overlap
+(harness.deoverlap_sequential: enter s+1, exit s+1+hold, resume at the exit
+day) takes at most every 2nd contiguous long row at hold=1. The original
+fixtures asserted that every contiguous row survives hold=1 de-overlap, which
+was the stride-1 artefact of the old pipeline; they are sized so the expected
+counts are (n + 1) // 2 now. The long-only contract they test is unchanged.
+
 These tests use a stub `signal_fn` that bypasses the three real signal
 functions (daily_momentum_signal / mean_reversion_signal /
 volume_breakout_signal) so the signal/forward_return series fed into the
@@ -78,14 +85,14 @@ class TestRunSingleNameFamilyLongOnly:
         """All-long-signal, strongly-positive-forward-return fixture must be
         scored 'tested' with a positive gross edge and eff_n == n (no rows
         filtered out)."""
-        n = 40
+        n = 80
         signals = np.full(n, 1.0)
         forward_returns = np.full(n, 0.02)  # +200 bps every day
         result = _run(signals, forward_returns)
         assert result["status"] == "tested", (
             f"Expected tested, got {result['status']}: {result.get('skip_reason')}"
         )
-        assert result["eff_n"] == n
+        assert result["eff_n"] == (n + 1) // 2  # sequential rule, hold=1 -> stride 2
         assert result["gross_edge_bps"] > 0
         assert result["hit_rate"] == 1.0
 
@@ -123,8 +130,8 @@ class TestRunSingleNameFamilyLongOnly:
         volume_breakout) — the old `np.sign(sig) * fwd` scorer blended both
         halves into one inflated, partly-fictional edge number.
         """
-        n_long = 30
-        n_short = 30
+        n_long = 60
+        n_short = 60
         signals = np.concatenate([np.full(n_long, 1.0), np.full(n_short, -1.0)])
         # Long half: genuinely profitable long trades (+150 bps).
         # Short half: would be profitable if shorted (signal=-1, fwd=-0.10 →
@@ -137,8 +144,9 @@ class TestRunSingleNameFamilyLongOnly:
         assert result["status"] == "tested", (
             f"Expected tested, got {result['status']}: {result.get('skip_reason')}"
         )
-        assert result["eff_n"] == n_long, (
-            f"eff_n must count only the long-signal rows; got {result['eff_n']}"
+        assert result["eff_n"] == (n_long + 1) // 2, (
+            f"eff_n must count only the (sequentially de-overlapped) long-signal "
+            f"rows; got {result['eff_n']}"
         )
         assert result["gross_edge_bps"] == pytest.approx(150.0, rel=1e-6), (
             f"gross_edge_bps must reflect only the long half (+150bps); "
@@ -167,7 +175,7 @@ class TestRunSingleNameFamilyLongOnly:
     def test_min_eff_n_applies_to_long_only_count(self):
         """A fixture with MIN_EFF_N long rows plus many short rows must not
         be starved by MIN_EFF_N — the check applies to the long-only count."""
-        n_long = MIN_EFF_N
+        n_long = 2 * MIN_EFF_N  # contiguous long rows; hold=1 keeps every 2nd
         n_short = 200  # far more short rows than long rows
         signals = np.concatenate([np.full(n_long, 1.0), np.full(n_short, -1.0)])
         forward_returns = np.concatenate([
@@ -179,13 +187,13 @@ class TestRunSingleNameFamilyLongOnly:
             f"Expected tested (long-only count meets MIN_EFF_N); "
             f"got {result['status']}: {result.get('skip_reason')}"
         )
-        assert result["eff_n"] == n_long
+        assert result["eff_n"] == MIN_EFF_N
 
     def test_below_min_eff_n_long_only_is_insufficient(self):
         """A fixture with fewer long rows than MIN_EFF_N must be
         insufficient_n even though the total row count (long + short) would
         clear MIN_EFF_N on its own."""
-        n_long = MIN_EFF_N - 1
+        n_long = 2 * (MIN_EFF_N - 1)  # -> MIN_EFF_N - 1 sequential entries
         n_short = 200
         signals = np.concatenate([np.full(n_long, 1.0), np.full(n_short, -1.0)])
         forward_returns = np.concatenate([
@@ -201,10 +209,10 @@ class TestRunSingleNameFamilyLongOnly:
 class TestNullEdge:
     """Always-long null (see strategy_fit/report.py's null-edge blocking
     gate): null_edge_bps is the mean forward_return over the SAME
-    de-overlapped population with the long-only signal filter removed —
-    i.e. what buying every de-overlapped slot unconditionally would have
-    earned. With hold=1 (as `_run` always uses), deoverlap_daily keeps every
-    row, so the null population here is simply every row `_run` was given.
+    forward-return population with the long-only signal filter removed —
+    i.e. what buying unconditionally on any session would have earned (same
+    entry convention and hold; the mean over every priced row, independent of
+    the sequential scan's starting phase).
     """
 
     def test_null_edge_is_mean_over_both_signal_directions(self):
@@ -213,8 +221,8 @@ class TestNullEdge:
         edge is long-only (+150bps); the null must average over ALL 60 rows
         regardless of signal direction, and edge_over_null is the
         difference — computed by hand below."""
-        n_long = 30
-        n_short = 30
+        n_long = 60
+        n_short = 60
         signals = np.concatenate([np.full(n_long, 1.0), np.full(n_short, -1.0)])
         forward_returns = np.concatenate([
             np.full(n_long, 0.015),   # +150 bps
@@ -241,7 +249,7 @@ class TestNullEdge:
         strategy population, so null_edge_bps == gross_edge_bps and
         edge_over_null_bps == 0 — the signal explains none of the edge over
         what an unconditional buy would have earned, correctly."""
-        n = 40
+        n = 80
         signals = np.full(n, 1.0)
         forward_returns = np.full(n, 0.02)
         result = _run(signals, forward_returns)

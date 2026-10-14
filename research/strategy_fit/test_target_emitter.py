@@ -3,10 +3,10 @@ strategy_fit/test_target_emitter.py — tests for the daily target emitter
 (plan 18 §8 step 2a): research signal -> target_portfolio.json.
 
 The synthetic bars are built on the real IDX calendar so the hold / holiday
-arithmetic under test is the production arithmetic. The "grid" they refer to
-is the backtest's de-overlap grid: every `hold`-th row of the signal frame,
-anchored at the first row (harness.deoverlap_daily), with the long-only mask
-applied AFTER it (finding D2).
+arithmetic under test is the production arithmetic. De-overlap is the backtest's SEQUENTIAL rule
+(harness.deoverlap_sequential, D2 fix): when flat and a long signal fires at s,
+enter s+1, exit s+1+hold, resume scanning at the exit day. Row numbers below
+are signal-frame rows (row r = bar r+1).
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ class TestSignalReuse:
         closes = _closes_with_up_rows(N, {38})
         bars = _bars(LAST, closes)
         d = _weight(bars, CALENDAR.next_trading_day(LAST))
-        expected = daily_momentum_signal(bars, hold=0)["signal"].iloc[-1]
+        expected = daily_momentum_signal(bars, hold=0, drop_unpriced=False)["signal"].iloc[-1]
         assert d.signal_value == pytest.approx(expected)
 
 
@@ -181,39 +181,45 @@ class TestHold:
 # De-overlap grid (D2)
 # ---------------------------------------------------------------------------
 
-class TestDeoverlapGridMirror:
-    def test_signal_on_an_off_grid_row_is_not_traded(self):
-        # Last bar is signal-frame row 37 here (39 bars): odd -> off the grid.
+class TestSequentialDeoverlapMirror:
+    def test_signal_on_any_row_is_traded_when_flat(self):
+        # Last bar is signal-frame row 37 here (39 bars). The pre-fix stride-2
+        # grid dropped odd rows; the sequential rule trades it (D2 fixed).
         bars = _bars(LAST, _closes_with_up_rows(N - 1, {37}))
         d = _weight(bars, CALENDAR.next_trading_day(LAST))
         assert d.signal_value > 0
-        assert d.weight == 0.0
-        assert "off the de-overlap grid" in d.reason
+        assert d.weight == 1.0
+        assert d.entry_day == CALENDAR.next_trading_day(LAST)
 
-    def test_on_grid_row_without_a_long_signal_is_not_traded(self):
+    def test_signal_during_an_open_hold_is_not_a_new_entry(self):
+        # Row 36 -> enter bar 38, exit bar 40 (= as_of). Row 38 (the last bar)
+        # fires while that entry is open, so it is NOT re-entered at the exit.
+        bars = _bars(LAST, _closes_with_up_rows(N, {36, 38}))
+        d = _weight(bars, CALENDAR.next_trading_day(LAST))
+        assert d.signal_value > 0
+        assert d.weight == 0.0
+        assert d.exit_day == CALENDAR.next_trading_day(LAST)
+        assert "prior entry was still open" in d.reason
+
+    def test_no_long_signal_is_not_traded(self):
         bars = _bars(LAST, _closes_with_up_rows(N, set()))
         d = _weight(bars, CALENDAR.next_trading_day(LAST))
         assert d.weight == 0.0
         assert "signal <= 0" in d.reason
 
-    def test_back_to_back_entries_keep_the_position_on(self):
-        # Grid rows 34 and 36 and 38 all long: continuous exposure, no flat day.
-        up = {34, 36, 38}
-        base = _bars(LAST, _closes_with_up_rows(N, up))
-        # Rows 34/36 entered at bars (row+1); as_ofs after them:
-        expected = {}
-        for row in (34, 36, 38):
-            s = date.fromisoformat(base["date"].iloc[row + 1])
-            e = CALENDAR.next_trading_day(s)
-            expected[e] = True
-            expected[CALENDAR.next_trading_day(e)] = True
-        for as_of, want in expected.items():
-            if as_of > CALENDAR.next_trading_day(LAST):
-                continue  # needs bars beyond LAST; covered by replay tests
-            bars = base[base["date"] < as_of.isoformat()]
-            if bars.empty:
-                continue
-            assert _weight(bars, as_of).weight == (1.0 if want else 0.0)
+    def test_sequential_chain_enters_resumes_at_exit_day_and_is_flat_on_it(self):
+        # Rows 30, 33, 36 all long. Row 30 -> bar 32 on (bars 32, 33), exit
+        # bar 34; scanning resumes at row 33 (signal at bar 34's close) ->
+        # enter bar 35, exit 37; row 36 -> enter 38, exit 40. The exit day is
+        # flat (signal and exit leg land on different closes).
+        base = _bars(LAST, _closes_with_up_rows(N, {30, 33, 36}))
+        days = [date.fromisoformat(x) for x in base["date"]]
+        on_idx = {32, 33, 35, 36, 38, 39}
+        for idx in range(32, 40):
+            bars = base[base["date"] < days[idx].isoformat()]
+            assert _weight(bars, days[idx]).weight == (1.0 if idx in on_idx else 0.0), idx
+        after = CALENDAR.next_trading_day(LAST)
+        assert _weight(base, after).weight == 0.0
 
     def test_grid_phase_is_anchored_at_history_start(self):
         # Bars from before HISTORY_START must not shift the phase: the first
@@ -390,10 +396,12 @@ class TestCli:
         assert doc["targets"][0]["symbol"] == "BNBR"
         assert doc["targets"][0]["weight"] in (0.0, 1.0)
 
-    def test_stale_local_data_fails_for_today(self, tmp_path, capsys):
+    def test_stale_local_data_fails_for_a_later_day(self, tmp_path, capsys):
+        # as_of is a fixed far-future trading day (not "today"): the local bars
+        # are refreshed over time, so a date-of-the-day check is not stable.
         if not LOCAL_BNBR.exists():
             pytest.skip("local BNBR daily parquet absent")
-        rc = te.main(["emit", "--strategy", "bnbr_momo_h2", "--as-of", "2026-10-14",
+        rc = te.main(["emit", "--strategy", "bnbr_momo_h2", "--as-of", "2026-12-30",
                       "--out", str(tmp_path / "t.json")])
         assert rc != 0
         assert "stale" in capsys.readouterr().err.lower()

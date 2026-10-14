@@ -36,7 +36,8 @@ import logging
 import numpy as np
 import pandas as pd
 
-from strategy_fit.harness import deoverlap_daily, effective_n_event_pooled
+from strategy_fit.entry_convention import DEFAULT_ENTRY, forward_return_series, validate_entry
+from strategy_fit.harness import deoverlap_daily, deoverlap_sequential, effective_n_event_pooled
 from strategy_fit.families_single_name import (
     ROUND_TRIP_BPS,
     N_BOOTSTRAP_FAMILIES,
@@ -60,6 +61,8 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
+_EVENT_COLS = ["date", "symbol", "signal", "forward_return", "pos"]
+
 GAP_THRESHOLD_PCT: float = 0.02        # 2% overnight gap to trigger event
 VOLUME_SPIKE_Z_THRESHOLD: float = 1.5  # volume z-score threshold
 FOREIGN_FLOW_Z_THRESHOLD: float = 1.5  # foreign-flow z-score threshold
@@ -69,6 +72,13 @@ FOREIGN_FLOW_LOOKBACK: int = 20        # rolling window for foreign-flow baselin
 
 # ---------------------------------------------------------------------------
 # Per-symbol event detectors
+#
+# Every detector measures forward_return from the NEXT session (entry
+# convention, strategy_fit/entry_convention.py; D1 fix) and emits ``pos``, the
+# event's trading-day row position, so sequential de-overlap counts calendar
+# days rather than sparse event rows. (gap_event could enter at close_t since
+# its signal is visible at the open; it uses the same next-session convention
+# as every other family, which is the conservative choice.)
 # ---------------------------------------------------------------------------
 
 def _detect_gap_events(
@@ -76,6 +86,7 @@ def _detect_gap_events(
     symbol: str,
     hold: int,
     threshold_pct: float = GAP_THRESHOLD_PCT,
+    entry: str = DEFAULT_ENTRY,
 ) -> pd.DataFrame:
     """
     Detect overnight-gap events for a single symbol.
@@ -91,15 +102,16 @@ def _detect_gap_events(
     """
     d = df.copy()
     if "open" not in d.columns:
-        return pd.DataFrame(columns=["date", "symbol", "signal", "forward_return"])
+        return pd.DataFrame(columns=_EVENT_COLS)
 
     d["gap"] = (d["open"] - d["close"].shift(1)) / d["close"].shift(1)
-    d["forward_return"] = d["close"].shift(-hold) / d["close"] - 1.0
+    d["forward_return"] = forward_return_series(d, hold, entry)
+    d["pos"] = range(len(d))
     # Trigger on large absolute gap
     events = d[np.abs(d["gap"]) > threshold_pct].copy()
     events["signal"] = np.sign(events["gap"])
     events["symbol"] = symbol
-    return events[["date", "symbol", "signal", "forward_return"]].dropna()
+    return events[_EVENT_COLS].dropna()
 
 
 def _detect_volume_spike_events(
@@ -108,6 +120,7 @@ def _detect_volume_spike_events(
     hold: int,
     lookback: int = VOLUME_LOOKBACK,
     z_threshold: float = VOLUME_SPIKE_Z_THRESHOLD,
+    entry: str = DEFAULT_ENTRY,
 ) -> pd.DataFrame:
     """
     Detect volume-spike events for a single symbol.
@@ -131,11 +144,12 @@ def _detect_volume_spike_events(
 
     d["vol_z"] = vol_z
     d["signal"] = price_dir
-    d["forward_return"] = d["close"].shift(-hold) / d["close"] - 1.0
+    d["forward_return"] = forward_return_series(d, hold, entry)
+    d["pos"] = range(len(d))
 
     events = d[d["vol_z"] > z_threshold].copy()
     events["symbol"] = symbol
-    return events[["date", "symbol", "signal", "forward_return"]].dropna()
+    return events[_EVENT_COLS].dropna()
 
 
 def _detect_foreign_flow_spike_events(
@@ -144,6 +158,7 @@ def _detect_foreign_flow_spike_events(
     hold: int,
     lookback: int = FOREIGN_FLOW_LOOKBACK,
     z_threshold: float = FOREIGN_FLOW_Z_THRESHOLD,
+    entry: str = DEFAULT_ENTRY,
 ) -> pd.DataFrame:
     """
     Detect foreign-flow-spike events for a single symbol.
@@ -159,7 +174,7 @@ def _detect_foreign_flow_spike_events(
     events — a net-selling continuation bet would require shorting.
     """
     if "net_foreign" not in df.columns:
-        return pd.DataFrame(columns=["date", "symbol", "signal", "forward_return"])
+        return pd.DataFrame(columns=_EVENT_COLS)
 
     d = df.copy()
     roll_mean = d["net_foreign"].rolling(lookback).mean()
@@ -171,11 +186,12 @@ def _detect_foreign_flow_spike_events(
 
     d["flow_z"] = flow_z
     d["signal"] = np.sign(d["net_foreign"])
-    d["forward_return"] = d["close"].shift(-hold) / d["close"] - 1.0
+    d["forward_return"] = forward_return_series(d, hold, entry)
+    d["pos"] = range(len(d))
 
     events = d[np.abs(d["flow_z"]) > z_threshold].copy()
     events["symbol"] = symbol
-    return events[["date", "symbol", "signal", "forward_return"]].dropna()
+    return events[_EVENT_COLS].dropna()
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +214,7 @@ def run_event_family(
     event_detector_name: str,
     horizon_trading_days: int,
     universe_min_edge_map: dict[str, float] | None = None,
+    entry: str | None = None,
 ) -> dict:
     """
     Run a pooled event-driven family across all universe names.
@@ -228,7 +245,7 @@ def run_event_family(
         Keys: status, skip_reason, hit_rate, eff_n, gross_edge_bps,
               net_edge_bps, p_value, null_edge_bps, edge_over_null_bps.
               null_edge_bps is the mean forward_return over ALL pooled
-              de-overlapped events regardless of sign (the "always-long
+              events regardless of sign, same entry convention (the "always-long
               null" — see strategy_fit/report.py's null-edge blocking gate);
               edge_over_null_bps = gross_edge_bps - null_edge_bps. Both None
               on every non-"tested" path.
@@ -247,22 +264,35 @@ def run_event_family(
             "edge_over_null_bps": None,
         }
 
-    per_symbol_events: list[pd.DataFrame] = []
+    entry_kw = {} if entry is None else {"entry": validate_entry(entry)}
+    per_symbol_long: list[pd.DataFrame] = []
+    per_symbol_all: list[pd.DataFrame] = []
     for symbol, df in hist_dict.items():
         try:
-            events = detector(df, symbol=symbol, hold=horizon_trading_days)
+            events = detector(df, symbol=symbol, hold=horizon_trading_days, **entry_kw)
         except Exception as exc:
             logger.warning("Event detector %s failed for %s: %s", event_detector_name, symbol, exc)
             continue
         if len(events) == 0:
             continue
-        # De-overlap per symbol.
-        deoverlapped = deoverlap_daily(
-            events.reset_index(drop=True), hold=horizon_trading_days
+        events = events.reset_index(drop=True)
+        sig_e = events["signal"].to_numpy(dtype=float)
+        # Long-only (strategy_fit/long_only.py), THEN sequential de-overlap on
+        # calendar position (D2): a down-day event never occupies a slot.
+        per_symbol_long.append(
+            deoverlap_sequential(
+                events, hold=horizon_trading_days, eligible=long_only_mask(sig_e), pos_col="pos"
+            )
         )
-        per_symbol_events.append(deoverlapped)
+        # Always-long null population: same detection and same entry
+        # convention, direction filter removed. Every event is kept (no
+        # sequential thinning): a sequential scan over all events picks one
+        # arbitrary grid phase (e.g. only the down-gap days of an alternating
+        # series), whereas the all-event mean is the phase-independent
+        # estimate of "buy on any event".
+        per_symbol_all.append(events)
 
-    if not per_symbol_events:
+    if not per_symbol_all:
         return {
             "status": "insufficient_n",
             "skip_reason": "No events detected across any symbol",
@@ -275,38 +305,24 @@ def run_event_family(
             "edge_over_null_bps": None,
         }
 
-    pooled = pd.concat(per_symbol_events, ignore_index=True)
-    eff_n = len(pooled)
-
-    if eff_n < MIN_EFF_N:
-        return {
-            "status": "insufficient_n",
-            "skip_reason": f"Pooled eff_n={eff_n} < MIN_EFF_N={MIN_EFF_N}",
-            "hit_rate": None,
-            "eff_n": eff_n,
-            "gross_edge_bps": None,
-            "net_edge_bps": None,
-            "p_value": None,
-            "null_edge_bps": None,
-            "edge_over_null_bps": None,
-        }
+    pooled = pd.concat(per_symbol_long, ignore_index=True)
+    pooled_all = pd.concat(per_symbol_all, ignore_index=True)
 
     sig = pooled["signal"].to_numpy(dtype=float)
     fwd = pooled["forward_return"].to_numpy(dtype=float)
-    # Long-only (strategy_fit/long_only.py): keep only signal > 0 events.
-    # signal <= 0 would require shorting to act on and is excluded here — not
-    # sign-flipped, and not counted toward eff_n.
     valid = np.isfinite(sig) & np.isfinite(fwd) & (np.abs(fwd) > 0) & long_only_mask(sig)
     sig_v = sig[valid]
     fwd_v = fwd[valid]
     eff_n_valid = int(valid.sum())
 
-    if eff_n_valid == 0:
+    # D3: MIN_EFF_N is gated on the LONG-ONLY count (what is actually traded),
+    # not on the mixed-sign pooled count.
+    if eff_n_valid < MIN_EFF_N:
         return {
             "status": "insufficient_n",
-            "skip_reason": "No valid long-side (signal > 0) events after NaN filter",
+            "skip_reason": f"Pooled long-only eff_n={eff_n_valid} < MIN_EFF_N={MIN_EFF_N}",
             "hit_rate": None,
-            "eff_n": 0,
+            "eff_n": eff_n_valid,
             "gross_edge_bps": None,
             "net_edge_bps": None,
             "p_value": None,
@@ -328,8 +344,10 @@ def run_event_family(
     # per-symbol de-overlap, same pooling, only the long_only_mask direction
     # filter removed. `valid_null` differs from `valid` above by exactly that
     # one term, so this population is a superset of fwd_v's.
-    valid_null = np.isfinite(sig) & np.isfinite(fwd) & (np.abs(fwd) > 0)
-    fwd_null = fwd[valid_null]
+    sig_all = pooled_all["signal"].to_numpy(dtype=float)
+    fwd_all = pooled_all["forward_return"].to_numpy(dtype=float)
+    valid_null = np.isfinite(sig_all) & np.isfinite(fwd_all) & (np.abs(fwd_all) > 0)
+    fwd_null = fwd_all[valid_null]
     null_edge_bps = float(np.mean(fwd_null) * 1e4) if len(fwd_null) > 0 else None
     edge_over_null_bps = (
         gross_edge_bps - null_edge_bps if null_edge_bps is not None else None

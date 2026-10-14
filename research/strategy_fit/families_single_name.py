@@ -37,7 +37,13 @@ import logging
 import numpy as np
 import pandas as pd
 
-from strategy_fit.harness import deoverlap_daily
+from strategy_fit.entry_convention import (
+    DEFAULT_ENTRY,
+    ENTRY_SIGNAL_CLOSE_LOOKAHEAD,
+    forward_return_series,
+    validate_entry,
+)
+from strategy_fit.harness import deoverlap_daily, deoverlap_sequential
 from strategy_fit.long_only import long_only_mask
 
 try:
@@ -71,12 +77,27 @@ N_BOOTSTRAP_FAMILIES: int = 500         # bootstrap draws for p-value estimation
 # Signal functions
 # ---------------------------------------------------------------------------
 
-def daily_momentum_signal(df: pd.DataFrame, hold: int = 1) -> pd.DataFrame:
+def _finish(d: pd.DataFrame, drop_unpriced: bool) -> pd.DataFrame:
+    """NaN-signal rows are always dropped. Rows without a forward return (the
+    latest bars) are dropped for scoring; the live emitter keeps them
+    (drop_unpriced=False) because the newest signal has no outcome yet."""
+    subset = ["signal", "forward_return"] if drop_unpriced else ["signal"]
+    return d.dropna(subset=subset).reset_index(drop=True)
+
+
+def daily_momentum_signal(
+    df: pd.DataFrame,
+    hold: int = 1,
+    entry: str = DEFAULT_ENTRY,
+    drop_unpriced: bool = True,
+) -> pd.DataFrame:
     """
     1-day close-to-close momentum signal.
 
     signal = close_t / close_{t-1} - 1   (positive = upward momentum)
-    forward_return = close_{t+hold} / close_t - 1
+    forward_return = measured from the entry convention (see
+    strategy_fit/entry_convention.py): default next_close, close_{t+1} ->
+    close_{t+1+hold}. The signal day's own close is NEVER the entry (D1).
 
     Rows with NaN signal or forward_return are dropped.
 
@@ -95,15 +116,16 @@ def daily_momentum_signal(df: pd.DataFrame, hold: int = 1) -> pd.DataFrame:
     """
     d = df[["date", "close"]].copy()
     d["signal"] = d["close"].pct_change(DEFAULT_LOOKBACK_MOMENTUM)
-    d["forward_return"] = d["close"].shift(-hold) / d["close"] - 1.0
-    d = d.dropna(subset=["signal", "forward_return"]).reset_index(drop=True)
-    return d
+    d["forward_return"] = forward_return_series(df, hold, entry).to_numpy()
+    return _finish(d, drop_unpriced)
 
 
 def mean_reversion_signal(
     df: pd.DataFrame,
     lookback: int = DEFAULT_LOOKBACK_MEAN_REV,
     hold: int = 1,
+    entry: str = DEFAULT_ENTRY,
+    drop_unpriced: bool = True,
 ) -> pd.DataFrame:
     """
     Mean-reversion (overextension) signal on daily bars.
@@ -115,7 +137,9 @@ def mean_reversion_signal(
     the mean-reversion hypothesis predicts a downward correction, so the
     signal is negated to align with the expected direction.
 
-    forward_return = close_{t+hold} / close_t - 1
+    forward_return = measured from the entry convention (see
+    strategy_fit/entry_convention.py): default next_close, close_{t+1} ->
+    close_{t+1+hold}. The signal day's own close is NEVER the entry (D1).
 
     Parameters
     ----------
@@ -135,15 +159,16 @@ def mean_reversion_signal(
     rolling_mean = d["close"].rolling(lookback).mean()
     # Negated: large positive signal = price was below mean → expect upward bounce.
     d["signal"] = -(d["close"] / rolling_mean - 1.0)
-    d["forward_return"] = d["close"].shift(-hold) / d["close"] - 1.0
-    d = d.dropna(subset=["signal", "forward_return"]).reset_index(drop=True)
-    return d
+    d["forward_return"] = forward_return_series(df, hold, entry).to_numpy()
+    return _finish(d, drop_unpriced)
 
 
 def volume_breakout_signal(
     df: pd.DataFrame,
     lookback: int = DEFAULT_LOOKBACK_VOL_BREAK,
     hold: int = 1,
+    entry: str = DEFAULT_ENTRY,
+    drop_unpriced: bool = True,
 ) -> pd.DataFrame:
     """
     Volume-breakout signal: high-volume days filtered by price direction.
@@ -156,7 +181,9 @@ def volume_breakout_signal(
     Only rows with volume_z_score > VOLUME_SPIKE_Z are meaningful signals;
     rows below are near-zero and do not drive the test (but are kept for N).
 
-    forward_return = close_{t+hold} / close_t - 1
+    forward_return = measured from the entry convention (see
+    strategy_fit/entry_convention.py): default next_close, close_{t+1} ->
+    close_{t+1+hold}. The signal day's own close is NEVER the entry (D1).
 
     Parameters
     ----------
@@ -190,10 +217,9 @@ def volume_breakout_signal(
     price_dir = np.sign(d["close"] - d["open"])
 
     d["signal"] = vol_z * price_dir
-    d["forward_return"] = d["close"].shift(-hold) / d["close"] - 1.0
+    d["forward_return"] = forward_return_series(df, hold, entry).to_numpy()
     d = d[["date", "close", "signal", "forward_return"]]
-    d = d.dropna(subset=["signal", "forward_return"]).reset_index(drop=True)
-    return d
+    return _finish(d, drop_unpriced)
 
 
 # ---------------------------------------------------------------------------
@@ -299,17 +325,23 @@ def run_single_name_family(
     min_edge_to_clear_bps: float,
     family_name: str,
     horizon_trading_days: int,
+    entry: str | None = None,
 ) -> dict:
     """
     Run a single-name signal function against daily OHLCV and return a result dict.
 
     Steps:
-    1. Apply signal_fn to produce signal and forward_return columns.
-    2. De-overlap observations (keep rows ≥ horizon_trading_days apart).
-    3. Long-only filter: keep only signal > 0 rows (see strategy_fit/long_only.py) —
-       signal <= 0 would require shorting, which IDX retail accounts cannot do
-       (same constraint as families_intraday.py:run_orb_family, commit c62eba8).
-       A filtered-out row does not count toward eff_n.
+    1. Apply signal_fn to produce signal and forward_return columns. The
+       forward return is measured from the NEXT session (entry convention,
+       strategy_fit/entry_convention.py; D1 fix).
+    2+3. Long-only filter (signal > 0, see strategy_fit/long_only.py — IDX retail
+       accounts cannot short; same constraint as families_intraday.py:
+       run_orb_family, commit c62eba8), then SEQUENTIAL de-overlap of the
+       long-only rows (D2 fix, harness.deoverlap_sequential): when flat and a
+       long signal fires at s, enter s+1, exit s+1+hold, resume at the exit
+       day. A filtered-out row does not count toward eff_n.
+       entry="signal_close_LOOKAHEAD" reproduces the legacy pipeline (same-close
+       entry, stride-hold grid over all rows, mask after) for old reports only.
     4. Check MIN_EFF_N threshold (on the long-only-filtered count).
     5. Compute hit_rate, gross_edge_bps, net_edge_bps, p_value.
 
@@ -328,6 +360,9 @@ def run_single_name_family(
         Human-readable family identifier (for the result dict).
     horizon_trading_days : int
         Hold duration in trading days.
+    entry : str or None
+        Entry convention (None = signal_fn's default, next_close). Passed to
+        signal_fn only when given, so stub/wrapped signal_fns keep working.
 
     Returns
     -------
@@ -346,7 +381,10 @@ def run_single_name_family(
               on every non-"tested" path.
     """
     try:
-        signal_df = signal_fn(df, hold=horizon_trading_days)
+        if entry is None:
+            signal_df = signal_fn(df, hold=horizon_trading_days)
+        else:
+            signal_df = signal_fn(df, hold=horizon_trading_days, entry=validate_entry(entry))
     except Exception as exc:
         logger.warning("%s/%s: signal_fn raised %s", symbol, family_name, exc)
         return {
@@ -376,7 +414,15 @@ def run_single_name_family(
             "edge_over_null_bps": None,
         }
 
-    deoverlapped = deoverlap_daily(signal_df, hold=horizon_trading_days)
+    legacy = entry == ENTRY_SIGNAL_CLOSE_LOOKAHEAD
+    if legacy:
+        deoverlapped = deoverlap_daily(signal_df, hold=horizon_trading_days)
+    else:
+        deoverlapped = deoverlap_sequential(
+            signal_df,
+            hold=horizon_trading_days,
+            eligible=long_only_mask(signal_df["signal"].to_numpy(dtype=float)),
+        )
     hit_rate, eff_n = _compute_hit_rate(deoverlapped)
 
     if eff_n < MIN_EFF_N:
@@ -418,22 +464,17 @@ def run_single_name_family(
         float(np.std(signed_returns, ddof=1) * 1e4) if len(signed_returns) > 1 else None
     )
 
-    # null_edge_bps (always-long null): the SAME de-overlapped population's
-    # forward_return, mean, with the long-only SIGNAL FILTER removed — i.e.
-    # what buying every de-overlapped slot unconditionally would have earned.
-    # `deoverlapped` (built above, before valid_mask) still contains signal<=0
-    # rows, so it is exactly "this trading pattern, signal deleted": same
-    # de-overlap, same hold, only the direction filter gone.
-    #
-    # NOTE (D2, not fixed here): production de-overlaps the raw signal stream
-    # THEN applies the long-only filter — deoverlapped's rows are chosen
-    # without regard to which will later pass long_only_mask, so the
-    # long-only-filtered eff_n can be smaller than what de-overlapping AFTER
-    # filtering would have produced. The null below is computed on this same
-    # (pre-long-only-filter) de-overlapped population so it stays comparable
-    # to the strategy leg despite that ordering; if the ordering biases
-    # gross_edge_bps, it biases null_edge_bps the same way, not differently.
-    null_fwd = deoverlapped["forward_return"].to_numpy(dtype=float)
+    # null_edge_bps (always-long null). Matching timing: the same forward_return
+    # (same entry convention and hold) averaged over EVERY priced day, i.e.
+    # buying unconditionally at any session — the mean over all possible
+    # sequential grid phases, so the null does not depend on where the scan
+    # starts. Legacy (LOOKAHEAD) keeps its historical definition: the same
+    # stride-hold-grid population with the long-only filter removed.
+    if legacy:
+        null_fwd = deoverlapped["forward_return"].to_numpy(dtype=float)
+    else:
+        null_fwd = signal_df["forward_return"].to_numpy(dtype=float)
+    null_fwd = null_fwd[np.isfinite(null_fwd)]
     null_edge_bps = float(np.mean(null_fwd) * 1e4) if len(null_fwd) > 0 else None
     edge_over_null_bps = (
         gross_edge_bps - null_edge_bps if null_edge_bps is not None else None

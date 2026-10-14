@@ -12,6 +12,12 @@ short-sell (the constraint families_intraday.py:run_orb_family established
 in commit c62eba8), so a negative-signal event must be SKIPPED — not
 sign-flipped into a synthetic long return — and must not count toward eff_n.
 
+D1 note: forward_return is now measured from the NEXT session
+(close_{t+1} -> close_{t+1+hold}), so the fixture below shifts its +/-1%
+return schedule by one day (ret_t = +1% for ODD t) and counts events up to
+t <= n-3. The originals encoded the same-close entry (forward_return_t =
+ret_t); the long-only contract under test is unchanged.
+
 These tests exercise the "gap_event" detector directly (constructing a
 synthetic OHLCV series with a controlled overnight gap and forward return per
 day) since it is the simplest detector to drive precisely.
@@ -41,7 +47,8 @@ def _make_gap_df(n: int = 100, ref_price: float = 1000.0) -> pd.DataFrame:
       sign-flipping scorer would silently trade).
 
     close[0] anchors the series; close[t+1] = close[t] * (1 + ret_t) where
-    ret_t alternates +1%/-1% by t's parity, so forward_return_t (hold=1)
+    ret_t is +1% for odd t and -1% for even t. With the next-session entry,
+    forward_return_t (hold=1) = close_{t+2}/close_{t+1} - 1 = ret_{t+1}, which
     matches the day-t classification above by construction. open[t] is set
     independently as a scaled multiple of close[t-1] to hit the gap target.
     """
@@ -49,7 +56,7 @@ def _make_gap_df(n: int = 100, ref_price: float = 1000.0) -> pd.DataFrame:
     closes = np.empty(n)
     closes[0] = ref_price
     for t in range(0, n - 1):
-        ret_t = 0.01 if t % 2 == 0 else -0.01
+        ret_t = 0.01 if t % 2 == 1 else -0.01
         closes[t + 1] = closes[t] * (1.0 + ret_t)
 
     opens = np.empty(n)
@@ -72,15 +79,15 @@ def _make_gap_df(n: int = 100, ref_price: float = 1000.0) -> pd.DataFrame:
 
 
 def _up_gap_event_count(n: int) -> int:
-    """Number of even t in [1, n-2] — the long-tradeable gap events _make_gap_df
+    """Number of even t in [1, n-3] — the long-tradeable gap events _make_gap_df
     produces (gap events require t >= 1 for a defined prior close, and
-    forward_return requires t <= n-2 for a defined next close)."""
-    return sum(1 for t in range(1, n - 1) if t % 2 == 0)
+    forward_return requires t <= n-3 for the close_{t+2} exit)."""
+    return sum(1 for t in range(1, n - 2) if t % 2 == 0)
 
 
 def _down_gap_event_count(n: int) -> int:
-    """Number of odd t in [1, n-2] — the short-only gap events."""
-    return sum(1 for t in range(1, n - 1) if t % 2 == 1)
+    """Number of odd t in [1, n-3] — the short-only gap events."""
+    return sum(1 for t in range(1, n - 2) if t % 2 == 1)
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +105,7 @@ class TestRunEventFamilyLongOnly:
         be scored 'tested' with eff_n equal to the number of qualifying
         events and a positive gross edge."""
         from strategy_fit.families_event import run_event_family
-        n = 100
+        n = 101
         hist = {"SYM": _make_gap_df(n=n)}
         result = run_event_family(hist, event_detector_name="gap_event", horizon_trading_days=1)
         up_n = _up_gap_event_count(n)
@@ -165,7 +172,7 @@ class TestRunEventFamilyLongOnly:
         events leaked into both metrics.
         """
         from strategy_fit.families_event import run_event_family
-        n = 100
+        n = 101
         hist = {"SYM": _make_gap_df(n=n)}
         result = run_event_family(hist, event_detector_name="gap_event", horizon_trading_days=1)
         up_n = _up_gap_event_count(n)
@@ -194,13 +201,13 @@ class TestNullEdge:
     """
 
     def test_null_edge_averages_over_up_and_down_gap_events(self):
-        """_make_gap_df(n=100) produces up-gap events at forward_return=+1%
-        and down-gap events at forward_return=-1% in equal counts (49 each,
-        by construction — see the by-hand count below), so the null must
+        """_make_gap_df(n=101) produces up-gap events at forward_return=+1%
+        and down-gap events at forward_return=-1% in equal counts (49 each
+        at n=101, by construction — see the by-hand count below), so the null must
         average to exactly 0.0 bps: the strategy's long-only +100bps gross
         edge is then entirely edge_over_null."""
         from strategy_fit.families_event import run_event_family
-        n = 100
+        n = 101
         hist = {"SYM": _make_gap_df(n=n)}
         result = run_event_family(hist, event_detector_name="gap_event", horizon_trading_days=1)
         up_n = _up_gap_event_count(n)

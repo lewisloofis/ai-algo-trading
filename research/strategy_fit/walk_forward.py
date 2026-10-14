@@ -120,6 +120,7 @@ def walk_forward_cell(
     decay_threshold_sharpe: float = DECAY_THRESHOLD_SHARPE,
     decay_threshold_hr: float = DECAY_THRESHOLD_HR,
     decay_majority_frac: float = DECAY_MAJORITY_FRAC,
+    entry: str | None = None,
 ) -> WalkForwardResult:
     """
     Run a rolling walk-forward sweep on a single (symbol, family) cell.
@@ -165,7 +166,10 @@ def walk_forward_cell(
     """
     # Apply signal function to full data.
     try:
-        signal_df = signal_fn(df, hold=horizon_trading_days)
+        if entry is None:
+            signal_df = signal_fn(df, hold=horizon_trading_days)
+        else:
+            signal_df = signal_fn(df, hold=horizon_trading_days, entry=entry)
     except Exception as exc:
         logger.warning("walk_forward_cell: signal_fn raised %s", exc)
         return WalkForwardResult(
@@ -197,6 +201,9 @@ def walk_forward_cell(
         test_end = min(test_start + test_window, n_rows)
 
         test_slice = signal_df.iloc[test_start:test_end].reset_index(drop=True)
+        # Decay metric only (not the traded-cell count): stride-hold windows share
+        # at most an endpoint close under the next-session entry, so no return is
+        # double-counted. The traded-cell rule is harness.deoverlap_sequential.
         deoverlapped = deoverlap_daily(test_slice, hold=horizon_trading_days)
 
         if len(deoverlapped) == 0:

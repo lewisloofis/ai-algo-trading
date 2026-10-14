@@ -121,7 +121,12 @@ def _alternating_sigma_signal_fn(edge_bps: float, sigma_bps: float, total_days: 
     return _fn
 
 
-def _run(df: pd.DataFrame, signal_fn, horizon_trading_days: int = 1):
+def _run(df: pd.DataFrame, signal_fn, horizon_trading_days: int = 0):
+    # D2 note: these tests exercise the IS/OOS split and persistence logic, with
+    # row counts sized for "every row is an independent observation". The
+    # sequential de-overlap rule takes every (hold+1)-th contiguous row, so
+    # hold=1 would halve eff_n and starve the fixtures. hold=0 (stride 1) keeps
+    # the original counts; de-overlap itself is covered by test_entry_convention.
     from strategy_fit.daily_walk_forward import walk_forward_daily
     return walk_forward_daily(
         df=df,
