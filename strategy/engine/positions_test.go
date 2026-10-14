@@ -22,7 +22,7 @@ func insertFilledOrder(t *testing.T, store *PostTradeStore, seq *int64, sinkKind
 	*seq++
 	if err := store.InsertFill(FillRow{
 		Seq: *seq, RecvNs: recvNs, OrderID: orderID, FillPriceIDR: priceIDR, FillLots: lots,
-		FeeIDR: feeIDR, SlippageBps: 0, SinkKind: sinkKind,
+		FeeIDR: float64(feeIDR), SlippageBps: 0, SinkKind: sinkKind,
 	}); err != nil {
 		t.Fatalf("InsertFill: %v", err)
 	}

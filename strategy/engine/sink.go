@@ -15,17 +15,17 @@ const (
 )
 
 // ScheduleFeeIDR is the broker fee schedule (15 bps buy, 25 bps sell incl.
-// the 0.1% sales tax) applied to notionalIDR, rounded to whole IDR. It is the
+// the 0.1% sales tax) applied to notionalIDR, rounded to the hundredth of a rupiah (the broker charges 4.05 on 2,700; 4.2 on 2,800; 6.5 on 2,600 - whole-rupiah rounding stored 4.2 as 4). It is the
 // single source of fees for both PaperSink and the live sink: Carina's own
 // per-order fee field has unconfirmed semantics (see strategy/live's
 // SnapshotAveragePrice.Fee), so a live fill's fee is this schedule's
 // estimate, not a broker-reported figure.
-func ScheduleFeeIDR(side string, notionalIDR int64) int64 {
+func ScheduleFeeIDR(side string, notionalIDR int64) float64 {
 	rate := feeRateBuy
 	if side == "sell" {
 		rate = feeRateSell
 	}
-	return int64(math.Round(float64(notionalIDR) * rate))
+	return math.Round(float64(notionalIDR)*rate*100) / 100
 }
 
 // OrderSink accepts order intents and reports executions. PaperSink is the only

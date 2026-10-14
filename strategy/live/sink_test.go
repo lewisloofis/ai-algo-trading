@@ -593,6 +593,28 @@ func TestPoll_UndeliveredFillIsNotCommittedToBookkeeping(t *testing.T) {
 	}
 }
 
+// TestPoll_LiveFillFeeIsNeverZero pins the root cause of runs/2026-10-13-live-2.db
+// recording fee_idr=0 for GOTO 1 lot @ 27. The poller built that run's
+// FillRecord without a FeeIDR (the binary predates commit 42411a0, which added
+// the schedule fee), so every live fill booked fee 0. The broker charged 4.05.
+func TestPoll_LiveFillFeeIsNeverZero(t *testing.T) {
+	srv := routeServer(t, map[string]http.HandlerFunc{
+		pathBuy:  jsonHandler(http.StatusOK, `{"data":{"order_id":"1"}}`),
+		pathList: jsonHandler(http.StatusOK, `{"data":[{"order_id":"1","symbol":"GOTO","side":"SIDE_BUY","status_text":"MATCH","price":{"order":27,"average":{"price":27}},"amount":{"matched_total":2700},"qty":{"lot_done":1,"lot_open":0,"lot_total":1}}]}`),
+	})
+	s := newTestSink(t, srv)
+	ctx := context.Background()
+	intent := testIntent("rebalance-GOTO-1", 1)
+	intent.Symbol, intent.PriceIDR = "GOTO", 27
+	if _, err := s.Submit(ctx, intent); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	fills := pollOnceDrain(t, s, ctx, 1)
+	if got := fills[0].Fill.FeeIDR; got != 4.05 {
+		t.Fatalf("live fill FeeIDR = %v, want 4.05 (the broker's fee on Rp 2,700); 0 means the fee model was not applied", got)
+	}
+}
+
 // TestPoll_FillCarriesScheduleFee pins that a live fill's FeeIDR is the same
 // broker fee schedule PaperSink charges (engine.ScheduleFeeIDR), computed on
 // the marginal leg's own notional — not 0. A 0 fee understated fees and net
@@ -600,7 +622,7 @@ func TestPoll_UndeliveredFillIsNotCommittedToBookkeeping(t *testing.T) {
 func TestPoll_FillCarriesScheduleFee(t *testing.T) {
 	cases := []struct {
 		name, side, path, sideWire string
-		wantFee                    int64
+		wantFee                    float64
 	}{
 		// 2 lots @ 9500 = 1,900,000 notional: 15 bps buy = 2850, 25 bps sell = 4750.
 		{"buy", "buy", pathBuy, "SIDE_BUY", 2850},
@@ -621,7 +643,7 @@ func TestPoll_FillCarriesScheduleFee(t *testing.T) {
 			}
 			fills := pollOnceDrain(t, s, ctx, 1)
 			if got := fills[0].Fill.FeeIDR; got != tc.wantFee {
-				t.Fatalf("FeeIDR = %d, want %d", got, tc.wantFee)
+				t.Fatalf("FeeIDR = %v, want %v", got, tc.wantFee)
 			}
 		})
 	}

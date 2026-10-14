@@ -40,6 +40,8 @@ accounts. That is this runbook.
 |---|---|
 | `market-probe` (pre-trade gate check) | **Wired, safe to run today.** GET-only. `strategy/cmd/market-probe` |
 | Position snapshot, one account at a time | **Wired.** `strategy/cmd/account-recon` (`PortfolioList` + `OpenOrders`, reconciled against a post-trade store) |
+| Broker reconciliation (all stores + manual + broker-import vs broker holdings, trade-by-trade vs broker history) | **Wired, 2026-10-14.** `strategy/cmd/account-recon --stores` (`make recon`); see §3a. Read-only. |
+| Pre-trade position gate | **Wired, 2026-10-14.** `strategy-run --sink live` refuses to arm when the broker's holdings differ from the position it would load; see §3a. |
 | Cash / withdrawable balance snapshot | **NOT YET WIRED as a CLI.** No binary in `strategy/cmd/` calls `account.Client.Withdrawable` or `PortfolioSummary`. See §3 for how to obtain it anyway (the package itself is read-only and safe). |
 | Double-arm gate (`ALGO_LIVE` / `ALGO_CONFIRM`) | **Implemented and wired.** `strategy/live/armed.go` (`ArmingFromEnv`) is read by `strategy-run`'s `--sink live` path (`newInnerSink` → `live.NewClient`); an unarmed process refuses to construct the sink at all. |
 | Placing a real order | **WIRED, 2026-09-24.** `strategy-run --sink live` constructs `strategy/live.Sink` via `live.NewClient` and always wraps it in `strategy/risk.RiskSink` (limits, kill switch, the real endpoint-backed market gate) before it reaches `engine.Run` — see the exact command line below. `Baseline()` runs at startup and `ReconcileTerminal()` at shutdown, with any divergence logged loudly (not silently dropped). |
@@ -81,7 +83,9 @@ still written in two layers, but Layer 2 is now executable:
     earlier store file from the same trading day; on restart after a crash,
     the intents recorded there are not resubmitted. Matching nothing is fine
     on the day's first run. Use a fresh `--store` file per run (one store
-    file per run is the store's own convention).
+    file per run is the store's own convention). It also feeds the position
+    gate (§3a): the glob must cover every store that built a position still
+    open at the broker, or the run refuses to start.
 
   - `--source live` is required for `--sink live` — `strategy-run` refuses
     `--sink live` with `--source replay` outright (never place a real order
@@ -212,6 +216,90 @@ measure.
 
 Timestamp both snapshots (WIB). Keep the raw JSON — the diff in §8/§9 is
 exact-number comparison, not an eyeballed summary.
+
+## 3a. Broker reconciliation and the pre-trade position gate
+
+The broker (Stockbit/Carina) is the source of truth for what the sleeve holds.
+The bot's stores are only its own record, and the owner can trade by hand in
+the app (2026-10-14: the stores said 2 GOTO lots, the owner had sold 1 two
+minutes after the bot bought it; the broker showed 1). A bot that loads a wrong
+position places wrong orders, so two checks stand between the stores and an
+order.
+
+**1. Reconcile (read-only, run before every live session and after any app
+trade).** From the repo root, with the trading token and the sleeve account in
+the environment (`.env.local` defines `SB_TRADING_ACCESS_TOKEN` and
+`SB_ACCOUNT_NO`):
+
+```
+set -a && source .env.local && set +a && make recon
+```
+
+It runs `strategy/cmd/account-recon --stores 'runs/*.db' --acc-no "$SB_ACCOUNT_NO" --sink-kind live` and:
+
+- derives the expected position per symbol from **every** live store for the
+  account (legacy stores with no recorded account are included and counted as
+  `unattributed_fills`), plus `runs/manual_trades.json` (the dashboard's
+  hand-entered trades), plus the broker-import ledger `runs/broker_trades.json`;
+- compares it with the broker's holdings (`/portfolio/v2/list`, scoped to the
+  account) and writes `runs/recon/<date>.json`: per symbol expected lots vs
+  broker lots, `match`/`mismatch`, an explanation, and `as_of`. The file holds a
+  short label (`--account-label`, default `sleeve`), never the account number
+  or a token;
+- fetches the broker's trade history (`GET /history`, paginated by
+  `meta.max_page`, 3 months) and checks it trade by trade against the stores'
+  fills, matching on symbol, side, Jakarta date, price and lots with the time
+  within 5 minutes:
+  - **matched**: price and lots agree; the broker's fee is truth, and a gap
+    over Rp 0.50 is flagged (the first live fill's store fee 0 vs broker 4.05 is
+    the known case; store 4 vs broker 4.2 is within tolerance and only reported);
+  - **broker-only**: a trade placed by hand in the app. It is imported into
+    `runs/broker_trades.json` (source `broker-import`, keyed by the broker's id,
+    so re-running never duplicates it) and counts toward the expected position;
+  - **store-only**: a fill the broker never executed — a bot bug, shown as an
+    error (the exit code is 1).
+- `/history` takes no account parameter, so it answers for the trading token's
+  own account. It is used only when the token's account (the JWT `data.acn`
+  claim) equals `--acc-no`; otherwise the check is skipped and the report says
+  so. Cash moves are counted, not used; unknown commands are counted and logged,
+  never dropped silently and never fatal. Account numbers and names in
+  `move_stock_cash` are discarded at parse time.
+
+Exit code 0 means every position matches and no phantom fill exists. Flags:
+`--no-history` (holdings only), `--no-import` (report without writing the
+ledger), `--exclude-stores a.db,b.db`, `--manual-trades`, `--broker-ledger`,
+`--out-dir`. `make dashboard` shows the newest report on the Overview as the
+"Positions match the broker" row (green, or red with each difference); with no
+report it says "Not checked" and prints this command.
+
+**2. The gate (automatic).** `strategy-run --sink live` runs the same
+holdings check right after the token-account guard and before the store, run
+row or any sink exists: broker holdings vs the position loaded from
+`--prior-stores` (this account's fills only) plus manual and imported trades
+(those dated before the earliest loaded fill are ignored: they belong to stores
+that are not loaded). A mismatch refuses to start, naming each symbol and the
+fix. On a pass, the rebalance strategy starts from that broker-consistent
+position, not the raw stores. `--sink paper` (shadow runs) skips the gate.
+
+- **`--prior-stores` must cover the whole life of every open position**, not
+  just today: a position carried over from yesterday needs yesterday's store in
+  the glob, or the gate (correctly) sees a broker holding the stores do not
+  explain. Stores with unattributed (pre-`run.account`) fills cannot be loaded
+  by `--prior-stores` (`loadPriorState` refuses them); reconcile with
+  `account-recon`, which includes them.
+- After an app trade: run the reconcile above (it imports the trade), then
+  start `strategy-run` again.
+- `--allow-position-mismatch` starts the run anyway. It is logged as a loud
+  `WARNING`, and written to the run row (`run.position_override`). Use it only
+  when you know why the records are wrong. An unreadable broker (401/403,
+  network) is never overridable.
+- `--manual-trades` / `--broker-ledger` override the default file locations
+  (`runs/manual_trades.json`, `runs/broker_trades.json`).
+
+The reconciliation code is structurally unable to place orders:
+`strategy/recon/readonly_test.go` fails the build if the package or
+`account-recon` imports `strategy/live` or gains an HTTP write path, and
+`strategy/account/readonly_test.go` keeps the client GET-only.
 
 ## 4. Arm
 

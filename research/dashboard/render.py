@@ -127,6 +127,13 @@ def money_exact(idr: float | None, signed: bool = False) -> str:
     return f"{sign}Rp {abs(v):,.2f}"
 
 
+def fee_money(idr: float | None) -> str:
+    """A fee: whole rupiah when it is whole (Rp 4), to the cent when it is not (Rp 4.20). The broker charges 4.05, 4.2, 6.5."""
+    if idr is None:
+        return "–"
+    return money_exact(idr) if abs(idr - round(idr)) > 0.005 else money(idr)
+
+
 def pct(value: float | None, decimals: int = 2, signed: bool = True) -> str:
     if value is None:
         return "–"

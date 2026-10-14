@@ -13,10 +13,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"strategy/account"
 	"strategy/engine"
+	"strategy/tokenacct"
 )
 
 func main() {
@@ -26,7 +28,15 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("account-recon", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	storePath := fs.String("store", "", "path to the SQLite post-trade store (required)")
+	storePath := fs.String("store", "", "path to ONE SQLite post-trade store (single-store position check; use --stores for the full reconciliation)")
+	storesFlag := fs.String("stores", "", "comma-separated globs of post-trade stores, e.g. 'runs/*.db': derive the expected position from ALL live stores + manual + imported broker trades, check every trade against broker history, write runs/recon/<date>.json")
+	excludeStores := fs.String("exclude-stores", "", "comma-separated store file base names to skip (--stores only)")
+	manualPath := fs.String("manual-trades", "runs/manual_trades.json", "manual trades file (--stores only; a missing file means none)")
+	ledgerPath := fs.String("broker-ledger", "runs/broker_trades.json", "broker-imported trades ledger (--stores only; created and updated idempotently)")
+	outDir := fs.String("out-dir", "runs/recon", "directory for <date>.json (--stores only)")
+	accountLabel := fs.String("account-label", "sleeve", "short label written to the report instead of the account number (--stores only)")
+	noHistory := fs.Bool("no-history", false, "skip the broker trade-history check (--stores only)")
+	noImport := fs.Bool("no-import", false, "report broker-only trades but do not write them to the ledger (--stores only)")
 	accNo := fs.String("acc-no", "", "brokerage sub-account number to reconcile, e.g. the trading sleeve (required, no default)")
 	sinkKind := fs.String("sink-kind", "live", "sink_kind to reconcile against (e.g. live, paper)")
 	format := fs.String("format", "text", "output format: text|json")
@@ -35,8 +45,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	if *storePath == "" {
-		fmt.Fprintln(stderr, "account-recon: --store is required")
+	if (*storePath == "") == (*storesFlag == "") {
+		fmt.Fprintln(stderr, "account-recon: exactly one of --store (one store) or --stores (all stores, full reconciliation) is required")
 		fs.Usage()
 		return 2
 	}
@@ -60,6 +70,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	host := envDefault("SB_CARINA_HOST", account.DefaultHost)
+
+	if *storesFlag != "" {
+		client, err := account.New(host, *accNo, staticToken(token), &http.Client{Timeout: *timeout})
+		if err != nil {
+			fmt.Fprintf(stderr, "account-recon: %v\n", err)
+			return 2
+		}
+		tokenAcc, err := tokenacct.Account(token)
+		if err != nil {
+			fmt.Fprintf(stderr, "account-recon: cannot read the trading token's account (%v): broker history will be skipped\n", err)
+			tokenAcc = ""
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3**timeout)
+		defer cancel()
+		return runMulti(ctx, multiConfig{
+			Stores: splitList(*storesFlag), Exclude: splitList(*excludeStores), SinkKind: *sinkKind,
+			AccNo: *accNo, Label: *accountLabel, TokenAccount: tokenAcc,
+			ManualPath: *manualPath, LedgerPath: *ledgerPath, OutDir: *outDir,
+			UseHistory: !*noHistory, DoImport: !*noImport,
+		}, client, time.Now(), stdout, stderr)
+	}
 
 	store, err := engine.OpenStore(*storePath)
 	if err != nil {
@@ -137,6 +168,17 @@ func printReport(w io.Writer, r account.Report, format string) error {
 		fmt.Fprintf(w, "[%s] %s: %s\n", d.Severity, d.Kind, d.Detail)
 	}
 	return nil
+}
+
+// splitList splits a comma-separated flag, trimming blanks.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func envDefault(key, def string) string {

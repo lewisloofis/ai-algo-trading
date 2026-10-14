@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dashboard import health as H
 from dashboard import results as R
-from dashboard.render import Column, banner, colored, esc, money, money_exact, page, pill, table, tile
+from dashboard.render import Column, banner, colored, esc, fee_money, money, money_exact, page, pill, table, tile
 from dashboard.terms import term_link
 from dashboard.trades_data import SHARES_PER_LOT
 
@@ -67,7 +67,7 @@ def _pnl_text(d) -> str:
         "No position has been sold yet, so nothing is realised."
         if led.round_trips_closed == 0
         else f"Profit from {led.round_trips_closed} closed sale(s), after both legs' fees."
-    ) + f" Fees paid so far: {money(led.fees_idr)}. Real-money orders only."
+    ) + f" Fees paid so far: {fee_money(led.fees_idr)}. Real-money orders only."
     if d.manual:
         what += f" Includes {len(d.manual)} {term_link('manual-trade', 'manual trade')}(s) placed in the broker app."
     for r in led.reconciliations:

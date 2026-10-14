@@ -26,7 +26,7 @@ type Counters struct {
 	// TotalFeesIDR is the sum of commission paid across all fills, in whole
 	// IDR. It does not include slippage, which is priced into the fill price
 	// itself, nor financing or impact, which the simulator does not model.
-	TotalFeesIDR int64 `json:"total_fees_idr"`
+	TotalFeesIDR float64 `json:"total_fees_idr"`
 	// RoundTrips is the number of completed entry+exit pairs. An open position
 	// at the end of a run is not counted — it has no realised PnL yet.
 	RoundTrips int `json:"round_trips"`
@@ -81,7 +81,7 @@ type openLeg struct {
 	side     string
 	priceIDR int64
 	lots     int
-	feeIDR   int64
+	feeIDR   float64
 	recvNs   int64
 	orderID  string
 }

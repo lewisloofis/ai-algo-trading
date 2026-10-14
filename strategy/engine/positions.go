@@ -99,7 +99,7 @@ func (s *PostTradeStore) DerivedPositions(sinkKind, account string) ([]DerivedPo
 		var symbol, side string
 		var priceIDR int64
 		var lots int
-		var feeIDR int64
+		var feeIDR float64
 		if err := rows.Scan(&symbol, &side, &priceIDR, &lots, &feeIDR); err != nil {
 			return nil, fmt.Errorf("derived positions: scan fill: %w", err)
 		}
@@ -112,7 +112,7 @@ func (s *PostTradeStore) DerivedPositions(sinkKind, account string) ([]DerivedPo
 		shares := float64(lots * sharesPerLot)
 		switch side {
 		case "buy":
-			acc.applyBuy(shares, float64(priceIDR), float64(feeIDR))
+			acc.applyBuy(shares, float64(priceIDR), feeIDR)
 		case "sell":
 			acc.applySell(shares)
 		default:

@@ -24,7 +24,7 @@ import pandas as pd
 
 from strategy_fit.trade_export import CellTrades, export_cells
 
-from dashboard import config, health, inputs, ledger, manual_trades, results, scorecard, store, trades_data
+from dashboard import broker_import, config, health, inputs, ledger, manual_trades, recon, results, scorecard, store, trades_data
 from dashboard.annotations import Annotation, Decision, TimelineEvent, load_annotations, load_decision, load_timeline
 
 
@@ -37,6 +37,8 @@ class SiteOptions:
     annotations_path: str | None = None
     manual_trades_path: str | None = None
     """Default: <runs_dir>/manual_trades.json. A missing file means no manual trades."""
+    broker_trades_path: str | None = None
+    """Default: <runs_dir>/broker_trades.json (written by account-recon). A missing file means none."""
     healthcheck: str = "run"
     """'run' (run the script), 'skip', or a path to a saved ``--json`` output."""
     now: datetime | None = None
@@ -101,6 +103,13 @@ def gather(opt: SiteOptions, log: Callable[[str], None] = lambda _m: None) -> Si
     summary = trades_data.live_summary(live)
     manual = manual_trades.load_manual_trades(
         opt.manual_trades_path or os.path.join(opt.runs_dir, "manual_trades.json"))  # raises ManualTradesError
+    # Trades the broker's own history shows that no bot fill explains (account-recon imports them);
+    # they supersede a hand-entered duplicate and are never counted twice against a bot fill.
+    manual = broker_import.fold_into_manual(
+        manual,
+        broker_import.load_broker_imports(  # raises BrokerImportError
+            opt.broker_trades_path or os.path.join(opt.runs_dir, "broker_trades.json")),
+        live)
     merged = ledger.build_ledger(live, manual)  # raises LedgerError (negative position, unknown link)
 
     status_path = inputs.latest_status_json(opt.runs_dir)
@@ -114,6 +123,7 @@ def gather(opt: SiteOptions, log: Callable[[str], None] = lambda _m: None) -> Si
     log("collector health check..." if opt.healthcheck == "run" else "health check: not run")
     outcome = _healthcheck(opt)
     rows_health = health.health_rows(outcome, opt.daily_dir, data.runs, status, now)
+    rows_health.append(recon.recon_row(opt.runs_dir, now))  # "Positions match the broker"
 
     run = results.latest_report(opt.research_dir, config.CORRECTED_RUN_DIRS)
     exported: dict[tuple[str, str, int], CellTrades] = {}

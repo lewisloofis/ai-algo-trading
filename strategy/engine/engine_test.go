@@ -102,7 +102,7 @@ func TestPaperSinkFeeMath(t *testing.T) {
 	// notional = 8750 * 100 lots * 100 shares = 87,500,000; * 0.0015 = 131,250.
 	const wantFee = 131_250
 	if f.FeeIDR != wantFee {
-		t.Fatalf("FeeIDR = %d, want %d", f.FeeIDR, wantFee)
+		t.Fatalf("FeeIDR = %v, want %v", f.FeeIDR, wantFee)
 	}
 	if f.FillPriceIDR != 8750 {
 		t.Fatalf("FillPriceIDR = %d, want 8750", f.FillPriceIDR)
@@ -120,7 +120,7 @@ func TestPaperSinkFeeMath(t *testing.T) {
 		t.Fatalf("Submit sell: %v", err)
 	}
 	if got := sink2.LastFill().FeeIDR; got != 218_750 {
-		t.Fatalf("sell FeeIDR = %d, want 218750", got)
+		t.Fatalf("sell FeeIDR = %v, want 218750", got)
 	}
 }
 
@@ -502,16 +502,19 @@ func TestScheduleFeeIDR(t *testing.T) {
 	cases := []struct {
 		side     string
 		notional int64
-		want     int64
+		want     float64
 	}{
-		{"buy", 2_700, 4},     // GOTO 1 lot @ 27: 4.05
-		{"sell", 2_600, 7},    // 6.5 rounds half away from zero
-		{"buy", 525_000, 788}, // BBCA 1 lot @ 5250: 787.5
+		// The three fees the broker actually charged (history 2026-10-13/14):
+		// 0.15% buy, 0.25% sell, to the hundredth of a rupiah.
+		{"buy", 2_700, 4.05},
+		{"buy", 2_800, 4.2},
+		{"sell", 2_600, 6.5},
+		{"buy", 525_000, 787.5},
 		{"sell", 87_500_000, 218_750},
 	}
 	for _, tc := range cases {
 		if got := ScheduleFeeIDR(tc.side, tc.notional); got != tc.want {
-			t.Errorf("ScheduleFeeIDR(%q, %d) = %d, want %d", tc.side, tc.notional, got, tc.want)
+			t.Errorf("ScheduleFeeIDR(%q, %d) = %v, want %v", tc.side, tc.notional, got, tc.want)
 		}
 	}
 }

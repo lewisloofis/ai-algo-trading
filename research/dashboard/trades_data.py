@@ -47,7 +47,7 @@ class OrderLine:
     sink_kind: str
     filled_lots: int
     fill_price: float | None
-    fees_idr: int
+    fees_idr: float
     realised_pnl_idr: int | None
     status: str
     """filled / partly filled / rejected / not filled."""
@@ -81,7 +81,7 @@ class LiveSummary:
     orders_not_filled: int
     realised_pnl_idr: int
     round_trips_closed: int
-    fees_idr: int
+    fees_idr: float
     positions: tuple[Position, ...]
 
 
@@ -153,7 +153,7 @@ def build_orders(data: StoreData, annotations: Mapping[str, Annotation]) -> list
                 sink_kind=i.sink_kind,
                 filled_lots=filled_lots,
                 fill_price=(notional / filled_lots) if filled_lots else None,
-                fees_idr=sum(f.fee_idr for f in mine),
+                fees_idr=round(sum(f.fee_idr for f in mine), 2),
                 realised_pnl_idr=sum(pnl) if pnl else None,
                 status=_status(filled_lots, i.lots, reason is not None),
                 reject_reason=reason,
@@ -217,6 +217,6 @@ def live_summary(live: Sequence[OrderLine]) -> LiveSummary:
         orders_not_filled=sum(1 for x in live if not x.filled),
         realised_pnl_idr=sum(closing),
         round_trips_closed=len(closing),
-        fees_idr=sum(x.fees_idr for x in live),
+        fees_idr=round(sum(x.fees_idr for x in live), 2),
         positions=open_positions(live),
     )

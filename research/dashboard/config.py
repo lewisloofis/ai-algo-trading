@@ -38,6 +38,14 @@ HEALTHCHECK_TIMEOUT_S = 900
 # What the owner should run when a check could not be done here.
 HEALTHCHECK_RUN_HINT = "make dashboard   (from a shell with your AWS credentials loaded)"
 
+# The broker reconciliation (strategy/cmd/account-recon --stores, wired to `make recon`). It writes
+# runs/recon/<date>.json, which the Overview reads. The sleeve account number comes from
+# SB_ACCOUNT_NO in .env.local, never from this file.
+RECON_DIRNAME = "recon"
+RECON_RUN_HINT = f"set -a && source .env.local && set +a && make -C {REPO_ROOT} recon"
+RECON_STALE_DAYS = 2
+"""A reconciliation older than this many calendar days is shown amber, not green."""
+
 WIB_OFFSET_HOURS = 7
 """Jakarta time (Western Indonesia Time), UTC+7, no daylight saving."""
 

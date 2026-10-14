@@ -46,7 +46,7 @@ class RunHeader:
     binary_hash: str
     orders_attempted: int | None
     fills: int | None
-    total_fees_idr: int | None
+    total_fees_idr: float | None
     round_trips: int | None
     net_pnl_bps: float | None
     store_path: str
@@ -125,7 +125,8 @@ class FillRow:
     order_id: str
     fill_price_idr: int
     fill_lots: int
-    fee_idr: int
+    fee_idr: float
+    """Rupiah to the hundredth (4.2). Stores written before 2026-10-14 hold whole rupiah (an INTEGER column); both read the same."""
     net_pnl_idr: int | None
     """Realised profit in rupiah, set by the runtime on a fill that closes a position."""
     sink_kind: str

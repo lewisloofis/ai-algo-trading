@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS fill (
     order_id TEXT NOT NULL,
     fill_price_idr INTEGER NOT NULL,
     fill_lots INTEGER NOT NULL,
-    fee_idr INTEGER NOT NULL,
+    fee_idr REAL NOT NULL,
     slippage_bps REAL NOT NULL,
     net_pnl_idr INTEGER,
     sink_kind TEXT NOT NULL DEFAULT 'paper',
@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS run (
     input_spec TEXT NOT NULL,
     binary_hash TEXT NOT NULL DEFAULT '',
     account TEXT NOT NULL DEFAULT '',
+    position_override TEXT NOT NULL DEFAULT '',
     orders_attempted INTEGER,
     fills INTEGER,
     total_fees_idr INTEGER,
@@ -137,6 +138,10 @@ var migrations = []struct{ table, column, ddl string }{
 	// run.account: runs recorded before it existed read back as '' (no
 	// account), never as whichever account opens the file next.
 	{"run", "account", "TEXT NOT NULL DEFAULT ''"},
+	// run.position_override: non-empty when the run was started past the
+	// pre-trade position gate with --allow-position-mismatch (the text says
+	// what disagreed). Older runs read back '' (no override).
+	{"run", "position_override", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // DecisionRow is one OnEvent observation.
@@ -250,8 +255,8 @@ type FillRow struct {
 	FillPriceIDR int64
 	// FillLots is the executed size in lots.
 	FillLots int
-	// FeeIDR is the commission paid on this fill, in whole IDR.
-	FeeIDR int64
+	// FeeIDR is the commission paid on this fill, in IDR to the hundredth (the broker charges 4.05, 4.2, 6.5; whole-rupiah storage lost the fraction). Stored as REAL.
+	FeeIDR float64
 	// SlippageBps is the executed price's distance from the reference price,
 	// in basis points — the simulator's modelled cost of crossing the spread.
 	SlippageBps float64
@@ -344,6 +349,10 @@ type RunRow struct {
 	// order-id queries filter on it so one account's fills are never
 	// reconciled against another's (plan 18 §3.4).
 	Account string
+	// PositionOverride is non-empty when the run started despite the broker
+	// holdings not matching the position it loaded (--allow-position-mismatch):
+	// it records what disagreed, so the run is never mistaken for a clean one.
+	PositionOverride string
 	// Counters is the final engine.Counters; zero-valued while running.
 	Counters Counters
 	// CountersValid is false until FinishRun writes the counters, so a reader
@@ -458,10 +467,10 @@ func (s *PostTradeStore) BeginRun(r RunRow) error {
 		r.Outcome = RunOutcomeRunning
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO run (run_id, started_ns, ended_ns, outcome, error, source, pacing, fill_mode, sink_kind, strategy_id, input_spec, binary_hash, account)
-		 VALUES (?, ?, NULL, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO run (run_id, started_ns, ended_ns, outcome, error, source, pacing, fill_mode, sink_kind, strategy_id, input_spec, binary_hash, account, position_override)
+		 VALUES (?, ?, NULL, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.RunID, r.StartedNs, r.Outcome, r.Source, r.Pacing, r.FillMode, r.SinkKind,
-		r.StrategyID, r.InputSpec, r.BinaryHash, r.Account,
+		r.StrategyID, r.InputSpec, r.BinaryHash, r.Account, r.PositionOverride,
 	)
 	if err != nil {
 		return fmt.Errorf("insert run: %w", err)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from dashboard import svg
-from dashboard.render import Column, banner, colored, esc, money, money_exact, page, table
+from dashboard.render import Column, banner, colored, esc, fee_money, money, money_exact, page, table
 from dashboard.terms import term_link
 from dashboard.trades_data import OrderLine
 
@@ -58,7 +58,7 @@ def _row(x: OrderLine) -> list[str]:
         f"{x.lots:,}",
         money(x.limit_price),
         _filled(x),
-        money(x.fees_idr) if x.filled else "–",
+        fee_money(x.fees_idr) if x.filled else "–",
         colored(pnl, x.realised_pnl_idr),
         _label(x),
     ]
@@ -94,7 +94,7 @@ def _manual_row(t, closing) -> list[str]:
         f"{t.lots:,}",
         f"{money(t.price_idr)} (executed)",
         f"Yes: {t.lots} lot{'s' if t.lots != 1 else ''} at {money(t.price_idr)}",
-        money(t.fee_idr),
+        fee_money(t.fee_idr),
         pnl,
         f'<span class="src-manual">manual (app)</span>{note}{link}',
     ]
@@ -190,7 +190,7 @@ def render(d) -> str:
     )
     totals = banner(
         "ok",
-        f"Real money only: realised profit {money(led.realised_pnl_idr, signed=True)} · fees {money(led.fees_idr)} · "
+        f"Real money only: realised profit {money(led.realised_pnl_idr, signed=True)} · fees {fee_money(led.fees_idr)} · "
         f"{led.round_trips_closed} sale(s) closed (bot and manual, matched first-in-first-out). Practice orders below are not included.",
     )
     paper_note = banner(

@@ -105,7 +105,7 @@ type FillRecord struct {
 	OrderID      OrderID
 	FillPriceIDR int64
 	FillLots     int
-	FeeIDR       int64
+	FeeIDR       float64
 	SlippageBps  float64
 }
 

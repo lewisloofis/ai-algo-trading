@@ -1,0 +1,3 @@
+{"message":"History Info retrieved","data":{"history":[{"date":"Oct 2026","history_list":[
+{"command":"BUY","symbol":"GOTO","price":0,"lot":1,"shares":100,"amount":0,"fee":4.2,"status":"MATCH","date":"14 Oct 2026","time":"15:38:00","id":"900000003"}
+]}],"meta":{"max_page":1}}}

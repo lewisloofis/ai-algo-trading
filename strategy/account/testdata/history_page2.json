@@ -1,0 +1,5 @@
+{"message":"History Info retrieved","data":{"history":[
+{"date":"Aug 2026","history_list":[
+{"command":"BUY","symbol":"BBRI","price":4000,"lot":2,"shares":200,"amount":800000,"fee":1200,"netamount":801200,"currency":"IDR","status":"MATCH","date":"3 Aug 2026","time":"09:15:30","id":"900000005"}
+],"monthly_gain":0}],
+"meta":{"max_page":2,"total_realized_amount":0}}}

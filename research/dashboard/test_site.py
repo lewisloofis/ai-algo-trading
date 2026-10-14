@@ -130,7 +130,72 @@ def test_overview_leads_with_the_decision_and_never_says_bare_unknown(world):
     assert page.index("No strategy is live-trading.") < page.index("Is the machinery working?")
     health_part = page[page.index("Is the machinery working?"): page.index("Headline numbers")]
     assert "unknown" not in health_part.lower()
-    assert health_part.count("Not checked: ") == 2 and "Run: " in health_part
+    # collector + S3 are skipped here, and no broker reconciliation has been run.
+    assert health_part.count("Not checked: ") == 3 and "Run: " in health_part
+    assert "Positions match the broker" in health_part
+    assert "make -C " in health_part and " recon" in health_part
+
+
+def _write_recon(runs, status="match", positions=None):
+    (runs / "recon").mkdir(exist_ok=True)
+    (runs / "recon" / "2026-10-14.json").write_text(json.dumps({
+        "version": 1, "as_of": "2026-10-14T21:00:00+07:00", "date": "2026-10-14", "account_label": "sleeve",
+        "status": status,
+        "positions": positions if positions is not None else [
+            {"symbol": "GOTO", "expected_lots": 1, "broker_lots": 1, "status": "match", "explanation": "ok",
+             "breakdown": {}}],
+        "trade_check": {"checked": True, "matched": 1, "broker_only": 0, "store_only": 0, "fee_gaps_flagged": 0},
+        "sources": {}, "errors": []}))
+
+
+def test_overview_shows_a_green_row_when_positions_match_the_broker(world):
+    opt, runs, out = world
+    _write_recon(runs)
+    build_site(opt)
+    page = text(out, "index.html")
+    row = page[page.index("Positions match the broker"):]
+    row = row[: row.index("</tr>")]
+    assert "Yes: the bot&#x27;s records agree" in row or "agree with the broker" in row
+    assert "OK" in row and "Not checked" not in row
+
+
+def test_overview_shows_a_red_row_with_per_symbol_differences(world):
+    opt, runs, out = world
+    _write_recon(runs, "mismatch", [
+        {"symbol": "GOTO", "expected_lots": 2, "broker_lots": 1, "status": "mismatch",
+         "explanation": "broker holds 1 fewer lot than the records explain", "breakdown": {}}])
+    build_site(opt)
+    page = text(out, "index.html")
+    row = page[page.index("Positions match the broker"):]
+    row = row[: row.index("</tr>")]
+    assert "Problem" in row and "GOTO: expected 2 lots, broker 1 lot" in row
+
+
+def test_a_broker_imported_sale_is_counted_once_in_the_ledger(world):
+    opt, runs, out = world
+    # The bot bought GOTO @28 (live.db). The broker's history shows a sale made by hand in the app.
+    (runs / "broker_trades.json").write_text(json.dumps({"trades": [{
+        "broker_id": "900000002", "source": "broker-import", "date": "2026-10-14", "time_wib": "23:30:00",
+        "symbol": "GOTO", "side": "sell", "lots": 1, "price_idr": 26, "fee_idr": 6.5}]}))
+    # The owner also typed the same sale into manual_trades.json: the import must supersede it.
+    (runs / "manual_trades.json").write_text(json.dumps({"trades": [{
+        "date": "2026-10-14", "time_wib": None, "symbol": "GOTO", "side": "sell", "lots": 1, "price_idr": 26,
+        "fee_idr": 6.5, "note": "typed by hand"}]}))
+    build_site(opt)  # a double count would raise NegativePositionError here
+    trades = text(out, "trades.html")
+    assert "900000002" in trades and "typed by hand" not in trades
+    assert "Rp 6.50" in trades  # fractional fee shown exactly
+
+
+def test_fractional_store_fees_are_shown_exactly(world, make_store):
+    opt, runs, out = world
+    import sqlite3
+    con = sqlite3.connect(runs / "live.db")
+    con.execute("UPDATE fill SET fee_idr = 4.2")
+    con.commit()
+    con.close()
+    build_site(opt)
+    assert "Rp 4.20" in text(out, "trades.html")
 
 
 def test_live_and_paper_are_never_mixed_in_money_totals(world):

@@ -12,7 +12,7 @@
 #   make publish-dashboard
 #   make clean
 
-.PHONY: build build-linux-arm64 collect sbcap test dashboard publish-dashboard clean
+.PHONY: build build-linux-arm64 collect sbcap test dashboard publish-dashboard recon clean
 
 build:
 	mkdir -p $(CURDIR)/bin
@@ -68,6 +68,26 @@ dashboard:
 		--out $(CURDIR)/$(DASH_OUT) \
 		$(if $(filter skip,$(HEALTHCHECK)),--no-healthcheck,)
 	@echo "Open $(CURDIR)/$(DASH_OUT)/index.html"
+
+# recon is the broker reconciliation (strategy/cmd/account-recon --stores): the
+# expected position from ALL live stores + runs/manual_trades.json + the broker-
+# import ledger, against the broker's holdings, plus a trade-by-trade check against
+# the broker's history. It writes runs/recon/<date>.json (the dashboard Overview
+# reads the newest one) and imports trades made by hand in the app into
+# runs/broker_trades.json. Read-only towards the broker.
+#
+# Needs the trading token and the sleeve account in the environment:
+#   set -a && source .env.local && set +a && make recon
+# (.env.local must define SB_TRADING_ACCESS_TOKEN and SB_ACCOUNT_NO, the sleeve
+# sub-account number; or pass ACC=<number> on the command line.)
+ACC ?= $(SB_ACCOUNT_NO)
+
+recon:
+	@test -n "$(ACC)" || { echo "recon: set SB_ACCOUNT_NO (or ACC=<sleeve account>)"; exit 2; }
+	cd strategy && go run ./cmd/account-recon --stores '$(CURDIR)/runs/*.db' --acc-no '$(ACC)' --sink-kind live \
+		--manual-trades $(CURDIR)/runs/manual_trades.json \
+		--broker-ledger $(CURDIR)/runs/broker_trades.json \
+		--out-dir $(CURDIR)/runs/recon
 
 # publish-dashboard copies the built site to S3 beside the market data, so it is
 # readable without the laptop that generated it (plan-19 Stage 6, optional).

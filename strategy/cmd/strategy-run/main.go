@@ -40,6 +40,7 @@ import (
 
 	"collector/calendar"
 	"collector/feed"
+	brokeracct "strategy/account"
 	"strategy/engine"
 	"strategy/live"
 	"strategy/market"
@@ -142,6 +143,9 @@ func run() error {
 	riskDailyLossFrac := flag.Float64("risk-daily-loss-fraction", 0.05, "daily loss limit, as a fraction of --equity-idr")
 	limitPriceIDR := flag.Int64("limit-price-idr", 0, "DIAGNOSTIC: submit the single rebalance order at exactly this tick-valid IDR price instead of the last price (0 = off; only with --strategy rebalance and a one-target portfolio; used for the first-live-order unfilled step, docs/runbooks/first-live-order.md §5)")
 	rebalanceAtFlag := flag.String("rebalance-at", defaultRebalanceAtFlag, "rebalance window opening time, HH:MM WIB (--strategy rebalance only); the default 15:00 is after continuous trading ends, so pass an in-session time for a run meant to trade")
+	allowPositionMismatch := flag.Bool("allow-position-mismatch", false, "start --sink live even though the broker's holdings do not match the position loaded from --prior-stores + manual/imported trades (DANGEROUS: the bot will trade from a position the broker disagrees with; loudly logged and written to the run row)")
+	manualTradesPath := flag.String("manual-trades", defaultManualTradesPath, "manual trades file used by the position gate (a missing file means none)")
+	brokerLedgerPath := flag.String("broker-ledger", defaultBrokerLedgerPath, "broker-imported trades ledger used by the position gate (written by account-recon --stores)")
 	flag.Parse()
 
 	if *storePath == "" {
@@ -179,9 +183,34 @@ func run() error {
 		log.Printf("live: trading token account %s matches --account", strings.TrimSpace(*account))
 	}
 
+	// Position gate, next to the token-account guard and for the same reason:
+	// before the strategy, store, run row or any sink exists. The broker is the
+	// source of truth for what the sleeve holds; a bot that loads a wrong
+	// position places wrong orders. Paper/shadow sinks place nothing: skipped.
+	var gateInitial map[string]int
+	var positionOverride string
+	if *sinkName == "live" {
+		client, err := brokeracct.New(envDefault("SB_CARINA_HOST", live.DefaultHost), strings.TrimSpace(*account), envTokens{trading: tradingToken}, &http.Client{Timeout: 20 * time.Second})
+		if err != nil {
+			return fmt.Errorf("position gate: %w", err)
+		}
+		gateCtx, cancelGate := context.WithTimeout(context.Background(), 60*time.Second)
+		res, err := runPositionGate(gateCtx, positionGateConfig{
+			priorStores: *priorStores, account: strings.TrimSpace(*account),
+			manualPath: *manualTradesPath, ledgerPath: *brokerLedgerPath,
+			allowMismatch: *allowPositionMismatch,
+			reconCommand:  reconCommandFor(strings.TrimSpace(*account)),
+		}, client)
+		cancelGate()
+		if err != nil {
+			return err
+		}
+		gateInitial, positionOverride = res.initial, res.override
+	}
+
 	var priorState *priorStateConfig
 	if *priorStores != "" {
-		priorState = &priorStateConfig{glob: *priorStores, sinkKind: *sinkName, account: strings.TrimSpace(*account)}
+		priorState = &priorStateConfig{glob: *priorStores, sinkKind: *sinkName, account: strings.TrimSpace(*account), initialOverride: gateInitial}
 	}
 	at, err := parseRebalanceAt(*rebalanceAtFlag)
 	if err != nil {
@@ -282,6 +311,8 @@ func run() error {
 		InputSpec:  inputSpec,
 		BinaryHash: binaryHash(),
 		Account:    strings.TrimSpace(*account),
+
+		PositionOverride: positionOverride,
 	}); err != nil {
 		return err
 	}
@@ -341,7 +372,7 @@ func run() error {
 	fmt.Printf("Run: %s | store: %s\n", runID, *storePath)
 	fmt.Printf("Trades attempted: %d | Fills: %d | Net PnL bps: %.2f\n",
 		counters.OrdersAttempted, counters.Fills, counters.NetPnlBps)
-	fmt.Printf("Round-trips: %d | Total fees: %d IDR\n", counters.RoundTrips, counters.TotalFeesIDR)
+	fmt.Printf("Round-trips: %d | Total fees: %.2f IDR\n", counters.RoundTrips, counters.TotalFeesIDR)
 	return nil
 }
 
@@ -467,6 +498,10 @@ type priorStateConfig struct {
 	glob     string
 	sinkKind string
 	account  string // --account; prior positions are only this account's
+	// initialOverride, when non-nil, is the position (lots per symbol) the
+	// strategy starts from instead of the stores' own: the position gate's
+	// broker-consistent figure (stores + manual + imported trades).
+	initialOverride map[string]int
 }
 
 // newStrategy builds the named strategy and returns it together with the
@@ -514,6 +549,9 @@ func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limi
 			}
 			opts.Attempted = attempted
 			opts.Initial = initial
+			if prior.initialOverride != nil {
+				opts.Initial = prior.initialOverride
+			}
 		}
 
 		strat, err := rebalance.New(opts)

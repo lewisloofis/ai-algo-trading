@@ -1,0 +1,12 @@
+{"message":"History Info retrieved","data":{"history":[
+{"date":"Oct 2026","history_list":[
+{"command":"BUY","symbol":"GOTO","price":28,"lot":1,"shares":100,"amount":2800,"fee":4.2,"netamount":2804.2,"currency":"IDR","status":"MATCH","realized_amount":0,"realized_percentage":0,"date":"14 Oct 2026","time":"15:38:00","display_as":"BUY GOTO","is_day_trade":false,"move_stock_cash":{"source":{"acc_no":"","name":""},"destination":{"acc_no":"","name":""}},"id":"900000003","banner":null,"label":"","sbn":null,"bonds":null,"dividend_per_share":0,"some_future_field":{"x":1}},
+{"command":"SELL","symbol":"GOTO","price":26,"lot":1,"shares":100,"amount":2600,"fee":6.5,"netamount":2593.5,"currency":"IDR","status":"MATCH","realized_amount":-110.55000000000015,"realized_percentage":-4.09,"date":"13 Oct 2026","time":"14:14:15","display_as":"SELL GOTO","is_day_trade":false,"id":"900000002"},
+{"command":"BUY","symbol":"GOTO","price":27,"lot":1,"shares":100,"amount":2700,"fee":4.05,"netamount":2704.05,"currency":"IDR","status":"MATCH","realized_amount":0,"realized_percentage":0,"date":"13 Oct 2026","time":"14:12:00","display_as":"BUY GOTO","is_day_trade":false,"id":"900000001"},
+{"command":"BUY","symbol":"BBRI","price":4000,"lot":1,"shares":100,"amount":400000,"fee":600,"netamount":400600,"currency":"IDR","status":"CANCELLED","date":"12 Oct 2026","time":"10:00:00","id":"900000009"},
+{"command":"RIGHTS_ISSUE_UNKNOWN","symbol":"ZZZZ","price":"n/a","lot":"n/a","amount":{"weird":true},"fee":null,"status":"Success","date":"12 Oct 2026","time":"09:00:00","id":"900000010"}
+],"monthly_gain":0},
+{"date":"Sep 2026","history_list":[
+{"command":"INTRA_MOVE_CASH_INCREASE","symbol":"","price":0,"lot":0,"amount":15000000,"fee":0,"status":"Success","date":"14 Sep 2026","time":"22:46:05","display_as":"CASH IN","move_stock_cash":{"source":{"acc_no":"SYNTH-ACC-SOURCE-111","name":"SYNTH OWNER NAME"},"destination":{"acc_no":"SYNTH-ACC-DEST-222","name":"Trading"}},"id":"900000004"}
+],"monthly_gain":0}],
+"meta":{"max_page":2,"total_realized_amount":0}}}

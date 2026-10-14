@@ -399,6 +399,40 @@ func TestFinishRunTouchesOnlyTheRunTable(t *testing.T) {
 	}
 }
 
+// TestRunRowRecordsPositionOverride: a run started with
+// --allow-position-mismatch carries that fact on its run row, and stores that
+// predate the column read back with no override.
+func TestRunRowRecordsPositionOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pre-override.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`CREATE TABLE run (run_id TEXT PRIMARY KEY, started_ns INTEGER NOT NULL, ended_ns INTEGER, outcome TEXT NOT NULL DEFAULT 'running', error TEXT NOT NULL DEFAULT '', source TEXT NOT NULL, pacing TEXT NOT NULL DEFAULT '', fill_mode TEXT NOT NULL, sink_kind TEXT NOT NULL, strategy_id TEXT NOT NULL, input_spec TEXT NOT NULL, binary_hash TEXT NOT NULL DEFAULT '', orders_attempted INTEGER, fills INTEGER, total_fees_idr INTEGER, round_trips INTEGER, net_pnl_bps REAL);
+INSERT INTO run (run_id, started_ns, source, fill_mode, sink_kind, strategy_id, input_spec) VALUES ('old-run', 1, 'live', 'taker', 'live', 's', 'X');`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore on a pre-override file: %v", err)
+	}
+	defer store.Close()
+	var got string
+	if err := store.db.QueryRow(`SELECT position_override FROM run WHERE run_id = 'old-run'`).Scan(&got); err != nil || got != "" {
+		t.Fatalf("old run override = %q, %v; want empty", got, err)
+	}
+	row := testRunRow("new-run")
+	row.PositionOverride = "position mismatch overridden: GOTO expected 2 lots, broker 1"
+	if err := store.BeginRun(row); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT position_override FROM run WHERE run_id = 'new-run'`).Scan(&got); err != nil || got != row.PositionOverride {
+		t.Fatalf("new run override = %q, %v", got, err)
+	}
+}
+
 // TestMigrateAddsAccountToAPreExistingRunTable covers stores written before
 // run.account existed (every store up to 2026-10-13): the column is added, and
 // their runs read back with an empty account rather than failing.
