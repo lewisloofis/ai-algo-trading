@@ -53,9 +53,11 @@ import datetime
 import json
 import logging
 import os
+import re
 import sys
+import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -102,6 +104,20 @@ _DIVERGENCE_LOG_FILENAME = "divergence_log.jsonl"
 # If the store's last bar is more than this many trading days behind the requested
 # end, an empty frame means the fetch silently failed (2026-10-14 incident).
 MAX_EMPTY_STALENESS_TRADING_DAYS = 3
+
+# Incremental refresh re-requests this many calendar days before the last stored
+# bar, so recent revisions (and any back-adjustment) land in the overlap where
+# _detect_divergences can see them.
+INCREMENTAL_OVERLAP_DAYS = 10
+
+# Pause between per-symbol requests during a multi-symbol snapshot. The module
+# had no rate limiting before; ~241 sequential calls against the Exodus/chartbit
+# API should not be a burst.
+REQUEST_DELAY_SECONDS = 0.25
+
+# A stored-symbol filename stem must look like an IDX ticker; anything else in
+# the store directory is not a symbol file and is ignored.
+_SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,8}$")
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +380,39 @@ def _empty_is_stale(
     return None
 
 
+def discover_store_symbols(store_dir: str) -> list[str]:
+    """Valid symbols with a ``<SYMBOL>.parquet`` file under store_dir, sorted.
+
+    Files whose stem is not a plausible ticker are ignored (with a warning when
+    they are parquet files, so a stray file is visible rather than silent).
+    """
+    if not os.path.isdir(store_dir):
+        return []
+    symbols: list[str] = []
+    for fname in os.listdir(store_dir):
+        stem, ext = os.path.splitext(fname)
+        if ext != ".parquet":
+            continue
+        if _SYMBOL_RE.match(stem):
+            symbols.append(stem)
+        else:
+            logger.warning("Ignoring non-symbol parquet file in store: %r", fname)
+    return sorted(symbols)
+
+
+def incremental_start(existing: pd.DataFrame | None, full_start: str) -> str:
+    """Start date for an incremental fetch: last stored date - overlap.
+
+    Falls back to ``full_start`` when there is no stored history, and never
+    reaches earlier than ``full_start``.
+    """
+    if existing is None or existing.empty or _DEDUP_COL not in existing.columns:
+        return full_start
+    last = max(existing[_DEDUP_COL])
+    start = str(last - datetime.timedelta(days=INCREMENTAL_OVERLAP_DAYS))
+    return max(start, full_start)
+
+
 # ---------------------------------------------------------------------------
 # Public snapshot API
 # ---------------------------------------------------------------------------
@@ -376,9 +425,21 @@ def snapshot_daily(
     end: str | None = None,
     divergence_epsilon: float = DEFAULT_DIVERGENCE_EPSILON,
     calendar: MarketCalendar = CALENDAR,
+    incremental: bool = False,
+    request_delay: float = 0.0,
+    on_result: Callable[[int, int, DailyAccrualSummary], None] | None = None,
 ) -> dict[str, DailyAccrualSummary]:
     """
     Pull daily history for each symbol and merge-dedup into the store.
+
+    incremental:   when True, symbols that already have stored bars are fetched
+                    from (last stored date - INCREMENTAL_OVERLAP_DAYS). If the
+                    overlap shows a corporate-action divergence (back-adjusted
+                    history no longer matches what is stored), that symbol is
+                    re-fetched in FULL so the whole history stays consistent.
+    request_delay: seconds slept between symbols (not after the last).
+    on_result:     called as (index, total, summary) after each symbol; one
+                    symbol's failure never stops the rest.
 
     Parameters
     ----------
@@ -402,74 +463,114 @@ def snapshot_daily(
 
     summaries: dict[str, DailyAccrualSummary] = {}
 
-    for symbol in symbols:
-        existing = _load_existing(symbol, store_dir)
-        rows_before = len(existing) if existing is not None else 0
+    total = len(symbols)
+    for idx, symbol in enumerate(symbols, start=1):
+        if idx > 1 and request_delay > 0:
+            time.sleep(request_delay)
+        summary = _snapshot_one(
+            symbol, store_dir, data_source, start, end, divergence_epsilon, calendar, incremental
+        )
+        summaries[symbol] = summary
+        if on_result is not None:
+            on_result(idx, total, summary)
 
+    return summaries
+
+
+def _snapshot_one(
+    symbol: str,
+    store_dir: str,
+    data_source: Any,
+    start: str,
+    end: str,
+    divergence_epsilon: float,
+    calendar: MarketCalendar,
+    incremental: bool,
+) -> DailyAccrualSummary:
+    """Fetch + merge one symbol. Never raises for fetch problems; returns a failed summary."""
+    existing = _load_existing(symbol, store_dir)
+    rows_before = len(existing) if existing is not None else 0
+    fetch_start = incremental_start(existing, start) if incremental else start
+
+    try:
+        raw = data_source.daily_history(symbol, start=fetch_start, end=end)
+    except Exception as exc:  # noqa: BLE001
+        label = classify_error(exc)
+        logger.error("daily_history(%s) FAILED: %s; store left untouched", symbol, label)
+        return _failed_summary(symbol, existing, rows_before, label)
+
+    fresh = _normalise_daily(raw)
+
+    if fresh.empty:
+        stale = _empty_is_stale(existing, end, calendar)
+        if stale:
+            logger.error("daily_history(%s) FAILED: %s; store left untouched", symbol, stale)
+            return _failed_summary(symbol, existing, rows_before, stale)
+
+    divergences = _detect_divergences(existing, fresh, symbol, divergence_epsilon)
+    if divergences and fetch_start != start:
+        # Back-adjustment seen in the overlap: an incremental merge would leave
+        # pre-overlap history on the old basis. Re-pull everything.
+        logger.warning(
+            "%s: divergence in incremental overlap; re-fetching full history from %s",
+            symbol, start,
+        )
         try:
             raw = data_source.daily_history(symbol, start=start, end=end)
         except Exception as exc:  # noqa: BLE001
             label = classify_error(exc)
-            logger.error("daily_history(%s) FAILED: %s; store left untouched", symbol, label)
-            summaries[symbol] = _failed_summary(symbol, existing, rows_before, label)
-            continue
-
+            logger.error("daily_history(%s) full re-fetch FAILED: %s; store left untouched", symbol, label)
+            return _failed_summary(symbol, existing, rows_before, f"full re-fetch after divergence: {label}")
         fresh = _normalise_daily(raw)
-
         if fresh.empty:
-            stale = _empty_is_stale(existing, end, calendar)
-            if stale:
-                logger.error("daily_history(%s) FAILED: %s; store left untouched", symbol, stale)
-                summaries[symbol] = _failed_summary(symbol, existing, rows_before, stale)
-                continue
-
+            return _failed_summary(symbol, existing, rows_before, "empty response on full re-fetch")
         divergences = _detect_divergences(existing, fresh, symbol, divergence_epsilon)
-        if divergences:
-            logger.warning(
-                "%s: %d stored daily bar(s) disagree with the re-fetched value beyond "
-                "epsilon=%.4f%% — likely a corporate-action back-adjustment (see plan 12 "
-                "§5e). Overwriting with the freshly fetched value; recording to %s",
-                symbol,
-                len(divergences),
-                divergence_epsilon * 100,
-                _divergence_log_path(store_dir),
-            )
-            _append_divergence_log(store_dir, divergences)
-
-        merged = _merge_dedup(existing, fresh)
-
-        if not merged.empty:
-            path = _store_path(symbol, store_dir)
-            try:
-                merged.to_parquet(path, engine=_PARQUET_ENGINE, index=False)
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Failed to write store for %s: %s", symbol, exc)
-
-        rows_after = len(merged)
-        new_rows = max(0, rows_after - rows_before)
-        dr = _date_range(merged)
-
-        summaries[symbol] = DailyAccrualSummary(
-            symbol=symbol,
-            rows_before=rows_before,
-            rows_after=rows_after,
-            new_rows=new_rows,
-            date_range=dr,
-            divergences=divergences,
-        )
-
-        logger.info(
-            "%s: %d → %d rows (+%d new), %s – %s%s",
+    if divergences:
+        logger.warning(
+            "%s: %d stored daily bar(s) disagree with the re-fetched value beyond "
+            "epsilon=%.4f%% — likely a corporate-action back-adjustment (see plan 12 "
+            "§5e). Overwriting with the freshly fetched value; recording to %s",
             symbol,
-            rows_before,
-            rows_after,
-            new_rows,
-            dr[0],
-            dr[1],
-            f" [{len(divergences)} DIVERGENCE(S)]" if divergences else "",
+            len(divergences),
+            divergence_epsilon * 100,
+            _divergence_log_path(store_dir),
         )
+        _append_divergence_log(store_dir, divergences)
 
-    return summaries
+    merged = _merge_dedup(existing, fresh)
+
+    if not merged.empty:
+        path = _store_path(symbol, store_dir)
+        try:
+            merged.to_parquet(path, engine=_PARQUET_ENGINE, index=False)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to write store for %s: %s", symbol, exc)
+            return _failed_summary(symbol, existing, rows_before, f"write failed: {type(exc).__name__}")
+
+    rows_after = len(merged)
+    new_rows = max(0, rows_after - rows_before)
+    dr = _date_range(merged)
+
+    summary = DailyAccrualSummary(
+        symbol=symbol,
+        rows_before=rows_before,
+        rows_after=rows_after,
+        new_rows=new_rows,
+        date_range=dr,
+        divergences=divergences,
+    )
+
+    logger.info(
+        "%s: %d → %d rows (+%d new), %s – %s%s",
+        symbol,
+        rows_before,
+        rows_after,
+        new_rows,
+        dr[0],
+        dr[1],
+        f" [{len(divergences)} DIVERGENCE(S)]" if divergences else "",
+    )
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -602,6 +703,44 @@ def _build_live_data_source(bearer_token: str | None = None) -> Any:
     return LiveDataSource(bearer_token=token)
 
 
+def _progress_line(idx: int, total: int, s: DailyAccrualSummary) -> str:
+    prefix = f"[{idx}/{total}] {s.symbol}"
+    if s.failed:
+        return f"{prefix} FAILED - {s.error}"
+    div = f" [{len(s.divergences)} DIVERGENCE(S)]" if s.divergences else ""
+    if s.new_rows > 0 or s.divergences:
+        return f"{prefix} ok (+{s.new_rows} bars){div}"
+    return f"{prefix} unchanged"
+
+
+def _refresh_all_stored(args: argparse.Namespace) -> int:
+    """Refresh every stored symbol; returns the process exit code (1 if any failed)."""
+    symbols = discover_store_symbols(args.store_dir)
+    if not symbols:
+        print(f"No stored symbols found under {args.store_dir}; nothing to refresh "
+              f"(use --symbols to seed the store).")
+        return 2
+    ds = _build_live_data_source(bearer_token=args.bearer_token)
+    print(f"Refreshing {len(symbols)} stored symbols from {args.store_dir} "
+          f"({'full' if args.full else 'incremental'}, {REQUEST_DELAY_SECONDS}s between requests)")
+    summaries = snapshot_daily(
+        symbols, store_dir=args.store_dir, data_source=ds, start=args.start, end=args.end,
+        incremental=not args.full, request_delay=REQUEST_DELAY_SECONDS,
+        on_result=lambda i, n, s: print(_progress_line(i, n, s), flush=True),
+    )
+    failed = {sym: s for sym, s in summaries.items() if s.failed}
+    refreshed = [s for s in summaries.values() if not s.failed and (s.new_rows > 0 or s.divergences)]
+    unchanged = len(summaries) - len(failed) - len(refreshed)
+    print(f"Summary: refreshed: {len(refreshed)}, unchanged: {unchanged}, failed: {len(failed)}")
+    for sym, s in sorted(failed.items()):
+        print(f"  FAILED {sym}: {s.error} (store untouched, last bar {s.date_range[1]})")
+    diverged = [s.symbol for s in summaries.values() if s.divergences]
+    if diverged:
+        print(f"  Divergences (corporate-action rewrites) in: {', '.join(diverged)} "
+              f"- see {_divergence_log_path(args.store_dir)}")
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> None:
     """
     CLI entrypoint: python -m screener.daily_store {snapshot,status} [options]
@@ -618,13 +757,26 @@ def main(argv: list[str] | None = None) -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     snap = sub.add_parser("snapshot", help="Pull and merge daily bars for symbols")
-    snap.add_argument(
+    target = snap.add_mutually_exclusive_group(required=True)
+    target.add_argument(
         "--symbols",
-        required=True,
         help=(
             "Comma-separated ticker list. No default — the daily-fit survivor set "
             "is decided by backtest results, not hardcoded here."
         ),
+    )
+    target.add_argument(
+        "--all-stored",
+        action="store_true",
+        help=(
+            "Refresh every symbol already in --out-dir (from <SYMBOL>.parquet names). "
+            "Incremental by default; per-symbol failures are summarised and exit non-zero."
+        ),
+    )
+    snap.add_argument(
+        "--full",
+        action="store_true",
+        help="With --all-stored: fetch full history for every symbol instead of incrementally",
     )
     snap.add_argument(
         "--out-dir",
@@ -670,10 +822,13 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     if args.command == "snapshot":
+        if args.all_stored:
+            sys.exit(_refresh_all_stored(args))
         symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
         ds = _build_live_data_source(bearer_token=args.bearer_token)
         summaries = snapshot_daily(
-            symbols, store_dir=args.store_dir, data_source=ds, start=args.start, end=args.end
+            symbols, store_dir=args.store_dir, data_source=ds, start=args.start, end=args.end,
+            request_delay=REQUEST_DELAY_SECONDS,
         )
         for sym, s in summaries.items():
             if s.failed:

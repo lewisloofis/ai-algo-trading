@@ -9,10 +9,11 @@
 #   make sbcap ARGS="stat segments/dt=2026-06-17/default/seg-044221.binpb.zst"
 #   make test
 #   make dashboard
+#   make refresh-prices
 #   make publish-dashboard
 #   make clean
 
-.PHONY: build build-linux-arm64 collect sbcap test dashboard publish-dashboard recon clean
+.PHONY: build build-linux-arm64 collect sbcap test dashboard refresh-prices publish-dashboard recon clean
 
 build:
 	mkdir -p $(CURDIR)/bin
@@ -88,6 +89,20 @@ recon:
 		--manual-trades $(CURDIR)/runs/manual_trades.json \
 		--broker-ledger $(CURDIR)/runs/broker_trades.json \
 		--out-dir $(CURDIR)/runs/recon
+
+# refresh-prices refreshes the daily price history of EVERY symbol already in
+# research/data/daily (incremental: only from ~10 days before each symbol's last
+# stored bar; a corporate-action rewrite triggers a full re-pull of that symbol).
+# One bad symbol does not stop the rest; a summary lists failures and the target
+# exits non-zero if any failed. Needs SB_BEARER_TOKEN in the environment; this
+# target never reads .env.local itself and never prints the token:
+#   set -a && source .env.local && set +a && make refresh-prices
+# Pass extra flags with REFRESH_ARGS="--full".
+REFRESH_ARGS ?=
+
+refresh-prices:
+	@test -n "$$SB_BEARER_TOKEN" || { echo "refresh-prices: SB_BEARER_TOKEN is not set (set -a && source .env.local && set +a)"; exit 2; }
+	cd research && $(DASH_PY) -m screener.daily_store snapshot --all-stored --out-dir data/daily $(REFRESH_ARGS)
 
 # publish-dashboard copies the built site to S3 beside the market data, so it is
 # readable without the laptop that generated it (plan-19 Stage 6, optional).
