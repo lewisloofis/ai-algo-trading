@@ -567,8 +567,8 @@ no effect on routing, as `strategy/live/doc.go` already warned.
   refused at baseline because the token was rejected (401/403). The 15:00 run
   reused the same store and died on `UNIQUE constraint failed: decision.seq`:
   every run needs its own `--store` file.
-- [ ] Add a pre-flight guard to `strategy-run`: refuse to arm unless the
-      token's `acn` equals `--account`.
+- [x] Add a pre-flight guard to `strategy-run`: refuse to arm unless the
+      token's `acn` equals `--account`. Done in `2f607e1`.
 - [x] Re-run §10 under that guard (below).
 
 **§10 re-run, 15:13 WIB: ANSWERED, the sleeve has no limit of its own.**
@@ -598,3 +598,39 @@ submission is not written to `order_reject`, which today only captures
 `Submit` errors. The store shows this order as attempted with 0 fills and
 nothing else. The live poller should record a post-submission REJECTED status,
 with its reason, as a reject row.
+Fixed in `a641a2a`; this has not yet been observed against a real rejection.
+
+## 15. Execution log — 2026-10-14 (Wed): GOTO round trip, leg 1 (buy) — real-fill session 2
+
+**Result: CLEAN FILL in `008488L`.** This is B1 real-fill session 2 of 3, and
+the first fill made with the `data.acn` guard in place.
+
+- **Gate.** `market-probe --symbols GOTO --price 28` returned ALLOW (ARB 23,
+  ARA 36). The first attempt was DENY because `market_open` got 401/403:
+  `SB_ACCESS_TOKEN` (the main/Exodus session, used for `market-time`) had
+  expired, while the trading token was fine. Refreshing it fixed the gate.
+- **Pre-snapshot.** Reused `runs/2026-10-14-bbri-pre-008488L.json` (MATCH, 0
+  symbols). Nothing in the sleeve had changed since the BBRI probe, which did
+  not fill.
+- **Run.** `strategy-run --strategy rebalance --target-portfolio
+  runs/target_roundtrip_buy_2026-10-14.json` (strategy_id `roundtrip-goto`,
+  GOTO weight 1, base notional 4,000), `--limit-price-idr 28 --rebalance-at
+  15:38`, store `runs/2026-10-14-roundtrip-buy.db`, run
+  `20261014T083758Z-0fce0610`. The guard logged that the token account matches
+  `--account`.
+  - 15:38:00 WIB: intent `rebalance-GOTO-2026-10-14`, buy 1 lot @ 28.
+  - 15:38:01: **fill**, 1 lot @ 28, fee 4 IDR, 0.0 bps slippage. `order_reject`
+    is empty.
+  - Ctrl-C at 15:38:37, outcome `complete`.
+- **Post-reconcile.** `runs/2026-10-14-post-008488L.json` is a **MATCH**: 1
+  broker symbol, 1 store symbol, no divergences. The operator confirmed in the
+  app that the main account "LEWIS" (`0001958`) did not change.
+
+**Leg 2 is the sell to zero on Thu 2026-10-15, Session 1** (commands in
+`runs/2026-10-15-roundtrip-sell-commands.md`).
+- Target GOTO weight 0, with `--prior-stores 'runs/2026-10-1[45]-roundtrip-*.db'`
+  so the bot starts out holding 1 lot.
+- It cannot happen today. Rebalance makes one order per (day, symbol), and
+  `rebalance-GOTO-2026-10-14` with its deterministic ui_ref is already used.
+- It is real-fill session 3 and the first live sell-to-zero by the bot, the
+  last two B4 gates.
