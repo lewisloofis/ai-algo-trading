@@ -82,4 +82,12 @@
 // routing is Carina's choice by some means not yet identified, and it must be
 // re-confirmed by a both-account snapshot diff every live session until it
 // is.
+//
+// Resolved in part, 2026-10-14: a trading token minted under the main account
+// routed a 16.6M order to 0001958 despite --account 008488L. Routing follows
+// the token's own data.acn claim (the JWT payload), not anything the client
+// sends. cmd/strategy-run now reads that claim with TokenAccount (tokenaccount.go,
+// signature not verified) and refuses to arm a live sink when it differs from
+// --account. The both-account snapshot diff after each live session still
+// stands as the independent check.
 package live

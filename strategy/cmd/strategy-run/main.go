@@ -169,6 +169,15 @@ func run() error {
 	if riskGated && tradingToken == "" {
 		return fmt.Errorf("--source live requires SB_TRADING_ACCESS_TOKEN in the environment (used by the market gate, and by order routing itself when --sink live)")
 	}
+	// Orders route by the trading token's own account claim, not --account
+	// (docs/runbooks/first-live-order.md §14). Refuse before the strategy, store,
+	// run row or any sink exists, so no order can be placed against a mismatch.
+	if *sinkName == "live" {
+		if err := checkTokenAccount(tradingToken, *account); err != nil {
+			return err
+		}
+		log.Printf("live: trading token account %s matches --account", strings.TrimSpace(*account))
+	}
 
 	var priorState *priorStateConfig
 	if *priorStores != "" {
@@ -854,4 +863,21 @@ func parsePacing(s string) (engine.PacingMode, error) {
 	default:
 		return 0, fmt.Errorf("unknown pacing %q: want fast|paced", s)
 	}
+}
+
+// checkTokenAccount refuses to arm a live run when the trading token routes
+// to a different account than --account. Carina order requests carry no
+// account field, so the token's data.acn claim is the only thing that decides
+// where an order lands. The signature is not verified (routing-safety check
+// only). Error text never includes the token.
+func checkTokenAccount(token, account string) error {
+	acn, err := live.TokenAccount(token)
+	if err != nil {
+		return fmt.Errorf("refusing to arm: cannot determine the trading token's account: %w", err)
+	}
+	want := strings.TrimSpace(account)
+	if acn != want {
+		return fmt.Errorf("refusing to arm: trading token is for account %q but --account is %q; orders route by the token's account, not --account (runbook §14)", acn, want)
+	}
+	return nil
 }

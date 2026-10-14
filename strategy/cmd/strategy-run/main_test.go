@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -648,5 +650,27 @@ func TestLoadPriorState_RefusesFillsUnderAnotherAccount(t *testing.T) {
 
 	if _, _, err := loadPriorState(filepath.Join(dir, "*.db"), "s", "live", "TEST-SLEEVE"); err == nil {
 		t.Fatal("loadPriorState accepted a prior store whose fills are under another account")
+	}
+}
+
+func tokenForAccount(acn string) string {
+	payload := `{"data":{"acn":"` + acn + `"}}`
+	return "h." + base64.RawURLEncoding.EncodeToString([]byte(payload)) + ".s"
+}
+
+func TestCheckTokenAccount(t *testing.T) {
+	if err := checkTokenAccount(tokenForAccount("TEST01"), " TEST01 "); err != nil {
+		t.Fatalf("match: %v", err)
+	}
+	err := checkTokenAccount(tokenForAccount("MAIN01"), "TEST01")
+	if err == nil || !strings.Contains(err.Error(), `"MAIN01"`) || !strings.Contains(err.Error(), `"TEST01"`) {
+		t.Fatalf("mismatch err = %v", err)
+	}
+	err = checkTokenAccount("garbage", "TEST01")
+	if !errors.Is(err, live.ErrTokenAccountUnknown) {
+		t.Fatalf("unknown err = %v", err)
+	}
+	if strings.Contains(err.Error(), "garbage") {
+		t.Fatal("error leaks token")
 	}
 }
