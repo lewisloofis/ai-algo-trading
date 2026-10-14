@@ -13,12 +13,13 @@ import (
 // strategy/live, which plugs into this exact seam (plan 18 §5 B4) but is
 // built separately.
 type fakeAsyncSink struct {
-	fillsCh chan AsyncFill
-	kind    string
+	fillsCh   chan AsyncFill
+	rejectsCh chan AsyncReject
+	kind      string
 }
 
 func newFakeAsyncSink(kind string) *fakeAsyncSink {
-	return &fakeAsyncSink{fillsCh: make(chan AsyncFill), kind: kind}
+	return &fakeAsyncSink{fillsCh: make(chan AsyncFill), rejectsCh: make(chan AsyncReject), kind: kind}
 }
 
 func (s *fakeAsyncSink) Submit(ctx context.Context, intent OrderIntent) (OrderID, error) {
@@ -29,6 +30,9 @@ func (s *fakeAsyncSink) Cancel(ctx context.Context, id OrderID) error { return n
 
 // Fills implements asyncSink.
 func (s *fakeAsyncSink) Fills() <-chan AsyncFill { return s.fillsCh }
+
+// Rejects implements asyncRejecter.
+func (s *fakeAsyncSink) Rejects() <-chan AsyncReject { return s.rejectsCh }
 
 // SinkKind implements sinkKinder.
 func (s *fakeAsyncSink) SinkKind() string { return s.kind }

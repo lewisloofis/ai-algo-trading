@@ -217,3 +217,23 @@ type AsyncFill struct {
 	RecvNs int64
 	Fill   FillRecord
 }
+
+// AsyncReject is a broker rejection that arrives AFTER Submit already
+// returned success — a live order router whose order was accepted at
+// submission and then rejected by the broker/exchange moments later (e.g.
+// "[C-006] insufficient trading balance", 2026-10-14). Run records it in
+// order_reject exactly like a synchronous Submit error, so a reader joining
+// order_intent to order_reject sees "attempted, never placed" either way.
+//
+// OrderID is the client order id (OrderIntent.OrderID), never the broker's.
+// Reason must be the broker's human-readable text and must never carry a
+// token or header. RecvNs is when the rejection was observed.
+type AsyncReject struct {
+	OrderID  string
+	Symbol   string
+	Side     string // "buy" or "sell"
+	PriceIDR int64
+	Lots     int
+	Reason   string
+	RecvNs   int64
+}

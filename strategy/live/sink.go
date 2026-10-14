@@ -65,6 +65,7 @@ type Sink struct {
 	draining bool                     // set by Drain; Submit refuses new orders
 
 	fills     chan engine.AsyncFill
+	rejects   chan engine.AsyncReject
 	done      chan struct{}
 	closeOnce sync.Once
 	wg        sync.WaitGroup
@@ -85,6 +86,12 @@ type trackedOrder struct {
 	// to it only once the matching fill is handed off on Fills(), so
 	// LotsFilled < brokerLotDone means a fill is still in flight (Drain).
 	brokerLotDone int
+	// rejectQueued latches once a REJECTED transition has been queued for
+	// delivery (so it is emitted exactly once, not on every poll);
+	// rejectDelivered is set once it was handed off on Rejects(). Drain
+	// treats queued-but-undelivered as unsettled.
+	rejectQueued    bool
+	rejectDelivered bool
 }
 
 // Options configures NewSink. Only Client is required; every other field
@@ -148,6 +155,7 @@ func NewSink(opts Options) (*Sink, error) {
 		uiRefs:       make(map[string]string),
 		baseline:     make(map[string]struct{}),
 		fills:        make(chan engine.AsyncFill),
+		rejects:      make(chan engine.AsyncReject),
 		done:         make(chan struct{}),
 	}, nil
 }
@@ -162,6 +170,11 @@ func (s *Sink) SinkKind() string { return "live" }
 // engine.Run's select, which is exactly the paper-sink behaviour of "no
 // async fills are coming".
 func (s *Sink) Fills() <-chan engine.AsyncFill { return s.fills }
+
+// Rejects returns the channel AsyncRejects are delivered on: one per order
+// that Carina accepted at submission and then moved to REJECTED. Closed by
+// Close alongside Fills. Implements engine's optional asyncRejecter.
+func (s *Sink) Rejects() <-chan engine.AsyncReject { return s.rejects }
 
 // Submit places req as a regular day limit order and returns the CLIENT
 // order id (intent.OrderID) — see this package's doc comment for why that,
@@ -401,6 +414,7 @@ func (s *Sink) Close() error {
 		close(s.done)
 		s.wg.Wait()
 		close(s.fills)
+		close(s.rejects)
 	})
 	return nil
 }

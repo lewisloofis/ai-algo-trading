@@ -58,6 +58,15 @@ type asyncSink interface {
 	Fills() <-chan AsyncFill
 }
 
+// asyncRejecter is an OPTIONAL companion to asyncSink: implemented by sinks
+// that learn of a broker rejection only after Submit returned success. Run
+// records each AsyncReject as an order_reject row. A sink that does not
+// implement it yields a nil channel, which is never ready in a select —
+// the same no-special-case treatment as fills.
+type asyncRejecter interface {
+	Rejects() <-chan AsyncReject
+}
+
 // sinkKinder is implemented by a sink that names itself for the store's
 // sink_kind column (see IntentRow.SinkKind). A sink that does not implement
 // it — PaperSink, and every sink that predates this interface — records
@@ -147,19 +156,7 @@ func (h *engineHandle) SubmitOrder(ctx context.Context, intent OrderIntent) (Ord
 		// PaperSink) ErrNoBook. Before this table existed, that reason lived
 		// only in the returned error, which a caller could drop on the
 		// floor; see RejectRow's doc comment.
-		st.seq++
-		if rejErr := h.store.InsertOrderReject(RejectRow{
-			Seq:        st.seq,
-			RecvNs:     h.recvNs,
-			StrategyID: h.stratID,
-			Symbol:     intent.Symbol,
-			Side:       intent.Side,
-			PriceIDR:   intent.PriceIDR,
-			Lots:       intent.Lots,
-			OrderID:    intent.OrderID,
-			Reason:     err.Error(),
-			SinkKind:   h.sinkKind,
-		}); rejErr != nil {
+		if rejErr := h.recordReject(intent.Symbol, intent.Side, intent.PriceIDR, intent.Lots, intent.OrderID, err.Error()); rejErr != nil {
 			return "", fmt.Errorf("submit order: sink rejected (%w) and recording the rejection also failed: %v", err, rejErr)
 		}
 		return "", err
@@ -177,6 +174,30 @@ func (h *engineHandle) SubmitOrder(ctx context.Context, intent OrderIntent) (Ord
 	}
 	return id, nil
 }
+
+// recordReject writes one order_reject row, bumping the run's seq. It is the
+// single implementation behind both the synchronous Submit-error path and
+// Run's asynchronous Rejects() path.
+func (h *engineHandle) recordReject(symbol, side string, priceIDR int64, lots int, orderID, reason string) error {
+	st := h.state
+	st.seq++
+	return h.store.InsertOrderReject(RejectRow{
+		Seq:        st.seq,
+		RecvNs:     h.recvNs,
+		StrategyID: h.stratID,
+		Symbol:     symbol,
+		Side:       side,
+		PriceIDR:   priceIDR,
+		Lots:       lots,
+		OrderID:    orderID,
+		Reason:     reason,
+		SinkKind:   h.sinkKind,
+	})
+}
+
+// asyncRejectReasonPrefix marks an order_reject row as a post-submission
+// broker rejection, distinguishing it from a Submit-time refusal.
+const asyncRejectReasonPrefix = "broker rejected after submit: "
 
 // applyFill records one execution — counters, the fill row, attribution
 // pairing, and the Strategy.OnFill callback — and is the single
@@ -317,6 +338,12 @@ func Run(ctx context.Context, src <-chan MarketEvent, strat Strategy, sink Order
 		fills = as.Fills()
 	}
 
+	// rejects mirrors fills: nil unless the sink implements asyncRejecter.
+	var rejects <-chan AsyncReject
+	if ar, ok := sink.(asyncRejecter); ok {
+		rejects = ar.Rejects()
+	}
+
 	newHandle := func(recvNs int64) *engineHandle {
 		return &engineHandle{
 			sink:     sink,
@@ -352,6 +379,18 @@ func Run(ctx context.Context, src <-chan MarketEvent, strat Strategy, sink Order
 				return finalize(st), err
 			}
 			st.publish(af.RecvNs)
+
+		case ar, ok := <-rejects:
+			if !ok {
+				// Closed on sink shutdown; like fills, not the run ending.
+				rejects = nil
+				continue
+			}
+			h := newHandle(ar.RecvNs)
+			if err := h.recordReject(ar.Symbol, ar.Side, ar.PriceIDR, ar.Lots, ar.OrderID, asyncRejectReasonPrefix+ar.Reason); err != nil {
+				return finalize(st), err
+			}
+			st.publish(ar.RecvNs)
 
 		case evt, ok := <-src:
 			if !ok {

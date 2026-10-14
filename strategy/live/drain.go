@@ -21,7 +21,8 @@ const drainCheckInterval = 100 * time.Millisecond
 // Drain is the operator-stop path (SIGINT/SIGTERM): refuse new submissions,
 // cancel every order still resting, and wait until each order this Sink
 // placed is settled — terminal at the broker AND every lot the broker
-// reports done already handed off on Fills(). The poller must still be
+// reports done already handed off on Fills(), and any REJECTED notice
+// handed off on Rejects(). The poller must still be
 // running (Start's context not yet cancelled) and engine.Run must still be
 // reading Fills(), or nothing can settle; stop both only after Drain
 // returns.
@@ -68,7 +69,7 @@ func (s *Sink) drainStatus(cancelled map[string]bool) (unsettled, toCancel []str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, t := range s.orders {
-		if IsTerminal(t.State) && t.LotsFilled >= t.brokerLotDone {
+		if IsTerminal(t.State) && t.LotsFilled >= t.brokerLotDone && (!t.rejectQueued || t.rejectDelivered) {
 			continue
 		}
 		unsettled = append(unsettled, id)

@@ -28,6 +28,13 @@ type pendingFill struct {
 	matchedIDR float64
 }
 
+// pendingReject is a REJECTED transition observed during pollOnce's locked
+// pass, queued for delivery on s.rejects after the lock is released.
+type pendingReject struct {
+	reject   engine.AsyncReject
+	clientID string
+}
+
 func (s *Sink) pollLoop(ctx context.Context) {
 	defer s.wg.Done()
 	ticker := time.NewTicker(s.pollInterval)
@@ -65,6 +72,7 @@ func (s *Sink) pollOnce(ctx context.Context) {
 	now := s.clock()
 	var toEmit []pendingFill
 	var toCancel []pendingCancel
+	var toReject []pendingReject
 
 	s.mu.Lock()
 	for _, snap := range orders {
@@ -76,6 +84,9 @@ func (s *Sink) pollOnce(ctx context.Context) {
 		if pf, emit := s.applySnapshot(t, snap, now); emit {
 			pf.clientID = clientID
 			toEmit = append(toEmit, pf)
+		}
+		if pr, emit := s.rejectFor(clientID, t, snap, now); emit {
+			toReject = append(toReject, pr)
 		}
 	}
 	for clientID, t := range s.orders {
@@ -103,6 +114,22 @@ func (s *Sink) pollOnce(ctx context.Context) {
 			if t, ok := s.orders[pf.clientID]; ok {
 				t.LotsFilled = pf.lotsFilled
 				t.MatchedAmountIDR = pf.matchedIDR
+			}
+			s.mu.Unlock()
+		case <-ctx.Done():
+			return
+		case <-s.done:
+			return
+		}
+	}
+	// Rejects are delivered the same way: handed off outside the lock, and
+	// marked delivered (for Drain) only once the send succeeded.
+	for _, pr := range toReject {
+		select {
+		case s.rejects <- pr.reject:
+			s.mu.Lock()
+			if t, ok := s.orders[pr.clientID]; ok {
+				t.rejectDelivered = true
 			}
 			s.mu.Unlock()
 		case <-ctx.Done():
@@ -209,6 +236,34 @@ func (s *Sink) applySnapshot(t *trackedOrder, snap Snapshot, now time.Time) (pen
 	t.UpdatedAt = now
 
 	return pf, emit
+}
+
+// rejectFor reports the AsyncReject to emit when t has just been observed in
+// StateRejected, exactly once per order (rejectQueued latches). The reason is
+// Snapshot.Message — Carina's human-readable IDX/broker text on a REJECTED
+// row (docs/reference/04-order-lifecycle.md §5, §7.4) — falling back to
+// status_text when it is empty. Caller must hold mu.
+func (s *Sink) rejectFor(clientID string, t *trackedOrder, snap Snapshot, now time.Time) (pendingReject, bool) {
+	if t.State != StateRejected || t.rejectQueued {
+		return pendingReject{}, false
+	}
+	t.rejectQueued = true
+	reason := snap.Message
+	if reason == "" {
+		reason = snap.StatusText
+	}
+	return pendingReject{
+		clientID: clientID,
+		reject: engine.AsyncReject{
+			OrderID:  clientID,
+			Symbol:   t.Symbol,
+			Side:     t.Side,
+			PriceIDR: t.DecisionPriceIDR,
+			Lots:     t.LotsRequested,
+			Reason:   reason,
+			RecvNs:   now.UnixNano(),
+		},
+	}, true
 }
 
 // marginalFillPriceIDR derives the price of the newest deltaLots-lot
