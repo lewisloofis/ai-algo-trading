@@ -49,7 +49,7 @@ type positionGateResult struct {
 // that cannot be read is always an error; --allow-position-mismatch overrides
 // a mismatch only, never an unreadable broker.
 func runPositionGate(ctx context.Context, cfg positionGateConfig, src recon.PortfolioSource) (positionGateResult, error) {
-	paths, err := recon.ResolveStorePaths([]string{cfg.priorStores}, nil)
+	paths, err := recon.ResolveStorePaths(splitGlobs(cfg.priorStores), nil)
 	if err != nil {
 		return positionGateResult{}, fmt.Errorf("position gate: %w", err)
 	}
