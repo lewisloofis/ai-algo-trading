@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from dashboard import svg
+from dashboard.cost_view import cost_section, load_cost_report
 from dashboard.render import Column, banner, colored, esc, fee_money, money, money_exact, page, table
 from dashboard.terms import term_link
 from dashboard.trades_data import OrderLine
@@ -205,6 +206,7 @@ def render(d) -> str:
         + "<h2>Real-money orders</h2>"
         + table(COLS, live_rows, empty="No real-money orders yet.")
         + _reconciliation(d)
+        + cost_section(load_cost_report(d.options.research_dir))
         + "<h2>Refused or failed orders</h2>"
         + '<p class="small">Orders the broker or the bot\'s safety limits turned down, in plain words.</p>'
         + table(REJECT_COLS, [_reject_row(x) for x in refused if x.sink_kind == "live"] +

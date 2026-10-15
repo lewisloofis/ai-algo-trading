@@ -104,3 +104,4 @@ htmlcov/
 *.swp
 *~
 tools/universe-snapshot.pyz
+research/out_cost_report/
