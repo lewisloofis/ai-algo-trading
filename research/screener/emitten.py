@@ -47,22 +47,14 @@ _HEADERS = {
 
 def build_ssl_context() -> ssl.SSLContext:
     """
-    SSL context for outbound API requests.
-
-    ``SB_INSECURE_TLS=1`` disables verification (only behind a trusted MITM
-    proxy); ``SB_CA_BUNDLE=<path>`` supplies custom roots.  Verification stays
-    ON in every branch but the first.
+    SSL context for outbound API requests — the same builder the chartbit path
+    uses, so ``SB_INSECURE_TLS`` / ``SB_CA_BUNDLE`` behave identically and an
+    empty interpreter trust store (bare macOS venv / python.org build) falls
+    back to the certifi bundle instead of failing with CERTIFICATE_VERIFY_FAILED.
     """
-    if os.environ.get("SB_INSECURE_TLS", "").lower() in ("1", "true", "yes"):
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        logger.warning("SB_INSECURE_TLS set — TLS verification DISABLED")
-        return ctx
-    ca = os.environ.get("SB_CA_BUNDLE")
-    if ca:
-        return ssl.create_default_context(cafile=ca)
-    return ssl.create_default_context()
+    from screener.screen_universe import _build_ssl_context  # local: avoid import cycle
+
+    return _build_ssl_context()
 
 
 class ClassificationError(RuntimeError):
