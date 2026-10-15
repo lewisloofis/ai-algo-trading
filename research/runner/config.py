@@ -11,8 +11,7 @@ from typing import Any, Mapping, Optional
 WIB = timezone(timedelta(hours=7))
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-ACCESS_TOKEN_ENV = "SB_ACCESS_TOKEN"          # market data: paper-day
-BEARER_TOKEN_ENV = "SB_BEARER_TOKEN"          # chartbit/emitten: refresh-prices
+ACCESS_TOKEN_ENV = "SB_ACCESS_TOKEN"          # market data, chartbit, emitten: paper-day, refresh-prices
 TRADING_TOKEN_ENV = "SB_TRADING_ACCESS_TOKEN"  # recon only (read-only towards the broker)
 ACCOUNT_ENV = "SB_ACCOUNT_NO"                 # recon only
 TELEGRAM_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"

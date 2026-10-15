@@ -25,7 +25,7 @@ Usage (from the research/ directory)::
     python -m lib.calendar_reconcile --symbols BBRI,BBCA,TLKM --json
 
 Requirements:
-    SB_BEARER_TOKEN env var must be set (same as screen_universe.py LiveDataSource).
+    SB_ACCESS_TOKEN env var must be set (same as screen_universe.py LiveDataSource).
 """
 from __future__ import annotations
 
@@ -110,13 +110,13 @@ def _fetch_observed_dates(
             f"Original error: {exc}"
         ) from exc
 
-    token = os.environ.get("SB_BEARER_TOKEN")
+    token = os.environ.get("SB_ACCESS_TOKEN")
     if not token:
         raise EnvironmentError(
-            "SB_BEARER_TOKEN env var must be set to fetch live data from chartbit.\n"
+            "SB_ACCESS_TOKEN env var must be set to fetch live data from chartbit.\n"
             "Obtain a bearer token via the Stockbit auth flow (see docs/auth/) and "
             "export it before running this script:\n\n"
-            "    export SB_BEARER_TOKEN=<your_token>"
+            "    export SB_ACCESS_TOKEN=<your_token>"
         )
 
     ds = LiveDataSource(bearer_token=token)

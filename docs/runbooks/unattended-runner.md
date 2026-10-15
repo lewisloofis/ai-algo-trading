@@ -18,7 +18,7 @@ reuses them in-process. The Go side is reached only through `paper_day` (which b
 |---|---|---|
 | 08:45 | `runner morning` | **token rotation** (below), **preflight**, then the **summary push** (`ARMED: <id>, max <n> IDR` or `not armed`, plus what each strategy will do), then **start**, then **watch** |
 | 08:45 | token rotation | on a trading day, if `.env.local` exists and `--no-env-file` is not given: `token_rotation.ensure_tokens(.env.local)` refreshes sessions with < 12h left (network, rewrites `.env.local`), and the new values are applied to the runner's in-memory env so every later phase and child uses them. **INFO** (log only) names the tokens rotated, never values; **ALERT** `token rotation: ACTION REQUIRED` for each manual step; **WARN** for warnings. A crash in the rotation is an ALERT and never stops the run: preflight then judges whatever tokens exist and still fails closed. A dry run shows the step and does not call it |
-| 08:45 | preflight | trading day (repo calendar); previous session's daily bar present, not a zero-volume placeholder, for every paper spec's symbols; `SB_ACCESS_TOKEN` present and not expiring within 1.5h; `SB_BEARER_TOKEN` present (warn only); `runs/KILL` absent; strategy binaries present or `go` available. Any failure: alert, skip the day |
+| 08:45 | preflight | trading day (repo calendar); previous session's daily bar present, not a zero-volume placeholder, for every paper spec's symbols; `SB_ACCESS_TOKEN` present and not expiring within 1.5h; `runs/KILL` absent; strategy binaries present or `go` available. Any failure: alert, skip the day |
 | right after | start | `make build-strategy`, then `python -m strategy_fit.paper_day --strategy <id>` for each spec with status `paper` (emit target + `live-session --sink paper --source live`), so it runs before 09:29 |
 | to 09:45 | watch | every 15s: status file stale > 2 min alerts; dead process is restarted only if safe (below); at 09:45 anything still running gets a graceful SIGINT |
 | 16:20 | `runner post-close` | `refresh-prices`, `recon` (only if `SB_ACCOUNT_NO` and `SB_TRADING_ACCESS_TOKEN` are set), `paper-scorecard` per paper strategy, dashboard rebuild (`HEALTHCHECK=skip`), then ONE **review message** (rules over local artefacts + a short summary; see Daily ops review) that carries the day's summary and, if live was armed or ran, the LIVE summary |
@@ -69,7 +69,7 @@ SSM per plan 03) is future work.
 
 ## Environment (presence is checked; values are never printed, logged or hashed)
 
-`SB_ACCESS_TOKEN` (market data, paper), `SB_BEARER_TOKEN` (refresh-prices), optional
+`SB_ACCESS_TOKEN` (market data, chartbit, emitten: paper-day and refresh-prices), optional
 `SB_ACCOUNT_NO` + `SB_TRADING_ACCESS_TOKEN` (recon, read-only; and **required for live**),
 `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`, or `RUNNER_ALERT_WEBHOOK_URL` as fallback. Token expiry
 is read from the JWT `exp` claim in-process and only ever shown as "expires in 3.2h". A token that
@@ -90,7 +90,7 @@ make token-ensure      # rotate only if < TOKEN_MIN_HOURS (12) left; what the ru
 ```
 
 One-time seed: `.env.local` must contain `SB_REFRESH_TOKEN` (main session) alongside the existing
-`SB_ACCESS_TOKEN`/`SB_BEARER_TOKEN`; optionally `SB_TRADING_REFRESH_TOKEN` (recon) and
+`SB_ACCESS_TOKEN`; optionally `SB_TRADING_REFRESH_TOKEN` (recon) and
 `SB_USERNAME`/`SB_PASSWORD`/`SB_PLAYER_ID` (headless re-login if the refresh token dies; skip these
 to keep the password off disk, at the cost of a manual re-login at refresh-token death).
 

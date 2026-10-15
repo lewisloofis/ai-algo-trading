@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from lib.market_calendar import CALENDAR
 from runner import livereport
-from runner.config import (ACCESS_TOKEN_ENV, BEARER_TOKEN_ENV, TELEGRAM_CHAT_ENV, TELEGRAM_TOKEN_ENV,
+from runner.config import (ACCESS_TOKEN_ENV, TELEGRAM_CHAT_ENV, TELEGRAM_TOKEN_ENV,
                            WEBHOOK_ENV, REVIEWER_ENV, REVIEWER_MODEL_ENV, DEFAULT_REVIEWER_MODEL, Config, at)
 from runner.guard import LiveGuardError, build_live_command
 from runner.modes import LIVE as MODE_LIVE
@@ -64,7 +64,7 @@ def build_plan(cfg: Config, day: date, calendar=CALENDAR, now: Optional[datetime
                  "A dry run does not call it.")
     lines.append(f"  {cfg.preflight_at}  preflight: trading day; previous bar ({calendar.prev_trading_day(day)}) complete for "
                  f"{', '.join(symbols) or '-'}; "
-                 f"env presence ({_presence(cfg, ACCESS_TOKEN_ENV)}, {_presence(cfg, BEARER_TOKEN_ENV)}); "
+                 f"env presence ({_presence(cfg, ACCESS_TOKEN_ENV)}); "
                  f"token expiry (hours only); kill switch {cfg.kill_file} absent. Failure: alert, skip the day. "
                  f"A dry run does not run it: the LIVE line below assumes it passes (live-only checks, e.g. the trading token's expiry, are evaluated at that morning's {cfg.preflight_at}).")
     lines.append(f"  {cfg.preflight_at}  summary push: '{day} morning plan: {livereport.arm_status(cfg, day)}' plus one line per strategy")

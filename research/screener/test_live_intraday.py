@@ -164,16 +164,16 @@ def _span_dates(n_days: int, end: _dt.date | None = None) -> list[_dt.date]:
 
 class TestLiveIntradayHistory:
     def test_requires_token(self):
-        """No SB_BEARER_TOKEN and no explicit token → EnvironmentError."""
+        """No SB_ACCESS_TOKEN and no explicit token → EnvironmentError."""
         import os
 
-        saved = os.environ.pop("SB_BEARER_TOKEN", None)
+        saved = os.environ.pop("SB_ACCESS_TOKEN", None)
         try:
             with pytest.raises(EnvironmentError):
                 LiveDataSource()
         finally:
             if saved is not None:
-                os.environ["SB_BEARER_TOKEN"] = saved
+                os.environ["SB_ACCESS_TOKEN"] = saved
 
     def test_paging_stitches_more_than_one_chunk(self, monkeypatch):
         """A > 90-day lookback must issue >= 2 paged requests and stitch them."""

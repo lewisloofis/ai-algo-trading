@@ -140,7 +140,7 @@ else
   echo "snapshot: S3 fetch failed; using cached $DEST" >&2
 fi
 
-# No SB_BEARER_TOKEN here: the token is read from $SSM_PARAM_PREFIX/access,
+# No SB_ACCESS_TOKEN here: the token is read from $SSM_PARAM_PREFIX/access,
 # which the collector rotates. Read-only -- it never touches /refresh, because
 # minting a token would rotate the refresh token and invalidate the collector's
 # own session mid-capture.

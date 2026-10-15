@@ -41,7 +41,7 @@ def texts(post):
 
 
 def fresh_result(now, **kw):
-    vals = {"SB_ACCESS_TOKEN": jwt(now.timestamp() + 30 * 3600), "SB_BEARER_TOKEN": jwt(now.timestamp() + 30 * 3600)}
+    vals = {"SB_ACCESS_TOKEN": jwt(now.timestamp() + 30 * 3600)}
     return EnsureResult(True, ("main",), values=vals, **kw)
 
 
@@ -61,12 +61,11 @@ def test_ensure_runs_before_preflight_and_updates_env(env_cfg, clock, alerter, n
 
 
 def test_rotated_names_are_info_only_never_values_never_pushed(env_cfg, clock, alerter, post, now):
-    res = EnsureResult(True, ("main",), values={"SB_ACCESS_TOKEN": ROTATED_TOKEN + "A" * 20,
-                                                "SB_BEARER_TOKEN": jwt(now.timestamp() + 30 * 3600)})
+    res = EnsureResult(True, ("main",), values={"SB_ACCESS_TOKEN": ROTATED_TOKEN + "A" * 20})
     daily.rotate_tokens(env_cfg, DAY, clock, alerter, ensure=FakeEnsure(res))
     assert not post.posts                                                    # INFO stays local
     log = env_cfg.log_file.read_text()
-    assert "[INFO]" in log and "SB_ACCESS_TOKEN" in log and "SB_BEARER_TOKEN" in log
+    assert "[INFO]" in log and "SB_ACCESS_TOKEN" in log
     assert ROTATED_TOKEN not in log
 
 

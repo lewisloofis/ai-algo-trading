@@ -86,14 +86,14 @@ def run(envf, srv, **kw):
 
 # ---- success -------------------------------------------------------------------------------
 
-def test_main_refresh_success_writes_all_three_and_keeps_other_lines(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(0.5, "old"), SB_BEARER_TOKEN=jwt(0.5, "old"), SB_REFRESH_TOKEN="refold")
+def test_main_refresh_success_writes_both_and_keeps_other_lines(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(0.5, "old"), SB_REFRESH_TOKEN="refold")
     new_a, new_r = jwt(24, "new"), "refnew"
     srv.routes["/login/refresh"] = (200, pair_doc(new_a, new_r))
     res = run(envf, srv)
     env = read_env(envf)
     assert res.ok and res.refreshed == ("main",) and res.exit_code == 0
-    assert env["SB_ACCESS_TOKEN"] == new_a and env["SB_BEARER_TOKEN"] == new_a and env["SB_REFRESH_TOKEN"] == new_r
+    assert env["SB_ACCESS_TOKEN"] == new_a and "SB_BEARER_TOKEN" not in env and env["SB_REFRESH_TOKEN"] == new_r
     assert env["OTHER_SECRET"] == "keepme"
     assert "# my notes" in envf.read_text()
     assert srv.calls[0]["auth"] == "Bearer refold" and srv.calls[0]["ua"] == "okhttp/4.9.3"
@@ -103,7 +103,7 @@ def test_main_refresh_success_writes_all_three_and_keeps_other_lines(envf, srv):
 
 
 def test_trading_refresh_success_form_encoded(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_BEARER_TOKEN=jwt(30), SB_REFRESH_TOKEN="r",
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN="r",
               SB_TRADING_ACCESS_TOKEN=jwt(1, "t"), SB_TRADING_REFRESH_TOKEN="trold")
     srv.routes["/auth/refresh"] = (200, {"access_token": jwt(20, "tn"), "refresh_token": "trnew"})
     res = run(envf, srv)
@@ -115,7 +115,7 @@ def test_trading_refresh_success_form_encoded(envf, srv):
 # ---- no-op ---------------------------------------------------------------------------------
 
 def test_noop_when_tokens_have_more_than_min_hours(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(20), SB_BEARER_TOKEN=jwt(20), SB_REFRESH_TOKEN=jwt(500))
+    write_env(envf, SB_ACCESS_TOKEN=jwt(20), SB_REFRESH_TOKEN=jwt(500))
     before = envf.read_text()
     res = run(envf, srv, min_hours=12)
     assert res.ok and res.refreshed == () and srv.calls == [] and res.exit_code == 0
@@ -123,7 +123,7 @@ def test_noop_when_tokens_have_more_than_min_hours(envf, srv):
 
 
 def test_force_refreshes_even_when_fresh(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(20), SB_BEARER_TOKEN=jwt(20), SB_REFRESH_TOKEN="r")
+    write_env(envf, SB_ACCESS_TOKEN=jwt(20), SB_REFRESH_TOKEN="r")
     srv.routes["/login/refresh"] = (200, pair_doc(jwt(24, "n"), "r2"))
     assert run(envf, srv, force=True).refreshed == ("main",)
 
@@ -131,7 +131,7 @@ def test_force_refreshes_even_when_fresh(envf, srv):
 # ---- refresh token expired -----------------------------------------------------------------
 
 def test_refresh_expired_without_creds_is_explicit_manual_action(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_BEARER_TOKEN=jwt(-1), SB_REFRESH_TOKEN="dead")
+    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_REFRESH_TOKEN="dead")
     before = envf.read_text()
     srv.routes["/login/refresh"] = (401, {"message": "bad token dead"})
     res = run(envf, srv)
@@ -141,7 +141,7 @@ def test_refresh_expired_without_creds_is_explicit_manual_action(envf, srv):
 
 
 def test_refresh_expired_falls_back_to_headless_login(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_BEARER_TOKEN=jwt(-1), SB_REFRESH_TOKEN="dead",
+    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_REFRESH_TOKEN="dead",
               SB_USERNAME="fakeuser", SB_PASSWORD="fakepw", SB_PLAYER_ID="00000000-fake")
     srv.routes["/login/refresh"] = (401, {})
     srv.routes["/login/v6/username"] = (200, {"data": {"login": {"token_data": pair_doc(jwt(24, "l"), "rl")["data"]}}})
@@ -152,7 +152,7 @@ def test_refresh_expired_falls_back_to_headless_login(envf, srv):
 
 
 def test_login_challenge_is_manual_action(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_BEARER_TOKEN=jwt(-1), SB_REFRESH_TOKEN="dead",
+    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_REFRESH_TOKEN="dead",
               SB_USERNAME="u", SB_PASSWORD="p", SB_PLAYER_ID="pid")
     srv.routes["/login/refresh"] = (401, {})
     srv.routes["/login/v6/username"] = (200, {"data": {"new_device": {"multi_factor": {"login_token": "zzz"}}}})
@@ -161,7 +161,7 @@ def test_login_challenge_is_manual_action(envf, srv):
 
 
 def test_trading_dead_refresh_needs_pin_and_does_not_fail_main(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_BEARER_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500),
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500),
               SB_TRADING_ACCESS_TOKEN=jwt(-2), SB_TRADING_REFRESH_TOKEN="trdead")
     srv.routes["/auth/refresh"] = (401, {})
     res = run(envf, srv)
@@ -170,7 +170,7 @@ def test_trading_dead_refresh_needs_pin_and_does_not_fail_main(envf, srv):
 
 
 def test_refresh_token_nearly_dead_without_creds_warns_early(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_BEARER_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(24))
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(24))
     res = run(envf, srv)
     assert res.ok and res.exit_code == 3 and "re-login soon" in res.summary
 
@@ -178,7 +178,7 @@ def test_refresh_token_nearly_dead_without_creds_warns_early(envf, srv):
 # ---- network error -------------------------------------------------------------------------
 
 def test_network_error_is_transient_and_leaves_file_untouched(envf):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_BEARER_TOKEN=jwt(-1), SB_REFRESH_TOKEN="r")
+    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_REFRESH_TOKEN="r")
     before = envf.read_text()
     res = rotate.ensure_tokens(envf, now=NOW, exodus="http://127.0.0.1:1", sleep=lambda s: None)
     assert not res.ok and res.transient and res.exit_code == 2
@@ -186,14 +186,14 @@ def test_network_error_is_transient_and_leaves_file_untouched(envf):
 
 
 def test_5xx_retries_then_succeeds(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_BEARER_TOKEN=jwt(-1), SB_REFRESH_TOKEN="r")
+    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_REFRESH_TOKEN="r")
     answers = iter([(503, {}), (200, pair_doc(jwt(24, "n"), "r2"))])
     srv.routes["/login/refresh"] = lambda _c: next(answers)
     assert run(envf, srv).ok and len(srv.calls) == 2
 
 
 def test_403_waf_is_reported_not_retried(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_BEARER_TOKEN=jwt(-1), SB_REFRESH_TOKEN="r")
+    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_REFRESH_TOKEN="r")
     srv.routes["/login/refresh"] = (403, {"echo": "Bearer r"})
     res = run(envf, srv)
     assert not res.ok and "WAF" in res.summary and len(srv.calls) == 1
@@ -233,7 +233,7 @@ def test_unsafe_value_rejected_without_echoing_it(envf):
 
 
 def test_persist_failure_is_critical_action(envf, srv, monkeypatch):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_BEARER_TOKEN=jwt(-1), SB_REFRESH_TOKEN="r")
+    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_REFRESH_TOKEN="r")
     srv.routes["/login/refresh"] = (200, pair_doc(jwt(24, "n"), "r2"))
     monkeypatch.setattr(rotate, "update_env", lambda *a, **k: (_ for _ in ()).throw(OSError("ro")))
     res = run(envf, srv)
@@ -244,7 +244,7 @@ def test_persist_failure_is_critical_action(envf, srv, monkeypatch):
 
 def test_no_secret_in_summary_repr_status_or_cli_output(envf, srv, capsys):
     secrets = [jwt(-1, "oldA"), "refresh-secret-old", "fakepw", "player-secret"]
-    write_env(envf, SB_ACCESS_TOKEN=secrets[0], SB_BEARER_TOKEN=secrets[0], SB_REFRESH_TOKEN=secrets[1],
+    write_env(envf, SB_ACCESS_TOKEN=secrets[0], SB_REFRESH_TOKEN=secrets[1],
               SB_USERNAME="fakeuser", SB_PASSWORD=secrets[2], SB_PLAYER_ID=secrets[3])
     new_a = jwt(24, "newA")
     # server echoes secrets in an error body; they must not surface
@@ -263,10 +263,9 @@ def test_no_secret_in_summary_repr_status_or_cli_output(envf, srv, capsys):
 
 
 def test_status_lines_only_expiry_words(envf):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(3.2), SB_BEARER_TOKEN=jwt(-1), SB_REFRESH_TOKEN="opaque")
+    write_env(envf, SB_ACCESS_TOKEN=jwt(3.2), SB_REFRESH_TOKEN="opaque")
     lines = {s.name: s.line() for s in rotate.token_status(envf, now=NOW)}
     assert lines["SB_ACCESS_TOKEN"] == "SB_ACCESS_TOKEN: expires in 3.2h"
-    assert lines["SB_BEARER_TOKEN"] == "SB_BEARER_TOKEN: expired"
     assert lines["SB_REFRESH_TOKEN"].startswith("SB_REFRESH_TOKEN: unknown")
     assert lines["SB_TRADING_ACCESS_TOKEN"] == "SB_TRADING_ACCESS_TOKEN: not set"
     assert "opaque" not in "".join(lines.values())

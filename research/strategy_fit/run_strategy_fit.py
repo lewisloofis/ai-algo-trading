@@ -795,7 +795,7 @@ class EmptyUniverseError(RuntimeError):
     Raised when the funding universe resolves to zero symbols.
 
     A credentials failure must not be able to author a research result. An
-    expired ``SB_BEARER_TOKEN`` makes both emitten endpoints return HTTP 401;
+    expired ``SB_ACCESS_TOKEN`` makes both emitten endpoints return HTTP 401;
     ``screen_universe`` degrades to an empty intersection rather than raising,
     so without this guard the grid completes over zero cells and emits a
     verdict indistinguishable from a real one.
@@ -864,7 +864,7 @@ def run_grid(
     if not universe:
         raise EmptyUniverseError(
             "funding universe resolved to zero symbols — refusing to render a "
-            "verdict. The usual cause is an expired SB_BEARER_TOKEN: "
+            "verdict. The usual cause is an expired SB_ACCESS_TOKEN: "
             "screen_universe logs HTTP 401 per endpoint, returns an empty "
             "intersection, and the grid would otherwise run to completion over "
             "nothing and write a NO-GO report over a good one."
@@ -1161,7 +1161,7 @@ def main(argv: list[str] | None = None) -> None:
         "--source",
         choices=["fixture", "live", "local"],
         default="fixture",
-        help="Data source: 'fixture' (offline, no token) or 'live' (needs SB_BEARER_TOKEN).",
+        help="Data source: 'fixture' (offline, no token) or 'live' (needs SB_ACCESS_TOKEN).",
     )
     parser.add_argument(
         "--outdir",

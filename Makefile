@@ -126,7 +126,7 @@ recon:
 # REFRESH_ARGS="--include-ended" to fetch them. Before refreshing it fetches both
 # emitten classification lists (day-trade, trading-limit), writes
 # research/data/daily/universe_status.json, skips stored symbols flagged tradeable=0 and
-# adds newly eligible tradeable ones (full history). Needs SB_BEARER_TOKEN only
+# adds newly eligible tradeable ones (full history). Needs SB_ACCESS_TOKEN only
 # (REFRESH_ARGS="--no-tradable-check" bypasses the status step explicitly); this target
 # never reads .env.local itself and never prints a token:
 #   set -a && source .env.local && set +a && make refresh-prices
@@ -134,7 +134,7 @@ recon:
 REFRESH_ARGS ?=
 
 refresh-prices:
-	@test -n "$$SB_BEARER_TOKEN" || { echo "refresh-prices: SB_BEARER_TOKEN is not set (set -a && source .env.local && set +a)"; exit 2; }
+	@test -n "$$SB_ACCESS_TOKEN" || { echo "refresh-prices: SB_ACCESS_TOKEN is not set (set -a && source .env.local && set +a)"; exit 2; }
 	cd research && $(DASH_PY) -m screener.daily_store snapshot --all-stored --out-dir data/daily $(REFRESH_ARGS)
 
 # emit-target writes the day's target_portfolio.json for ONE registered strategy
@@ -144,7 +144,7 @@ refresh-prices:
 #
 #   make emit-target STRATEGY=<id>                       AS_OF defaults to today (WIB)
 #   make emit-target STRATEGY=<id> AS_OF=2026-10-16 REBALANCE_AT=10:00
-#   make emit-target STRATEGY=<id> EMIT_ARGS="--source live"   (needs SB_BEARER_TOKEN in env)
+#   make emit-target STRATEGY=<id> EMIT_ARGS="--source live"   (needs SB_ACCESS_TOKEN in env)
 #
 # Output: runs/target_<strategy>_<date>.json (+ .signal.json sidecar). Exit codes:
 # 4 = not an IDX trading day (nothing written), 5 = retired spec (add

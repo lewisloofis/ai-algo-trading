@@ -9,7 +9,7 @@ from typing import List, Tuple
 from lib.market_calendar import CALENDAR
 from runner import livereport, review
 from runner.alerts import SUMMARY, WARN, Alerter
-from runner.config import ACCOUNT_ENV, BEARER_TOKEN_ENV, TRADING_TOKEN_ENV, Clock, Config
+from runner.config import ACCESS_TOKEN_ENV, ACCOUNT_ENV, TRADING_TOKEN_ENV, Clock, Config
 from runner.executor import Executor
 from runner.guard import child_env
 from runner.state import load_state, save_state
@@ -22,7 +22,7 @@ def post_close_steps(cfg: Config, paper_ids: List[str]) -> List[dict]:
     py = f"DASH_PY={cfg.python}"
     steps = [
         {"name": "refresh-prices", "argv": ["make", "refresh-prices", py],
-         "skip": None if cfg.env.get(BEARER_TOKEN_ENV) else f"{BEARER_TOKEN_ENV} not set", "trading": False},
+         "skip": None if cfg.env.get(ACCESS_TOKEN_ENV) else f"{ACCESS_TOKEN_ENV} not set", "trading": False},
         {"name": "recon", "argv": ["make", "recon", py],
          "skip": None if (cfg.env.get(ACCOUNT_ENV) and cfg.env.get(TRADING_TOKEN_ENV))
          else f"account env absent ({ACCOUNT_ENV} / {TRADING_TOKEN_ENV}); recon needs the sleeve account", "trading": True},

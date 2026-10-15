@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from lib.market_calendar import CALENDAR
 from runner import liveorders, token_expiry
-from runner.config import ACCESS_TOKEN_ENV, BEARER_TOKEN_ENV, TRADING_TOKEN_ENV, Config
+from runner.config import ACCESS_TOKEN_ENV, TRADING_TOKEN_ENV, Config
 from runner.heartbeat import assess_heartbeat, latest_status
 from strategy_fit import paper_stores as ps
 
@@ -76,7 +76,7 @@ def read_log(cfg: Config, day: date) -> Dict[str, Any]:
 
 def token_facts(cfg: Config, now_epoch: float) -> List[dict]:
     rows = []
-    for name in (ACCESS_TOKEN_ENV, BEARER_TOKEN_ENV, TRADING_TOKEN_ENV):
+    for name in (ACCESS_TOKEN_ENV, TRADING_TOKEN_ENV):
         val = cfg.env.get(name)
         if not val:
             if name != TRADING_TOKEN_ENV:
@@ -197,7 +197,7 @@ def build_facts(cfg: Config, day: date, state: dict, now_epoch: float, *, steps:
             flags.append(flag(ALERT, "token_expired", f"{t['name']} is expired"))
         elif t["state"] == "fresh" and t["hours_left"] < TOKEN_WARN_HOURS:
             flags.append(flag(WARN, "token_expiring", f"{t['name']} expires in {t['hours_left']}h (< {TOKEN_WARN_HOURS:g}h)"))
-        elif t["state"] == "unset" and t["name"] == BEARER_TOKEN_ENV:
+        elif t["state"] == "unset" and t["name"] == ACCESS_TOKEN_ENV:
             flags.append(flag(WARN, "token_unset", f"{t['name']} is not set"))
 
     # sessions

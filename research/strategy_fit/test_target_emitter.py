@@ -371,13 +371,13 @@ class TestWrite:
 
 class TestCli:
     def test_live_without_token_fails_clearly_and_touches_no_network(self, monkeypatch, tmp_path, capsys):
-        monkeypatch.delenv("SB_BEARER_TOKEN", raising=False)
+        monkeypatch.delenv("SB_ACCESS_TOKEN", raising=False)
         rc = te.main([
             "emit", "--strategy", "bnbr_momo_h2", "--as-of", "2026-09-14",
             "--out", str(tmp_path / "t.json"), "--source", "live", "--allow-retired",
         ])
         assert rc != 0
-        assert "SB_BEARER_TOKEN" in capsys.readouterr().err
+        assert "SB_ACCESS_TOKEN" in capsys.readouterr().err
         assert not (tmp_path / "t.json").exists()
 
     def test_unknown_strategy_is_rejected(self, tmp_path, capsys):

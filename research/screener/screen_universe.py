@@ -305,7 +305,7 @@ class LiveDataSource:
     """
     Thin HTTP client against the Stockbit/Exodus API.
 
-    Requires SB_BEARER_TOKEN env var (pre-obtained; this class does NOT
+    Requires SB_ACCESS_TOKEN env var (pre-obtained; this class does NOT
     perform login or token refresh — see docs/auth for that flow).
 
     Funding universe: emitten subsector endpoints (VERIFIED HTTP 200).
@@ -313,10 +313,10 @@ class LiveDataSource:
     """
 
     def __init__(self, bearer_token: str | None = None) -> None:
-        token = bearer_token or os.environ.get("SB_BEARER_TOKEN")
+        token = bearer_token or os.environ.get("SB_ACCESS_TOKEN")
         if not token:
             raise EnvironmentError(
-                "SB_BEARER_TOKEN env var must be set to use LiveDataSource"
+                "SB_ACCESS_TOKEN env var must be set to use LiveDataSource"
             )
         self._token = token
         self._ssl_ctx = _build_ssl_context()
@@ -1174,7 +1174,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--source", choices=["fixture", "live"], default="fixture",
-        help="Data source: 'fixture' (default, offline) or 'live' (needs SB_BEARER_TOKEN).",
+        help="Data source: 'fixture' (default, offline) or 'live' (needs SB_ACCESS_TOKEN).",
     )
     p.add_argument(
         "--no-tradable-check", action="store_true",
@@ -1253,10 +1253,10 @@ def main() -> None:
     args = parse_args()
 
     if args.source == "live":
-        token = os.environ.get("SB_BEARER_TOKEN")
+        token = os.environ.get("SB_ACCESS_TOKEN")
         if not token:
             print(
-                "ERROR: SB_BEARER_TOKEN env var is required for --source live.",
+                "ERROR: SB_ACCESS_TOKEN env var is required for --source live.",
                 file=sys.stderr,
             )
             sys.exit(1)

@@ -292,7 +292,7 @@ class TestEmptyUniverseAborts:
     """
     An empty universe must abort, never render a verdict.
 
-    On 2026-09-13 an expired ``SB_BEARER_TOKEN`` made both funding endpoints
+    On 2026-09-13 an expired ``SB_ACCESS_TOKEN`` made both funding endpoints
     return HTTP 401. ``screen_universe`` logged warnings, the intersection came
     back empty, and the grid ran to completion over zero symbols and wrote a
     confident ``Verdict: NO-GO`` report — over a good one. A credentials
@@ -311,4 +311,4 @@ class TestEmptyUniverseAborts:
 
     def test_the_error_names_credentials_as_the_likely_cause(self) -> None:
         from strategy_fit.run_strategy_fit import EmptyUniverseError
-        assert "SB_BEARER_TOKEN" in EmptyUniverseError.__doc__
+        assert "SB_ACCESS_TOKEN" in EmptyUniverseError.__doc__

@@ -50,7 +50,7 @@ writer therefore never persists a bar dated today (WIB) before the session is
 final (DAILY_BAR_FINAL_AT, 16:15 WIB) or dated in the future, and a write also
 drops such a row already in the store, so a post-close refresh heals it.
 
-Security note: the live data path requires SB_BEARER_TOKEN. Tests MUST mock
+Security note: the live data path requires SB_ACCESS_TOKEN. Tests MUST mock
 _build_live_data_source — never pass a real token through the test suite.
 """
 from __future__ import annotations
@@ -745,13 +745,13 @@ def store_coverage(
 def _build_live_data_source(bearer_token: str | None = None) -> Any:
     """
     Build a LiveDataSource from the screener package.
-    The SB_BEARER_TOKEN env var must be set. Tests patch this function.
+    The SB_ACCESS_TOKEN env var must be set. Tests patch this function.
     """
     from screener.screen_universe import LiveDataSource  # local import to keep mock seam clean
-    token = bearer_token or os.environ.get("SB_BEARER_TOKEN", "")
+    token = bearer_token or os.environ.get("SB_ACCESS_TOKEN", "")
     if not token:
         raise RuntimeError(
-            "SB_BEARER_TOKEN environment variable is required for live snapshots.\n"
+            "SB_ACCESS_TOKEN environment variable is required for live snapshots.\n"
             "Set it and retry, or use --source fixture for offline testing."
         )
     return LiveDataSource(bearer_token=token)
@@ -771,9 +771,9 @@ def _build_status_source(args: argparse.Namespace) -> Any:
     """EmittenClient for the universe-status step. Tests patch this. Never prints a token."""
     from screener.emitten import EmittenClient
 
-    bearer = args.bearer_token or os.environ.get("SB_BEARER_TOKEN", "")
+    bearer = args.bearer_token or os.environ.get("SB_ACCESS_TOKEN", "")
     if not bearer:
-        raise RuntimeError("SB_BEARER_TOKEN is not set: the emitten classification lists need it.")
+        raise RuntimeError("SB_ACCESS_TOKEN is not set: the emitten classification lists need it.")
     return EmittenClient(bearer)
 
 
@@ -922,7 +922,7 @@ def main(argv: list[str] | None = None) -> None:
     snap.add_argument(
         "--bearer-token",
         default=None,
-        help="SB bearer token (falls back to SB_BEARER_TOKEN env var)",
+        help="SB bearer token (falls back to SB_ACCESS_TOKEN env var)",
     )
 
     status = sub.add_parser("status", help="Report per-symbol on-disk coverage")

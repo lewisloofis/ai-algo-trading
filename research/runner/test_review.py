@@ -50,8 +50,7 @@ def buy(price=1000, fill=1000, lots=1, oid="o1"):
 # ---- rules ---------------------------------------------------------------------------------------
 
 def test_clean_day_has_no_alerts_or_warnings(cfg, now):
-    cfg = replace(cfg, env={**cfg.env, "SB_ACCESS_TOKEN": jwt(now.timestamp() + 30 * 3600),
-                            "SB_BEARER_TOKEN": jwt(now.timestamp() + 30 * 3600)})
+    cfg = replace(cfg, env={**cfg.env, "SB_ACCESS_TOKEN": jwt(now.timestamp() + 30 * 3600)})
     write_status(cfg, "paper_x", now, 30, outcome="complete")
     f = facts_for(cfg, state_for(paper_x={"status": "done", "restarts": 0}), now)
     assert f["counts"]["ALERT"] == 0 and "session_not_started" not in codes(f)
@@ -136,8 +135,8 @@ def test_preflight_failure_and_missing_preflight(cfg, now):
 
 
 def test_token_flags_use_durations_only(cfg, now):
-    env = {**cfg.env, "SB_ACCESS_TOKEN": jwt(now.timestamp() + 10 * 3600),
-           "SB_BEARER_TOKEN": jwt(now.timestamp() - 60)}
+    env = {**cfg.env, "SB_TRADING_ACCESS_TOKEN": jwt(now.timestamp() + 10 * 3600),
+           "SB_ACCESS_TOKEN": jwt(now.timestamp() - 60)}
     c2 = replace(cfg, env=env)
     st = {**state_for(), "token_rotation": {"ok": True, "actions": ["trading session needs a PIN login"]}}
     f = facts_for(c2, st, now)
@@ -317,7 +316,7 @@ def test_run_review_sends_only_redacted_facts_and_writes_files(cfg, alerter, now
 
 
 def test_post_close_sends_one_message_and_writes_review_files(cfg, clock, alerter, ex, post, monkeypatch, now):
-    cfg.env.update({"SB_ACCESS_TOKEN": jwt(now.timestamp() + 40 * 3600), "SB_BEARER_TOKEN": jwt(now.timestamp() + 40 * 3600)})
+    cfg.env.update({"SB_ACCESS_TOKEN": jwt(now.timestamp() + 40 * 3600)})
     monkeypatch.setattr(rs, "_run", FakeRun(out="2026-10-15: all quiet. refresh-prices ok."))
     save_state(cfg.state_path(DAY), state_for())
     clock.t = at(DAY, "16:20")

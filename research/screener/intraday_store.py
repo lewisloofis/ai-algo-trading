@@ -26,7 +26,7 @@ Runs daily after market close (~16:30 WIB):
     30 16 * * 1-5 cd /path/to/research && \
         python -m screener.intraday_store snapshot >> logs/intraday_store.log 2>&1
 
-Security note: the live data path requires SB_BEARER_TOKEN.  Tests MUST mock
+Security note: the live data path requires SB_ACCESS_TOKEN.  Tests MUST mock
 _build_live_data_source — never pass a real token through the test suite.
 """
 from __future__ import annotations
@@ -306,13 +306,13 @@ def _distinct_days(df: pd.DataFrame | None) -> int:
 def _build_live_data_source(bearer_token: str | None = None) -> Any:
     """
     Build a LiveDataSource from the screener package.
-    The SB_BEARER_TOKEN env var must be set.  Tests patch this function.
+    The SB_ACCESS_TOKEN env var must be set.  Tests patch this function.
     """
     from screener.screen_universe import LiveDataSource  # local import to keep mock seam clean
-    token = bearer_token or os.environ.get("SB_BEARER_TOKEN", "")
+    token = bearer_token or os.environ.get("SB_ACCESS_TOKEN", "")
     if not token:
         raise RuntimeError(
-            "SB_BEARER_TOKEN environment variable is required for live snapshots.\n"
+            "SB_ACCESS_TOKEN environment variable is required for live snapshots.\n"
             "Set it and retry, or use --source fixture for offline testing."
         )
     return LiveDataSource(bearer_token=token)
@@ -349,7 +349,7 @@ def main(argv: list[str] | None = None) -> None:
     snap.add_argument(
         "--bearer-token",
         default=None,
-        help="SB bearer token (falls back to SB_BEARER_TOKEN env var)",
+        help="SB bearer token (falls back to SB_ACCESS_TOKEN env var)",
     )
 
     args = parser.parse_args(argv)

@@ -12,7 +12,7 @@ from typing import Callable, List, Optional, Tuple
 from lib.market_calendar import CALENDAR
 from runner import livepre, token_expiry
 from runner.arm import read_arm_file
-from runner.config import ACCESS_TOKEN_ENV, BEARER_TOKEN_ENV, Config
+from runner.config import ACCESS_TOKEN_ENV, Config
 from runner.strategies import armed_candidates, select
 
 FAIL, WARN, OK = "fail", "warn", "ok"
@@ -97,7 +97,6 @@ def run_preflight(cfg: Config, day: date, now_epoch: float, calendar=CALENDAR,
         checks.append(check_prev_bar(symbol, prev, cfg.daily_dir, load))
 
     checks.append(_token_check(ACCESS_TOKEN_ENV, cfg, now_epoch, cfg.min_access_token_hours, required=True))
-    checks.append(_token_check(BEARER_TOKEN_ENV, cfg, now_epoch, 8.0, required=False))
     if armed:
         # Live-only checks are warnings here: a stale trading token must not stop the paper sessions.
         # The live decision (modes.decide_mode) re-reads them and simply refuses LIVE.

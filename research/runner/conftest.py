@@ -113,7 +113,7 @@ def clock(now):
 
 @pytest.fixture
 def good_env(now):
-    return {"SB_ACCESS_TOKEN": jwt(now.timestamp() + 5 * 3600), "SB_BEARER_TOKEN": jwt(now.timestamp() + 20 * 3600),
+    return {"SB_ACCESS_TOKEN": jwt(now.timestamp() + 5 * 3600),
             "TELEGRAM_BOT_TOKEN": "123456789:" + "A" * 35, "TELEGRAM_CHAT_ID": "555000111"}
 
 

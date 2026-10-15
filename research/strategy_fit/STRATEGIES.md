@@ -82,7 +82,7 @@ lunch 12:00–13:30 excluded.
 # offline, synthetic fixtures, no token
 python -m strategy_fit.run_strategy_fit --source fixture --outdir out
 
-# live, needs SB_BEARER_TOKEN in the environment
+# live, needs SB_ACCESS_TOKEN in the environment
 python -m strategy_fit.run_strategy_fit --source live --outdir out_live
 ```
 

@@ -28,7 +28,7 @@ from dashboard.store import RunHeader
 
 GREEN, AMBER, RED, NOT_CHECKED = "green", "amber", "red", "not_checked"
 
-DAILY_REFRESH_HINT = "set -a && source .env.local && set +a && make refresh-prices   (refreshes every stored symbol; needs SB_BEARER_TOKEN)"
+DAILY_REFRESH_HINT = "set -a && source .env.local && set +a && make refresh-prices   (refreshes every stored symbol; needs SB_ACCESS_TOKEN)"
 
 HEARTBEAT_STALE_S = 120
 """A live run that has not rewritten its status file for this long has stopped."""

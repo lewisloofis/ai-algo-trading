@@ -266,5 +266,5 @@ def test_daily_data_untradable_and_ended_are_both_reported(tmp_path):
 
 
 def test_refresh_hint_needs_no_trading_token():
-    assert "SB_BEARER_TOKEN" in health.DAILY_REFRESH_HINT
+    assert "SB_ACCESS_TOKEN" in health.DAILY_REFRESH_HINT
     assert "SB_TRADING_ACCESS_TOKEN" not in health.DAILY_REFRESH_HINT

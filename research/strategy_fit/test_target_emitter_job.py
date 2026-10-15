@@ -333,9 +333,9 @@ class TestPrintedCommand:
 
 class TestLiveSource:
     def test_live_without_token_fails_before_writing(self, tmp_path, monkeypatch, capsys):
-        monkeypatch.delenv("SB_BEARER_TOKEN", raising=False)
+        monkeypatch.delenv("SB_ACCESS_TOKEN", raising=False)
         rc, out = _emit(tmp_path, "--source", "live")
-        assert rc == te.EXIT_NO_TOKEN and "SB_BEARER_TOKEN" in capsys.readouterr().err
+        assert rc == te.EXIT_NO_TOKEN and "SB_ACCESS_TOKEN" in capsys.readouterr().err
         assert not out.exists()
 
 

@@ -210,7 +210,7 @@ class TestRefreshAll:
 
     def test_token_not_printed(self, tmp_path, capsys, monkeypatch):
         full = _seed(tmp_path, ["BBRI"])
-        monkeypatch.setenv("SB_BEARER_TOKEN", "sekret-sentinel-value")
+        monkeypatch.setenv("SB_ACCESS_TOKEN", "sekret-sentinel-value")
         _, out = self._run(tmp_path, FakeSource(full), capsys)
         assert "sekret-sentinel-value" not in out
 
@@ -328,12 +328,12 @@ class TestTradableStep:
 
     def test_missing_bearer_exits_2_before_any_fetch(self, tmp_path, capsys, monkeypatch):
         src = FakeSource(_seed(tmp_path, ["AAAA"]))
-        monkeypatch.delenv("SB_BEARER_TOKEN", raising=False)
+        monkeypatch.delenv("SB_ACCESS_TOKEN", raising=False)
         with patch("screener.daily_store._build_live_data_source", return_value=src):
             with pytest.raises(SystemExit) as e:
                 store_main(["snapshot", "--all-stored", "--out-dir", str(tmp_path), "--end", END])
         assert e.value.code == 2
-        assert "SB_BEARER_TOKEN" in capsys.readouterr().out
+        assert "SB_ACCESS_TOKEN" in capsys.readouterr().out
         assert src.calls == [] and not (tmp_path / "universe_status.json").exists()
 
     def test_emitten_http_failure_exits_2_without_writing_status(self, tmp_path, capsys):
@@ -374,7 +374,7 @@ class TestTradableStep:
 
     def test_no_tradable_check_flag_bypasses_everything(self, tmp_path, capsys, monkeypatch):
         src = FakeSource(_seed(tmp_path, ["AAAA"]))
-        monkeypatch.delenv("SB_BEARER_TOKEN", raising=False)
+        monkeypatch.delenv("SB_ACCESS_TOKEN", raising=False)
         code, out = TestRefreshAll._run(self, tmp_path, src, capsys)
         assert code == 0 and not (tmp_path / "universe_status.json").exists()
         assert "tradable check skipped" in out.lower()

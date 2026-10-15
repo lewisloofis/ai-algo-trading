@@ -1,6 +1,6 @@
 """Token rotation: refresh what can be refreshed unattended, say loudly what cannot.
 
-Automated:  main session (SB_ACCESS_TOKEN + SB_BEARER_TOKEN) via SB_REFRESH_TOKEN; if that is dead
+Automated:  main session (SB_ACCESS_TOKEN; the retired SB_BEARER_TOKEN is no longer written) via SB_REFRESH_TOKEN; if that is dead
             and SB_USERNAME/SB_PASSWORD/SB_PLAYER_ID are present, a headless re-login with the
             already-trusted player_id (plan 03 phase 0). Trading session via SB_TRADING_REFRESH_TOKEN.
 Manual:     a challenge on login (trust revoked), a dead trading refresh token (needs the PIN, which
@@ -19,10 +19,10 @@ from runner import token_expiry
 from token_rotation import client
 from token_rotation.envstore import read_env, update_env
 
-ACCESS, BEARER, REFRESH = "SB_ACCESS_TOKEN", "SB_BEARER_TOKEN", "SB_REFRESH_TOKEN"
+ACCESS, REFRESH = "SB_ACCESS_TOKEN", "SB_REFRESH_TOKEN"
 T_ACCESS, T_REFRESH = "SB_TRADING_ACCESS_TOKEN", "SB_TRADING_REFRESH_TOKEN"
 USER, PASSWORD, PLAYER = "SB_USERNAME", "SB_PASSWORD", "SB_PLAYER_ID"
-TOKEN_NAMES = (ACCESS, BEARER, REFRESH, T_ACCESS, T_REFRESH)
+TOKEN_NAMES = (ACCESS, REFRESH, T_ACCESS, T_REFRESH)
 
 DEFAULT_MIN_HOURS = 12.0     # refresh when any main access token has less than this left
 REFRESH_WARN_HOURS = 72.0    # a refresh token this close to death, with no relogin creds, is flagged
@@ -107,7 +107,7 @@ def _rotate_main(env: Dict[str, str], exodus: str, sleep) -> Tuple[Optional[clie
     """-> (new pair or None, manual actions, transient). Tries refresh, then headless relogin."""
     actions: List[str] = []
     can_login = all(env.get(k) for k in (USER, PASSWORD, PLAYER))
-    login_hint = (f"re-login in the Stockbit web app and put fresh {ACCESS}, {BEARER}, {REFRESH} in .env.local "
+    login_hint = (f"re-login in the Stockbit web app and put fresh {ACCESS}, {REFRESH} in .env.local "
                   f"(or add {USER}/{PASSWORD}/{PLAYER} for headless re-login)")
     if env.get(REFRESH):
         try:
@@ -150,7 +150,7 @@ def _rotate_trading(env: Dict[str, str], carina: str, sleep) -> Tuple[Optional[c
 
 
 def _main_updates(pair: client.TokenPair, env: Mapping[str, str]) -> Dict[str, str]:
-    return {ACCESS: pair.access, BEARER: pair.access, REFRESH: pair.refresh or env.get(REFRESH, "")}
+    return {ACCESS: pair.access, REFRESH: pair.refresh or env.get(REFRESH, "")}
 
 
 def ensure_tokens(env_path: Path, *, min_hours: float = DEFAULT_MIN_HOURS, force: bool = False,
@@ -168,7 +168,7 @@ def ensure_tokens(env_path: Path, *, min_hours: float = DEFAULT_MIN_HOURS, force
     updates: Dict[str, str] = {}
     transient = False
 
-    main_sts = [_status(n, env.get(n), now) for n in (ACCESS, BEARER)]
+    main_sts = [_status(n, env.get(n), now) for n in (ACCESS,)]
     if force or any(s.state != "fresh" or s.hours_left < min_hours for s in main_sts):
         pair, acts, transient_main = _rotate_main(env, exodus, sleep)
         actions += acts
@@ -195,12 +195,12 @@ def ensure_tokens(env_path: Path, *, min_hours: float = DEFAULT_MIN_HOURS, force
             # The server already rotated the refresh token; failing to persist is critical.
             return EnsureResult(False, (), tuple(actions) + (
                 f"rotated tokens could NOT be written ({type(exc).__name__}); the old refresh token may be dead: "
-                f"re-login and update {ACCESS}/{BEARER}/{REFRESH}",), tuple(warnings), False)
+                f"re-login and update {ACCESS}/{REFRESH}",), tuple(warnings), False)
         merged = {**env, **updates}
     else:
         merged = env
 
-    final_main = [_status(n, merged.get(n), now) for n in (ACCESS, BEARER)]
+    final_main = [_status(n, merged.get(n), now) for n in (ACCESS,)]
     ok = all(s.state == "fresh" and s.hours_left > 0 for s in final_main)
     if ok:
         r = _status(REFRESH, merged.get(REFRESH), now)

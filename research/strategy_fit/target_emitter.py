@@ -69,7 +69,7 @@ fields live in a sidecar ``<out stem>.signal.json``. Both files are written
 atomically (temp file + os.replace) and contain no wall-clock values, so the
 same inputs give byte-identical files.
 
-The live path needs ``SB_BEARER_TOKEN`` in the environment and never reads a
+The live path needs ``SB_ACCESS_TOKEN`` in the environment and never reads a
 token file. It is optional; the default source is the local daily parquet.
 """
 
@@ -112,7 +112,7 @@ WEIGHT_DECIMALS = 1e9
 MAX_PARTICIPATION_RATE = 0.05
 BOARD = "RG"
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "daily"
-TOKEN_ENV = "SB_BEARER_TOKEN"
+TOKEN_ENV = "SB_ACCESS_TOKEN"
 
 EXIT_DATA_ERROR = 2
 EXIT_NO_TOKEN = 3
@@ -230,7 +230,7 @@ def load_local_bars(path: Path, require_traded_last_bar: Optional[date] = None) 
 
 
 def fetch_live_bars(symbol: str, end: date) -> pd.DataFrame:
-    """Chartbit daily bars via LiveDataSource. Needs SB_BEARER_TOKEN in env."""
+    """Chartbit daily bars via LiveDataSource. Needs SB_ACCESS_TOKEN in env."""
     token = os.environ.get(TOKEN_ENV, "")
     if not token:
         raise MissingTokenError(

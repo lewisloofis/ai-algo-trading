@@ -12,7 +12,7 @@ deadlines:
       this date to (last stored date + 90d - 7d buffer). Last pulled
       2026-09-04; store now covers 2026-03-25 to 2026-09-04 (108 trading
       days for the four core names, 62 for BREN/RAJA/RATU seeded that day).
-      Run, with SB_BEARER_TOKEN in the environment (never as an argv flag):
+      Run, with SB_ACCESS_TOKEN in the environment (never as an argv flag):
       cd research && python -m screener.intraday_store snapshot
       --symbols PTRO,BRPT,TPIA,ENRG,BREN,RAJA,RATU
       Better: run it daily from cron so this deadline never binds.

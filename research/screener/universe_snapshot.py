@@ -65,7 +65,7 @@ class EmptySnapshotError(RuntimeError):
 
 def resolve_bearer_token(ssm_prefix: str | None = None, region: str = "") -> str:
     """
-    Bearer token from ``SB_BEARER_TOKEN``, else from SSM Parameter Store.
+    Bearer token from ``SB_ACCESS_TOKEN``, else from SSM Parameter Store.
 
     On a workstation the env var is the convenient path. On the collector box
     there is no env var: the token lives at ``{ssm_prefix}/access`` and is
@@ -76,12 +76,12 @@ def resolve_bearer_token(ssm_prefix: str | None = None, region: str = "") -> str
     own session mid-capture. If ``/access`` has expired this raises, the
     snapshot is skipped for the day, and the collector is left alone.
     """
-    token = os.environ.get("SB_BEARER_TOKEN")
+    token = os.environ.get("SB_ACCESS_TOKEN")
     if token:
         return token
     if not ssm_prefix:
         raise EnvironmentError(
-            "no SB_BEARER_TOKEN and no --ssm-prefix given; cannot authenticate"
+            "no SB_ACCESS_TOKEN and no --ssm-prefix given; cannot authenticate"
         )
     out = subprocess.run(
         ["aws", "ssm", "get-parameter", "--name", f"{ssm_prefix}/access",
@@ -175,7 +175,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--ssm-prefix", default=os.environ.get("SSM_PARAM_PREFIX"),
         help="SSM prefix holding the rotated access token (e.g. /sb-collector). "
-             "Used only when SB_BEARER_TOKEN is unset.",
+             "Used only when SB_ACCESS_TOKEN is unset.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Build and print; do not upload.")
     args = parser.parse_args(argv)

@@ -18,7 +18,7 @@
 # Token store (treat like a password — never commit).
 .sb-tokens.json
 
-# Local environment overrides: AWS creds, SB_BEARER_TOKEN (never commit).
+# Local environment overrides: AWS creds, SB_ACCESS_TOKEN (never commit).
 .env.local
 .env.*.local
 

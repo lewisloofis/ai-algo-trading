@@ -75,7 +75,7 @@ def test_live_paginated_response_is_not_silently_truncated(monkeypatch):
 def test_live_run_needs_no_trading_token(monkeypatch):
     import sys
     from screener import screen_universe as su
-    monkeypatch.setenv("SB_BEARER_TOKEN", "x")
+    monkeypatch.setenv("SB_ACCESS_TOKEN", "x")
     monkeypatch.delenv("SB_TRADING_ACCESS_TOKEN", raising=False)
     monkeypatch.setattr(sys, "argv", ["screen_universe", "--source", "live", "--no-tradable-check"])
     args = su.parse_args()
