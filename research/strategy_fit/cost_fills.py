@@ -4,8 +4,9 @@ strategy_fit/cost_fills.py — every fill (live and paper) as one flat record, f
 Read-only. Sources, all local:
 
 * post-trade stores ``runs/*.db`` (sqlite ``mode=ro``): fill joined to its order intent, so each fill carries
-  the decision (limit/target) price the bot sent. The stores hold no book snapshot, so ``arrival_mid_idr`` is
-  always None today: slippage against the arrival mid cannot be measured from them (plan 18 B6 gap).
+  the decision (limit/target) price the bot sent. Stores written since the arrival-quote change also carry the
+  book at submit time (``order_intent.arrival_*``), which fills ``arrival_mid_idr`` / bid / ask / last / quote age.
+  Older stores lack those columns and read back None: slippage against the arrival mid is then NOT MEASURED.
 * ``runs/recon/*.json`` (written by ``account-recon --stores``): the broker's own fee for each matched fill,
   and trades the broker shows that no bot fill explains.
 * ``runs/broker_trades.json``: the same broker-only trades, imported idempotently by broker id.
@@ -53,6 +54,11 @@ class CostFill:
     broker_fee_idr: Optional[float]
     fee_source: str                   # "broker" | "store"
     store: str
+    # Book at submit time (order_intent.arrival_*); None = not recorded (old store, or no quote observed).
+    arrival_bid_idr: Optional[float] = None
+    arrival_ask_idr: Optional[float] = None
+    arrival_last_idr: Optional[float] = None
+    arrival_quote_age_ms: Optional[int] = None
 
     @property
     def shares(self) -> int:
@@ -77,12 +83,25 @@ def _empty_cov() -> dict:
     return {s: {"intents": 0, "fills": 0, "rejects": 0} for s in SOURCES}
 
 
+_ARRIVAL_COLS = ("arrival_mid_idr", "arrival_bid_idr", "arrival_ask_idr", "arrival_last_idr", "arrival_quote_age_ms")
+
 _FILLS_SQL = """
 SELECT f.sink_kind, oi.strategy_id, oi.order_id, oi.symbol, oi.side, oi.price_idr,
-       f.fill_price_idr, f.fill_lots, f.fee_idr, f.recv_ns, f.seq, f.run_id
+       f.fill_price_idr, f.fill_lots, f.fee_idr, f.recv_ns, f.seq, f.run_id{arrival}
 FROM fill f JOIN order_intent oi ON oi.order_id = f.order_id AND oi.run_id = f.run_id
 ORDER BY f.recv_ns, f.seq
 """
+
+
+def _fills_sql(con: sqlite3.Connection) -> str:
+    """The fills query, selecting the arrival columns when the store has them and NULLs when it predates them."""
+    have = {row[1] for row in con.execute("PRAGMA table_info(order_intent)")}
+    sel = "".join(f", oi.{c}" if c in have else ", NULL" for c in _ARRIVAL_COLS)
+    return _FILLS_SQL.format(arrival=sel)
+
+
+def _opt_float(v) -> Optional[float]:
+    return float(v) if v is not None else None
 
 
 def _count_by_sink(con: sqlite3.Connection, table: str) -> dict:
@@ -96,15 +115,18 @@ def _read_one(path: Path, seen: set, cov: dict) -> list:
     out = []
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
-        for sink, strat, oid, sym, side, dec, px, lots, fee, ns, seq, run in con.execute(_FILLS_SQL):
+        for sink, strat, oid, sym, side, dec, px, lots, fee, ns, seq, run, mid, bid, ask, last, age in con.execute(
+                _fills_sql(con)):
             if sink not in SOURCES or (sink, run, oid, seq) in seen:
                 continue
             seen.add((sink, run, oid, seq))
             out.append(CostFill(
                 source=sink, origin="store", strategy_id=strat, order_id=oid, symbol=sym, side=side, day=_day(ns),
                 time_ns=int(ns), lots=int(lots), fill_price_idr=float(px),
-                decision_price_idr=float(dec) if dec else None, arrival_mid_idr=None,
-                store_fee_idr=float(fee), broker_fee_idr=None, fee_source="store", store=path.name))
+                decision_price_idr=float(dec) if dec else None, arrival_mid_idr=_opt_float(mid),
+                store_fee_idr=float(fee), broker_fee_idr=None, fee_source="store", store=path.name,
+                arrival_bid_idr=_opt_float(bid), arrival_ask_idr=_opt_float(ask), arrival_last_idr=_opt_float(last),
+                arrival_quote_age_ms=int(age) if age is not None else None))
         for key, field in (("intents", "order_intent"), ("rejects", "order_reject")):
             for sink, n in _count_by_sink(con, field).items():
                 if sink in cov:

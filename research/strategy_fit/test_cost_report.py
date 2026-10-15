@@ -237,3 +237,14 @@ def test_empty_runs_dir_gives_an_empty_but_valid_report(tmp_path):
     doc = cr.build_report(tmp_path / "runs", tmp_path / "data", capital_model=cm.OWNED_CASH)
     assert doc["coverage"]["live"]["fills"] == 0 and doc["round_trips"] == []
     assert cr.render_markdown(doc)
+
+
+def test_live_slippage_vs_arrival_mid_is_measured_from_a_new_store(tmp_path):
+    from strategy_fit import cost_report as cr
+    write_cost_store(tmp_path / "new.db", [dict(day="2026-01-05", symbol="AAAA", side="buy", decision=1010, fill=1005,
+                                                lots=1, fee=1.5, sink="live",
+                                                arrival=dict(bid=1000, ask=1010, mid=1000.0, last=1000, age_ms=5))])
+    fills, _ = cf.load_store_fills(tmp_path)
+    leg = cr.cost_leg(fills[0], None)
+    assert leg.basis == cr.BASIS_ARRIVAL
+    assert abs(leg.slippage_arrival_bps - 50.0) < 1e-9   # buy paid 1005 vs mid 1000
