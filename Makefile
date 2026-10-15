@@ -13,7 +13,7 @@
 #   make publish-dashboard
 #   make clean
 
-.PHONY: build build-linux-arm64 collect sbcap test dashboard refresh-prices publish-dashboard recon clean
+.PHONY: build build-linux-arm64 collect sbcap test dashboard refresh-prices emit-target publish-dashboard recon clean
 
 build:
 	mkdir -p $(CURDIR)/bin
@@ -109,6 +109,29 @@ REFRESH_ARGS ?=
 refresh-prices:
 	@test -n "$$SB_BEARER_TOKEN" || { echo "refresh-prices: SB_BEARER_TOKEN is not set (set -a && source .env.local && set +a)"; exit 2; }
 	cd research && $(DASH_PY) -m screener.daily_store snapshot --all-stored --out-dir data/daily $(REFRESH_ARGS)
+
+# emit-target writes the day's target_portfolio.json for ONE registered strategy
+# (research/strategy_fit/emitter_specs.py) and PRINTS the matching strategy-run
+# command. It never runs strategy-run. Pre-open job, local daily parquet by default:
+#
+#   make emit-target STRATEGY=<id>                       AS_OF defaults to today (WIB)
+#   make emit-target STRATEGY=<id> AS_OF=2026-10-16 REBALANCE_AT=10:00
+#   make emit-target STRATEGY=<id> EMIT_ARGS="--source live"   (needs SB_BEARER_TOKEN in env)
+#
+# Output: runs/target_<strategy>_<date>.json (+ .signal.json sidecar). Exit codes:
+# 4 = not an IDX trading day (nothing written), 5 = retired spec (add
+# EMIT_ARGS=--allow-retired only deliberately), 6 = REBALANCE_AT outside the
+# 09:00-11:30 window (the bot's default 15:00 is outside it), 2 = data error.
+STRATEGY ?=
+AS_OF ?= $(shell TZ=Asia/Jakarta date +%Y-%m-%d)
+REBALANCE_AT ?= 09:30
+EMIT_ARGS ?=
+
+emit-target:
+	@test -n "$(STRATEGY)" || { echo "emit-target: set STRATEGY=<id> (see research/strategy_fit/emitter_specs.py)"; exit 2; }
+	@mkdir -p $(CURDIR)/runs
+	cd research && $(DASH_PY) -m strategy_fit.target_emitter emit --strategy $(STRATEGY) --as-of $(AS_OF) \
+		--out $(CURDIR)/runs/target_$(STRATEGY)_$(AS_OF).json --rebalance-at $(REBALANCE_AT) $(EMIT_ARGS)
 
 # publish-dashboard copies the built site to S3 beside the market data, so it is
 # readable without the laptop that generated it (plan-19 Stage 6, optional).

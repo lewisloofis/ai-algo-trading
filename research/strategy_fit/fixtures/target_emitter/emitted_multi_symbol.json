@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-08-18T09:00:00+07:00",
+  "strategy_id": "test_multi",
+  "capital_model": "owned_cash",
+  "base_notional_idr": 226071,
+  "targets": [
+    {
+      "symbol": "AAAA",
+      "weight": 0.036802602
+    },
+    {
+      "symbol": "BBBB",
+      "weight": 0.0
+    },
+    {
+      "symbol": "CCCC",
+      "weight": 0.123058698
+    }
+  ],
+  "constraints": {
+    "max_participation_rate": 0.05,
+    "complete_by": "2026-08-18T11:30:00+07:00",
+    "board": "RG"
+  }
+}

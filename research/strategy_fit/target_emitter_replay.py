@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -75,7 +76,8 @@ def backtest_entries(df: pd.DataFrame, spec: EmitterSpec) -> pd.DataFrame:
     return kept.reset_index(drop=True)
 
 
-def replay(df: pd.DataFrame, spec: EmitterSpec, calendar: MarketCalendar) -> ReplayResult:
+def replay(df: pd.DataFrame, spec: EmitterSpec, calendar: MarketCalendar,
+           symbol: Optional[str] = None) -> ReplayResult:
     bars = normalise_bars(df)
     bars = bars[bars["date"] >= HISTORY_START].reset_index(drop=True)
     dates = [date.fromisoformat(d) for d in bars["date"]]
@@ -110,7 +112,7 @@ def replay(df: pd.DataFrame, spec: EmitterSpec, calendar: MarketCalendar) -> Rep
     weight_mismatches: list[date] = []
     for d in checked:
         try:
-            dec = decide_normalised(bars, d, spec, calendar)
+            dec = decide_normalised(bars, d, spec, calendar, symbol)
         except EmitterError:
             skipped += 1
             continue
@@ -138,9 +140,9 @@ def replay(df: pd.DataFrame, spec: EmitterSpec, calendar: MarketCalendar) -> Rep
     )
 
 
-def format_result(r: ReplayResult, spec: EmitterSpec) -> str:
+def format_result(r: ReplayResult, spec: EmitterSpec, symbol: Optional[str] = None) -> str:
     return "\n".join([
-        f"replay {spec.strategy_id} ({spec.symbol} {spec.family} hold={spec.hold}) "
+        f"replay {spec.strategy_id} ({symbol or ','.join(spec.symbols)} {spec.family} hold={spec.hold}) "
         f"from {HISTORY_START}",
         f"  days checked            {r.days_checked} (skipped for bar gaps: {r.days_skipped_gap})",
         f"  backtest entries (cell) {r.n_backtest_total}, comparable {r.n_backtest_entries}  (entry day = next session after signal close; sequential rule)",

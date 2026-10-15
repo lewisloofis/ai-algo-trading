@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-08-18T09:00:00+07:00",
+  "strategy_id": "test_single",
+  "capital_model": "owned_cash",
+  "base_notional_idr": 8320,
+  "targets": [
+    {
+      "symbol": "AAAA",
+      "weight": 1.0
+    }
+  ],
+  "constraints": {
+    "max_participation_rate": 0.05,
+    "complete_by": "2026-08-18T11:30:00+07:00",
+    "board": "RG"
+  }
+}

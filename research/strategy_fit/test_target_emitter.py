@@ -81,7 +81,7 @@ class TestSignalReuse:
         assert SPEC.signal_fn is daily_momentum_signal
 
     def test_spec_matches_grid_cell_parameters(self):
-        assert (SPEC.symbol, SPEC.hold) == ("BNBR", 2)
+        assert (SPEC.symbols, SPEC.hold) == (("BNBR",), 2)
         assert SPEC.family == "daily_momentum"
         assert SPEC.capital_model == "owned_cash"
         assert SPEC.strategy_id == "bnbr_momo_h2"
@@ -249,7 +249,7 @@ class TestBuildTarget:
         bars = _bars(LAST, _closes_with_up_rows(N, up))
         as_of = CALENDAR.next_trading_day(LAST)
         dec = _weight(bars, as_of)
-        return te.build_target(dec, last_close=float(bars["close"].iloc[-1]), spec=SPEC)
+        return te.build_target([dec], SPEC)
 
     def test_schema_matches_the_go_loader_exactly(self):
         doc = self._doc(True)
@@ -326,9 +326,9 @@ class TestWrite:
         bars = _bars(LAST, _closes_with_up_rows(N, {38}))
         as_of = CALENDAR.next_trading_day(LAST)
         dec = _weight(bars, as_of)
-        doc = te.build_target(dec, last_close=float(bars["close"].iloc[-1]), spec=SPEC)
+        doc = te.build_target([dec], SPEC)
         out = tmp_path / name
-        te.write_outputs(out, doc, te.build_sidecar(dec, SPEC, doc))
+        te.write_outputs(out, doc, te.build_sidecar([dec], SPEC, doc))
         return out
 
     def test_idempotent_byte_identical(self, tmp_path):
@@ -345,7 +345,7 @@ class TestWrite:
         out = self._write(tmp_path)
         assert "reason" not in json.loads(out.read_text())
         side = json.loads(te.sidecar_path(out).read_text())
-        assert side["reason"] and side["signal_value"] > 0
+        assert side["symbols"][0]["reason"] and side["symbols"][0]["signal_value"] > 0
         assert side["strategy_id"] == "bnbr_momo_h2"
 
     def test_failed_write_leaves_no_partial_target(self, tmp_path, monkeypatch):
@@ -358,9 +358,9 @@ class TestWrite:
         monkeypatch.setattr(os, "replace", boom)
         bars = _bars(LAST, _closes_with_up_rows(N, {38}))
         dec = _weight(bars, CALENDAR.next_trading_day(LAST))
-        doc = te.build_target(dec, last_close=100.0, spec=SPEC)
+        doc = te.build_target([dec], SPEC)
         with pytest.raises(OSError):
-            te.write_outputs(out, doc, te.build_sidecar(dec, SPEC, doc))
+            te.write_outputs(out, doc, te.build_sidecar([dec], SPEC, doc))
         assert out.read_text() == "OLD"
         assert [p.name for p in tmp_path.iterdir()] == ["t.json"]
 
@@ -374,7 +374,7 @@ class TestCli:
         monkeypatch.delenv("SB_BEARER_TOKEN", raising=False)
         rc = te.main([
             "emit", "--strategy", "bnbr_momo_h2", "--as-of", "2026-09-14",
-            "--out", str(tmp_path / "t.json"), "--source", "live",
+            "--out", str(tmp_path / "t.json"), "--source", "live", "--allow-retired",
         ])
         assert rc != 0
         assert "SB_BEARER_TOKEN" in capsys.readouterr().err
@@ -390,7 +390,7 @@ class TestCli:
             pytest.skip("local BNBR daily parquet absent")
         out = tmp_path / "t.json"
         rc = te.main(["emit", "--strategy", "bnbr_momo_h2", "--as-of", "2026-09-14",
-                      "--out", str(out)])
+                      "--out", str(out), "--allow-retired"])
         assert rc == 0
         doc = json.loads(out.read_text())
         assert doc["targets"][0]["symbol"] == "BNBR"
@@ -402,7 +402,7 @@ class TestCli:
         if not LOCAL_BNBR.exists():
             pytest.skip("local BNBR daily parquet absent")
         rc = te.main(["emit", "--strategy", "bnbr_momo_h2", "--as-of", "2026-12-30",
-                      "--out", str(tmp_path / "t.json")])
+                      "--out", str(tmp_path / "t.json"), "--allow-retired"])
         assert rc != 0
         assert "stale" in capsys.readouterr().err.lower()
         assert not (tmp_path / "t.json").exists()
