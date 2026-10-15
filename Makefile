@@ -14,9 +14,10 @@
 #   make paper-day STRATEGY=wifi_momo_h5
 #   make paper-scorecard STRATEGY=wifi_momo_h5
 #   make publish-dashboard
+#   make runner-dry-run | runner-install | runner-status | runner-uninstall   (unattended paper runner)
 #   make clean
 
-.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard publish-dashboard recon clean
+.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test
 
 build:
 	mkdir -p $(CURDIR)/bin
@@ -206,3 +207,47 @@ publish-dashboard: dashboard
 
 clean:
 	rm -rf bin
+
+# ---------------------------------------------------------------------------
+# Unattended daily PAPER runner (research/runner, docs/runbooks/unattended-runner.md).
+# Two launchd jobs, Mon-Fri, local time must be WIB: 08:45 `runner morning`
+# (preflight, start, watch) and 16:20 `runner post-close`. It never arms live trading.
+#   make runner-dry-run [RUNNER_DATE=2026-10-16]   print the plan, execute nothing
+#   make runner-install                            install + load both launchd jobs
+#   make runner-status                             loaded?  last log lines
+#   make runner-uninstall
+# ---------------------------------------------------------------------------
+RUNNER_DATE   ?=
+RUNNER_AGENTS := $(HOME)/Library/LaunchAgents
+RUNNER_LABELS := com.sbalgo.runner.morning com.sbalgo.runner.postclose
+RUNNER_PATH   ?= /opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+runner-dry-run:
+	cd research && $(DASH_PY) -m runner all --dry-run $(if $(RUNNER_DATE),--date $(RUNNER_DATE),)
+
+runner-test:
+	cd research && $(DASH_PY) -m pytest -q runner/
+
+runner-install:
+	@test -x "$(DASH_PY)" || { echo "runner-install: $(DASH_PY) not found (create research/.venv or pass DASH_PY=)"; exit 2; }
+	@test "$$(date +%z)" = "+0700" || { echo "runner-install: this Mac's time zone is not WIB (+0700); launchd uses local time. Set it to Asia/Jakarta first."; exit 2; }
+	@mkdir -p $(RUNNER_AGENTS) $(CURDIR)/runs/runner
+	@for l in $(RUNNER_LABELS); do \
+		sed -e 's#@REPO_ROOT@#$(CURDIR)#g' -e 's#@PYTHON@#$(DASH_PY)#g' -e 's#@PATH@#$(RUNNER_PATH)#g' \
+			ops/launchd/$$l.plist.template > $(RUNNER_AGENTS)/$$l.plist; \
+		launchctl bootout gui/$$(id -u)/$$l 2>/dev/null || true; \
+		launchctl bootstrap gui/$$(id -u) $(RUNNER_AGENTS)/$$l.plist && echo "installed $$l"; \
+	done
+
+runner-uninstall:
+	@for l in $(RUNNER_LABELS); do \
+		launchctl bootout gui/$$(id -u)/$$l 2>/dev/null && echo "unloaded $$l" || echo "$$l was not loaded"; \
+		rm -f $(RUNNER_AGENTS)/$$l.plist; \
+	done
+
+runner-status:
+	@for l in $(RUNNER_LABELS); do \
+		if launchctl print gui/$$(id -u)/$$l >/dev/null 2>&1; then echo "$$l: loaded"; else echo "$$l: NOT loaded"; fi; \
+	done
+	@echo "--- last runner log lines ($(CURDIR)/runs/runner/runner.log)"
+	@tail -n 15 $(CURDIR)/runs/runner/runner.log 2>/dev/null || echo "(no log yet)"
