@@ -28,6 +28,9 @@ type Config struct {
 	Symbols         string // Source == live
 	Segments        string // Source == replay
 	Retry           int    // deliberate resubmission level, passed through; never raised automatically
+	// MaxBuyNotionalIDR is the absolute per-day cap on cumulative BUY notional,
+	// forwarded to strategy-run, which enforces it in its risk layer (0 = off).
+	MaxBuyNotionalIDR int64
 
 	RunsDir        string   // stores live here; default "runs"
 	PriorStores    []string // extra globs (earlier days); the strategy's own -aN stores are always added

@@ -41,6 +41,14 @@ type RiskSink struct {
 	clock      Clock
 	killSwitch *killSwitch
 	state      *mutableState
+
+	// buyCapIDR is the absolute cap on cumulative BOUGHT notional (0 = off),
+	// set only through WithMaxBoughtNotionalIDR. See buycap.go.
+	buyCapIDR float64
+
+	// notPlaced decides whether an inner.Submit error proves the order never
+	// reached the market. Defaults to errors.Is(err, ErrNotPlaced).
+	notPlaced NotPlacedFunc
 }
 
 // NewRiskSink builds a RiskSink wrapping inner.
@@ -58,7 +66,9 @@ type RiskSink struct {
 //     switch; the in-process trip (on a confirmed daily-loss breach, or via
 //     TripKillSwitch) still applies.
 //   - clock defaults to time.Now when nil.
-func NewRiskSink(inner engine.OrderSink, equity SleeveEquityIDR, limits Limits, marketGate MarketGate, pnl PnLProvider, killSwitchFilePath string, clock Clock) (*RiskSink, error) {
+//   - opts are optional extras (WithMaxBoughtNotionalIDR); a bad option value
+//     is a construction error, never a silent no-op.
+func NewRiskSink(inner engine.OrderSink, equity SleeveEquityIDR, limits Limits, marketGate MarketGate, pnl PnLProvider, killSwitchFilePath string, clock Clock, opts ...Option) (*RiskSink, error) {
 	if inner == nil {
 		return nil, errors.New("risk: NewRiskSink: inner sink is required")
 	}
@@ -71,7 +81,7 @@ func NewRiskSink(inner engine.OrderSink, equity SleeveEquityIDR, limits Limits, 
 	if clock == nil {
 		clock = time.Now
 	}
-	return &RiskSink{
+	r := &RiskSink{
 		inner:      inner,
 		caps:       resolveCaps(equity, limits),
 		marketGate: marketGate,
@@ -79,7 +89,14 @@ func NewRiskSink(inner engine.OrderSink, equity SleeveEquityIDR, limits Limits, 
 		clock:      clock,
 		killSwitch: newKillSwitch(killSwitchFilePath),
 		state:      newMutableState(),
-	}, nil
+		notPlaced:  defaultNotPlaced,
+	}
+	for _, opt := range opts {
+		if err := opt(r); err != nil {
+			return nil, fmt.Errorf("risk: NewRiskSink: %w", err)
+		}
+	}
+	return r, nil
 }
 
 // Submit runs every pre-trade gate and, only if all pass, forwards intent
@@ -134,21 +151,31 @@ func (r *RiskSink) Submit(ctx context.Context, intent engine.OrderIntent) (engin
 		return "", fmt.Errorf("%w: gross exposure %.0f IDR would exceed cap %.0f IDR", ErrCapExceeded, projectedGross, r.caps.maxGrossExposureIDR)
 	}
 
+	if err := r.checkBuyCap(intent, notional); err != nil {
+		r.state.mu.Unlock()
+		return "", err
+	}
+
 	// Every gate passed: reserve the accounting under this order's id, then
 	// forward. The reservation is reversed if inner.Submit reports the order
 	// never reached the market, and its exposure is reversed on Cancel — see
 	// mutableState.reservations for why deriving exposure from intents alone
 	// is wrong in BOTH directions.
-	r.state.reserve(intent.OrderID, intent.Symbol, newPos-curPos, notional)
+	r.state.reserve(intent.OrderID, intent.Symbol, newPos-curPos, notional, boughtNotional(intent, notional))
 	r.state.mu.Unlock()
 
 	id, err := r.inner.Submit(ctx, intent)
 	if err != nil {
-		// The order never reached the market: it consumed neither exposure
-		// nor the day's notional budget.
-		r.state.mu.Lock()
-		r.state.releaseAll(intent.OrderID)
-		r.state.mu.Unlock()
+		// Refund ONLY when the error proves nothing reached the market (see
+		// notplaced.go). A timeout, a 5xx or an unknown error may mean the
+		// broker accepted the order: its exposure, day notional and buy-cap
+		// consumption stay reserved, because the safe direction for every
+		// cap is to assume the order is live.
+		if r.notPlaced(err) {
+			r.state.mu.Lock()
+			r.state.releaseAll(intent.OrderID)
+			r.state.mu.Unlock()
+		}
 		return "", err
 	}
 

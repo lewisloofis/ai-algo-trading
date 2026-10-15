@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 from lib.market_calendar import CALENDAR
-from runner import token_expiry
+from runner import livepre, token_expiry
+from runner.arm import read_arm_file
 from runner.config import ACCESS_TOKEN_ENV, BEARER_TOKEN_ENV, Config
-from runner.strategies import select
+from runner.strategies import armed_candidates, select
 
 FAIL, WARN, OK = "fail", "warn", "ok"
 
@@ -88,14 +89,22 @@ def run_preflight(cfg: Config, day: date, now_epoch: float, calendar=CALENDAR,
         checks.append(Check("calendar", WARN, "holiday calendar is provisional"))
 
     paper, _other = select(cfg.registry)
-    if not paper:
-        checks.append(Check("strategies", FAIL, "no spec with status 'paper'"))
+    armed = armed_candidates(cfg.registry, read_arm_file(cfg.runs_dir, day))
+    if not paper and not armed:
+        checks.append(Check("strategies", FAIL, "no spec with status 'paper' and none armed"))
     prev = calendar.prev_trading_day(day)
-    for symbol in sorted({s for spec in paper for s in spec.symbols}):
+    for symbol in sorted({s for spec in [*paper, *armed] for s in spec.symbols}):
         checks.append(check_prev_bar(symbol, prev, cfg.daily_dir, load))
 
     checks.append(_token_check(ACCESS_TOKEN_ENV, cfg, now_epoch, cfg.min_access_token_hours, required=True))
     checks.append(_token_check(BEARER_TOKEN_ENV, cfg, now_epoch, 8.0, required=False))
+    if armed:
+        # Live-only checks are warnings here: a stale trading token must not stop the paper sessions.
+        # The live decision (modes.decide_mode) re-reads them and simply refuses LIVE.
+        problems = livepre.live_problems(cfg.env, now_epoch, cfg.min_access_token_hours)
+        ids = ", ".join(s.strategy_id for s in armed)
+        checks += [Check("live preflight", WARN, p) for p in problems] or [
+            Check("live preflight", OK, f"armed ({ids}): trading token, expiry and account ok")]
 
     try:
         killed = os.path.lexists(cfg.kill_file)

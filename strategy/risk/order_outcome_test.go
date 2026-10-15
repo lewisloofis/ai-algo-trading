@@ -3,6 +3,7 @@ package risk
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ type rejectingSink struct{ recordingSink }
 
 func (s *rejectingSink) Submit(ctx context.Context, i engine.OrderIntent) (engine.OrderID, error) {
 	s.recordingSink.Submit(ctx, i)
-	return "", errors.New("broker rejected")
+	return "", fmt.Errorf("broker rejected: %w", ErrNotPlaced)
 }
 
 // exposureSink builds a RiskSink whose only binding gate is exposure: the

@@ -22,21 +22,12 @@ SAT = date(2026, 10, 17)
 
 # ---- modes + arm file --------------------------------------------------------------------------
 
-def test_modes_paper_and_skip_only():
+def test_modes_without_a_live_gate_are_paper_or_skip_only():
+    """No gate supplied (preflight, post-close, plan listings): a candidate can never be LIVE."""
     assert modes.decide_mode(PAPER_SPEC).mode == modes.PAPER
     assert modes.decide_mode(RETIRED_SPEC).mode == modes.SKIP
     cand = modes.decide_mode(CAND_SPEC)
-    assert cand.mode == modes.SKIP and "live not supported in this version" in cand.reason
-
-
-def test_valid_arm_file_never_changes_the_mode(tmp_path):
-    (tmp_path / "arm").mkdir()
-    (tmp_path / "arm" / f"ARM-{DAY}.json").write_text(json.dumps(
-        {"date": str(DAY), "strategies": {"cand_x": {"max_idr": 1_000_000}}}))
-    arm = modes.read_arm_file(tmp_path, DAY)
-    assert arm.valid and arm.max_idr == {"cand_x": 1_000_000}
-    m = modes.decide_mode(CAND_SPEC, arm)
-    assert m.mode == modes.SKIP and "not supported" in m.reason
+    assert cand.mode == modes.SKIP and cand.token is None
 
 
 @pytest.mark.parametrize("doc", [
@@ -56,7 +47,7 @@ def test_absent_arm_file(tmp_path):
     assert not modes.read_arm_file(tmp_path, DAY).present
 
 
-def test_arm_file_is_logged_as_ignored(cfg, alerter, tmp_path):
+def test_arm_file_state_is_logged(cfg, alerter, tmp_path):
     (cfg.runs_dir / "arm").mkdir(parents=True)
     (cfg.runs_dir / "arm" / f"ARM-{DAY}.json").write_text(json.dumps(
         {"date": str(DAY), "strategies": {"cand_x": {"max_idr": 1}}}))
@@ -64,7 +55,7 @@ def test_arm_file_is_logged_as_ignored(cfg, alerter, tmp_path):
     paper = select_and_log(REGISTRY, alerter, cfg.runs_dir, DAY)
     assert [s.strategy_id for s in paper] == ["paper_x"]
     log = cfg.log_file.read_text()
-    assert "live not supported in this version" in log and "skip dead_x" in log
+    assert "arm file ARM-2026-10-15.json: valid" in log and "skip dead_x" in log
 
 
 # ---- preflight ---------------------------------------------------------------------------------
@@ -354,7 +345,7 @@ def test_dry_run_prints_plan_and_executes_nothing(cfg, capsys):
     rc = daily.main(["all", "--dry-run", "--date", str(DAY), "--no-env-file"], cfg=cfg, executor=ex)
     out = capsys.readouterr().out
     assert rc == 0 and not ex.runs and not ex.spawns
-    assert "paper_x" in out and "paper_day" in out and "skip cand_x" in out and "refresh-prices" in out
+    assert "paper_x" in out and "paper_day" in out and "NOT live cand_x" in out and "refresh-prices" in out
     assert "SB_ACCESS_TOKEN=set" in out and cfg.env["SB_ACCESS_TOKEN"] not in out
     assert not cfg.runner_dir.exists()
 

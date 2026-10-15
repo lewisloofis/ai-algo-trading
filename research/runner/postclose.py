@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 from lib.market_calendar import CALENDAR
+from runner import livereport
 from runner.alerts import SUMMARY, WARN, Alerter
 from runner.config import ACCOUNT_ENV, BEARER_TOKEN_ENV, TRADING_TOKEN_ENV, Clock, Config
 from runner.executor import Executor
@@ -72,7 +73,13 @@ def post_close(cfg: Config, day: date, clock: Clock, ex: Executor, alerter: Aler
     body = "\n".join(["sessions: " + ("; ".join(sess) or "none started")]
                      + day_summary(cfg, day, paper_ids)
                      + [f"{n}: {r}" for n, r in results])
+    for sid, entry in sorted(state["strategies"].items()):     # last order events not yet reported
+        if entry.get("live"):
+            livereport.flush_events(cfg, day, sid, entry, alerter, final=True)
     state["post_close"] = {"at": clock.now().isoformat(timespec="seconds"), "failed": failed}
     save_state(sp, state)
     alerter.send(SUMMARY, f"{day} daily summary ({'ALL OK' if not failed else str(len(failed)) + ' step(s) failed'})", body)
+    live_summary = livereport.day_summary(cfg, day, state)
+    if live_summary is not None:
+        alerter.send(SUMMARY, *live_summary)
     return 1 if failed else 0
