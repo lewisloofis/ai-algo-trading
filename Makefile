@@ -13,11 +13,12 @@
 #   make refresh-prices
 #   make paper-day STRATEGY=wifi_momo_h5
 #   make paper-scorecard STRATEGY=wifi_momo_h5
+#   make cost-report                  (B6: realised vs modelled cost of every live and paper fill)
 #   make publish-dashboard
 #   make runner-dry-run | runner-install | runner-status | runner-uninstall   (unattended paper runner)
 #   make clean
 
-.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test token-status token-refresh token-ensure token-test
+.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard cost-report publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test token-status token-refresh token-ensure token-test
 
 build:
 	mkdir -p $(CURDIR)/bin
@@ -187,6 +188,13 @@ paper-day:
 paper-scorecard:
 	@test -n "$(STRATEGY)" || { echo "paper-scorecard: set STRATEGY=<id>"; exit 2; }
 	cd research && $(DASH_PY) -m strategy_fit.paper_scorecard --strategy $(STRATEGY) --runs-dir $(CURDIR)/runs
+
+# cost-report: plan 18 B6. Realised cost (broker fees, slippage vs decision price) of every live and paper fill
+# against the cost model the backtests use (fee + half tick + sqrt impact; financing modelled beside). Reads
+# runs/*.db, runs/recon/*.json, runs/broker_trades.json and research/data/daily; writes
+# research/out_cost_report/cost_report.{json,md}. Read-only, no network. Paper rows only check the simulator.
+cost-report:
+	cd research && $(DASH_PY) -m strategy_fit.cost_report --runs-dir $(CURDIR)/runs
 
 # publish-dashboard copies the built site to S3 beside the market data, so it is
 # readable without the laptop that generated it (plan-19 Stage 6, optional).
