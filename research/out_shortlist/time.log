@@ -1,0 +1,1 @@
+python3 -m strategy_fit.shortlist_2026_10 --out-dir out_shortlist >  2>&1  128.72s user 4.12s system 85% cpu 2:36.16 total

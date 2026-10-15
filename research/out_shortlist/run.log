@@ -1,0 +1,45 @@
+as_of=2026-10-14 universe=199 names; W1 months=33.4
+BIPI  daily_momentum   h5  n= 85 gross=  240.9 edge=  151.8 t= 0.70 d5net= -223.7 pre_edge=  -42.4 state=IN POSITION (exit in 2 session(s))
+BRPT  volume_breakout  h2  n=176 gross=  121.5 edge=   91.3 t= 1.36 d5net=  -43.5 pre_edge=    5.6 state=ENTER next session
+DEWA  daily_momentum   h5  n= 91 gross=  319.0 edge=  133.7 t= 0.86 d5net=    8.3 pre_edge=  -58.0 state=IN POSITION (exit in 2 session(s))
+DSSA  volume_breakout  h2  n=149 gross=  152.0 edge=  104.5 t= 1.44 d5net=  -10.3 pre_edge=  424.0 state=ENTER next session
+PTRO  daily_momentum   h5  n= 92 gross=  375.2 edge=  130.0 t= 0.73 d5net=   86.5 pre_edge=   41.2 state=IN POSITION (exit in 4 session(s))
+RAJA  daily_momentum   h5  n= 89 gross=  293.5 edge=  164.8 t= 0.87 d5net=  -54.4 pre_edge=    1.1 state=IN POSITION (exit in 4 session(s))
+RATU  daily_momentum   h1  n=116 gross=   31.5 edge=    0.5 t= 0.01 d5net= -122.4 pre_edge=    nan state=flat (signal fires only on a positive close; last entry 2026-10-13)
+TAPG  daily_momentum   h5  n= 95 gross=  210.0 edge=   90.2 t= 1.12 d5net=   41.5 pre_edge=   32.6 state=IN POSITION (exit in 4 session(s))
+TINS  mean_reversion   h5  n= 81 gross=  277.4 edge=   80.4 t= 0.57 d5net=   13.4 pre_edge=  -71.1 state=flat (signal fires only on a positive close; last entry 2026-10-07)
+WIFI  daily_momentum   h5  n= 92 gross=  363.2 edge=  109.2 t= 0.55 d5net=   11.1 pre_edge=   10.0 state=IN POSITION (exit in 4 session(s))
+BNBR  daily_momentum   h2  n=103 gross=   57.0 edge=    8.1 t= 0.08 d5net= -351.7 pre_edge=  -16.8 state=flat (signal fires only on a positive close; last entry 2026-10-09)
+HRTA  volume_breakout  h5  n= 94 gross=  164.8 edge=   -8.7 t=-0.07 d5net=  -42.2 pre_edge=    5.4 state=flat (signal fires only on a positive close; last entry 2026-10-07)
+INCO  mean_reversion   h2  n=143 gross=   36.5 edge=   23.7 t= 0.46 d5net=  -86.7 pre_edge=   16.5 state=IN POSITION (exit in 1 session(s))
+pooled daily_momentum h1
+pooled daily_momentum h2
+pooled daily_momentum h5
+pooled daily_momentum h20
+pooled daily_momentum h60
+pooled mean_reversion h1
+pooled mean_reversion h2
+pooled mean_reversion h5
+pooled mean_reversion h20
+pooled mean_reversion h60
+pooled volume_breakout h1
+pooled volume_breakout h2
+pooled volume_breakout h5
+pooled volume_breakout h20
+pooled volume_breakout h60
+pooled gap_event h1
+pooled gap_event h2
+pooled gap_event h5
+pooled gap_event h20
+pooled gap_event h60
+pooled volume_spike_event h1
+pooled volume_spike_event h2
+pooled volume_spike_event h5
+pooled volume_spike_event h20
+pooled volume_spike_event h60
+pooled foreign_flow_spike_event h1
+pooled foreign_flow_spike_event h2
+pooled foreign_flow_spike_event h5
+pooled foreign_flow_spike_event h20
+pooled foreign_flow_spike_event h60
+wrote out_shortlist/shortlist.json
