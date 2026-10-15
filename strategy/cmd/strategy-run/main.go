@@ -928,16 +928,41 @@ func globSegments(pattern string) ([]string, error) {
 	return matches, nil
 }
 
-// globFiles resolves pattern into a sorted list of matching file paths.
-// Generic despite sitting next to globSegments (whose name predates this
-// second, non-segment use — see --prior-stores/loadPriorState).
+// globFiles resolves pattern into a sorted, de-duplicated list of matching
+// file paths. pattern may be several globs separated by commas (see
+// splitGlobs), so a supervisor can name e.g. every earlier day's stores and
+// today's attempts in one --prior-stores value; a single glob behaves exactly
+// as before. Generic despite sitting next to globSegments (whose name predates
+// this second, non-segment use — see --prior-stores/loadPriorState).
 func globFiles(pattern string) ([]string, error) {
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return nil, err
+	seen := map[string]bool{}
+	var out []string
+	for _, g := range splitGlobs(pattern) {
+		matches, err := filepath.Glob(g)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range matches {
+			if !seen[m] {
+				seen[m] = true
+				out = append(out, m)
+			}
+		}
 	}
-	sort.Strings(matches)
-	return matches, nil
+	sort.Strings(out)
+	return out, nil
+}
+
+// splitGlobs splits a comma-separated list of globs, dropping blanks. A file
+// name containing a comma cannot be matched by --prior-stores.
+func splitGlobs(s string) []string {
+	var out []string
+	for _, g := range strings.Split(s, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 func parsePacing(s string) (engine.PacingMode, error) {

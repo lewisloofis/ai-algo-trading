@@ -752,3 +752,25 @@ func TestNewStrategy_RetryAttemptedSemantics(t *testing.T) {
 		})
 	}
 }
+
+// --prior-stores accepts several comma-separated globs (live-session passes
+// earlier days' stores plus today's attempt stores in one value).
+func TestGlobFiles_CommaSeparatedGlobsUnionAndDedupe(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{"a-1.db", "b-1.db", "c.db"} {
+		if err := os.WriteFile(filepath.Join(dir, n), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := globFiles(filepath.Join(dir, "a-*.db") + ", " + filepath.Join(dir, "*-1.db") + ",")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{filepath.Join(dir, "a-1.db"), filepath.Join(dir, "b-1.db")}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if one, _ := globFiles(filepath.Join(dir, "c.db")); len(one) != 1 {
+		t.Fatalf("single glob regressed: %v", one)
+	}
+}
