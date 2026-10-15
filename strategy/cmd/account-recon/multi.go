@@ -153,8 +153,8 @@ func printMulti(w io.Writer, r recon.Report, path string, imported bool) {
 		if !tc.Checked {
 			fmt.Fprintf(w, "Trade check: NOT done — %s\n", tc.Error)
 		} else {
-			fmt.Fprintf(w, "Trade check: %d broker trade(s): %d matched, %d broker-only (manual), %d store-only (phantom); %d fee gap(s) over Rp 0.5\n",
-				tc.BrokerTrades, tc.Matched, tc.BrokerOnly, tc.StoreOnly, tc.FeeGapsFlagged)
+			fmt.Fprintf(w, "Trade check: %d broker trade(s): %d matched, %d broker-only (manual), %d store-only (phantom), %d awaiting broker history; %d fee gap(s) over Rp 0.5\n",
+				tc.BrokerTrades, tc.Matched, tc.BrokerOnly, tc.StoreOnly, tc.PendingHistory, tc.FeeGapsFlagged)
 			if tc.NewlyImported > 0 {
 				verb := "would import"
 				if imported {
@@ -163,6 +163,9 @@ func printMulti(w io.Writer, r recon.Report, path string, imported bool) {
 				fmt.Fprintf(w, "  %s %d broker trade(s) into the ledger (source %q)\n", verb, tc.NewlyImported, recon.SourceBrokerImport)
 			}
 		}
+	}
+	for _, wn := range r.Warnings {
+		fmt.Fprintf(w, "WARNING: %s\n", wn)
 	}
 	for _, e := range r.Errors {
 		fmt.Fprintf(w, "ERROR: %s\n", e)

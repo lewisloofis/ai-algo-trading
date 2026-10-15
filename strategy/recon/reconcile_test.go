@@ -151,7 +151,7 @@ func TestReconcile_ManualTradeCountsWhenBrokerHistoryUnavailable(t *testing.T) {
 
 func TestReconcile_PhantomFillIsAnError(t *testing.T) {
 	in := baseInputs()
-	in.StoreFills = append(in.StoreFills, sf("phantom", "buy", "2026-10-14", "10:00:00", 30, 2, 9))
+	in.StoreFills = append(in.StoreFills, sf("phantom", "buy", "2026-10-13", "10:00:00", 30, 2, 9))
 	out := Reconcile(in)
 	tc := out.Report.TradeCheck
 	if tc.StoreOnly != 1 || len(tc.StoreOnlyTrades) != 1 || tc.StoreOnlyTrades[0].OrderID != "phantom" {
@@ -291,5 +291,64 @@ func TestReconcile_MatchedImportIsNotDoubleCounted(t *testing.T) {
 	g := symRow(t, out.Report, "GOTO")
 	if g.ExpectedLots != 1 || g.Status != StatusMatch {
 		t.Fatalf("double counted a trade the stores explain: %+v", g)
+	}
+}
+
+// A store-only fill dated today is not a bug: the broker lists today's trades
+// from the next trading day. Positions still count it.
+func pendingInputs(extra ...engine.StoreFill) Inputs {
+	in := baseInputs()
+	in.StoreFills = append(append([]engine.StoreFill{}, in.StoreFills...), extra...)
+	return in
+}
+
+func TestReconcile_StoreOnlyFillDatedTodayIsPendingNotPhantom(t *testing.T) {
+	in := pendingInputs(sf("rebalance-GOTO-2026-10-14-r2", "sell", "2026-10-14", "20:00:00", 26, 1, 0))
+	r := Reconcile(in).Report
+	if len(r.Errors) != 0 {
+		t.Fatalf("errors = %v, want none", r.Errors)
+	}
+	tc := r.TradeCheck
+	if tc.StoreOnly != 0 || tc.PendingHistory != 1 || len(tc.PendingHistoryTrades) != 1 ||
+		tc.PendingHistoryTrades[0].OrderID != "rebalance-GOTO-2026-10-14-r2" {
+		t.Fatalf("trade check = %+v", tc)
+	}
+	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "awaiting broker history: store order rebalance-GOTO-2026-10-14-r2 (sell 1 GOTO @ 26 on 2026-10-14)") {
+		t.Fatalf("warnings = %v", r.Warnings)
+	}
+	// The pending sell still counts in the expected position (bot: +2 bought, -1 pending sell).
+	if g := symRow(t, r, "GOTO"); g.Breakdown.BotLots != 1 {
+		t.Errorf("bot lots = %d, want 1 (pending sell counted)", g.Breakdown.BotLots)
+	}
+}
+
+func TestReconcile_StoreOnlyFillBeforeTodayStaysPhantom(t *testing.T) {
+	in := pendingInputs(sf("ghost", "sell", "2026-10-13", "10:00:00", 26, 1, 0))
+	r := Reconcile(in).Report
+	if len(r.Errors) != 1 || !strings.Contains(r.Errors[0], "phantom fill: store order ghost") {
+		t.Fatalf("errors = %v", r.Errors)
+	}
+	tc := r.TradeCheck
+	if tc.StoreOnly != 1 || tc.PendingHistory != 0 || len(r.Warnings) != 0 {
+		t.Fatalf("trade check = %+v warnings = %v", tc, r.Warnings)
+	}
+}
+
+func TestReconcile_MixedPendingAndPhantom(t *testing.T) {
+	in := pendingInputs(
+		sf("ghost", "sell", "2026-10-13", "10:00:00", 26, 1, 0),
+		sf("today", "buy", "2026-10-14", "10:00:00", 28, 1, 0))
+	r := Reconcile(in).Report
+	tc := r.TradeCheck
+	if tc.StoreOnly != 1 || tc.PendingHistory != 1 || len(r.Errors) != 1 || len(r.Warnings) != 1 ||
+		!strings.Contains(r.Errors[0], "ghost") || !strings.Contains(r.Warnings[0], "today") {
+		t.Fatalf("tc = %+v errors = %v warnings = %v", tc, r.Errors, r.Warnings)
+	}
+}
+
+func TestReconcile_NoWarningsIsEmptyListInJSON(t *testing.T) {
+	b, _ := json.Marshal(Reconcile(baseInputs()).Report)
+	if !strings.Contains(string(b), `"warnings":[]`) || !strings.Contains(string(b), `"pending_history_trades":[]`) {
+		t.Fatalf("json = %s", b)
 	}
 }

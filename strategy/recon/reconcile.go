@@ -116,6 +116,7 @@ type TradeCheck struct {
 	Matched          int `json:"matched"`
 	BrokerOnly       int `json:"broker_only"`
 	StoreOnly        int `json:"store_only"`
+	PendingHistory   int `json:"pending_history"`
 	NewlyImported    int `json:"newly_imported"`
 	AlreadyImported  int `json:"already_imported"`
 	ManualSuperseded int `json:"manual_superseded"`
@@ -129,6 +130,9 @@ type TradeCheck struct {
 	MatchedTrades    []MatchedEntry    `json:"matched_trades"`
 	BrokerOnlyTrades []BrokerOnlyEntry `json:"broker_only_trades"`
 	StoreOnlyTrades  []StoreOnlyEntry  `json:"store_only_trades"`
+	// PendingHistoryTrades are store-only fills dated today (WIB): the broker
+	// lists a day's trades from the next trading day, so they are expected, not phantom.
+	PendingHistoryTrades []StoreOnlyEntry `json:"pending_history_trades"`
 }
 
 // Sources says what the expected position was derived from.
@@ -152,6 +156,7 @@ type Report struct {
 	TradeCheck   *TradeCheck `json:"trade_check"`
 	Sources      Sources     `json:"sources"`
 	Errors       []string    `json:"errors"`
+	Warnings     []string    `json:"warnings"`
 }
 
 // Output is Reconcile's result: the report plus the broker trades that are
@@ -371,8 +376,8 @@ func Reconcile(in Inputs) Output {
 		tol = DefaultMatchTolerance
 	}
 	tc := &TradeCheck{Skipped: map[string]int{}, Unknown: map[string]int{},
-		MatchedTrades: []MatchedEntry{}, BrokerOnlyTrades: []BrokerOnlyEntry{}, StoreOnlyTrades: []StoreOnlyEntry{}}
-	var errs []string
+		MatchedTrades: []MatchedEntry{}, BrokerOnlyTrades: []BrokerOnlyEntry{}, StoreOnlyTrades: []StoreOnlyEntry{}, PendingHistoryTrades: []StoreOnlyEntry{}}
+	var errs, warnings []string
 
 	imports := append([]ImportedTrade(nil), in.Imported...)
 	var newImports []ImportedTrade
@@ -445,14 +450,22 @@ func Reconcile(in Inputs) Output {
 			tc.NewlyImported++
 		}
 
-		tc.StoreOnly = len(m.StoreOnly)
+		today := in.AsOf.In(account.WIB).Format("2006-01-02")
 		for _, f := range m.StoreOnly {
-			tc.StoreOnlyTrades = append(tc.StoreOnlyTrades, StoreOnlyEntry{
+			e := StoreOnlyEntry{
 				OrderID: f.OrderID, Symbol: f.Symbol, Side: f.Side, Date: fillDate(f),
 				TimeWIB: fillTime(f).Format("15:04:05"), Lots: f.Lots, PriceIDR: f.PriceIDR, FeeIDR: f.FeeIDR,
-			})
-			errs = append(errs, fmt.Sprintf("phantom fill: store order %s (%s %d %s @ %d on %s) has no matching broker trade — a bot bug",
-				f.OrderID, f.Side, f.Lots, f.Symbol, f.PriceIDR, fillDate(f)))
+			}
+			desc := fmt.Sprintf("store order %s (%s %d %s @ %d on %s)", f.OrderID, f.Side, f.Lots, f.Symbol, f.PriceIDR, e.Date)
+			if e.Date == today {
+				tc.PendingHistory++
+				tc.PendingHistoryTrades = append(tc.PendingHistoryTrades, e)
+				warnings = append(warnings, fmt.Sprintf("awaiting broker history: %s — the broker lists today's trades from the next trading day; re-run recon then", desc))
+				continue
+			}
+			tc.StoreOnly++
+			tc.StoreOnlyTrades = append(tc.StoreOnlyTrades, e)
+			errs = append(errs, fmt.Sprintf("phantom fill: %s has no matching broker trade — a bot bug", desc))
 		}
 	}
 
@@ -506,11 +519,14 @@ func Reconcile(in Inputs) Output {
 	if errs == nil {
 		errs = []string{}
 	}
+	if warnings == nil {
+		warnings = []string{}
+	}
 	return Output{
 		NewImports: newImports,
 		Report: Report{
 			Version: ReportVersion, AsOf: asOf.Format(time.RFC3339), Date: asOf.Format("2006-01-02"),
-			AccountLabel: in.AccountLabel, Status: status, Positions: rows, TradeCheck: tc, Errors: errs,
+			AccountLabel: in.AccountLabel, Status: status, Positions: rows, TradeCheck: tc, Errors: errs, Warnings: warnings,
 			Sources: Sources{
 				Stores: append([]string{}, in.StoreFiles...), StoreFills: len(in.StoreFills), UnattributedFills: unattr,
 				ManualTrades: len(manual), BrokerImports: len(activeImports),
