@@ -17,7 +17,7 @@
 #   make runner-dry-run | runner-install | runner-status | runner-uninstall   (unattended paper runner)
 #   make clean
 
-.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test
+.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test token-status token-refresh token-ensure token-test
 
 build:
 	mkdir -p $(CURDIR)/bin
@@ -221,6 +221,23 @@ RUNNER_DATE   ?=
 RUNNER_AGENTS := $(HOME)/Library/LaunchAgents
 RUNNER_LABELS := com.sbalgo.runner.morning com.sbalgo.runner.postclose
 RUNNER_PATH   ?= /opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+# Token rotation (plan 03 phase 5). Reads/writes <repo>/.env.local itself (atomic, 0600); never
+# prints a token. token-status: per-token expiry only. token-refresh: rotate now (first real run).
+# token-ensure: rotate only what has < TOKEN_MIN_HOURS left (what the runner calls).
+TOKEN_MIN_HOURS ?= 12
+
+token-status:
+	cd research && $(DASH_PY) -m token_rotation status --env-file $(CURDIR)/.env.local
+
+token-refresh:
+	cd research && $(DASH_PY) -m token_rotation refresh --env-file $(CURDIR)/.env.local
+
+token-ensure:
+	cd research && $(DASH_PY) -m token_rotation ensure --env-file $(CURDIR)/.env.local --min-hours $(TOKEN_MIN_HOURS)
+
+token-test:
+	cd research && $(DASH_PY) -m pytest -q token_rotation/
 
 runner-dry-run:
 	cd research && $(DASH_PY) -m runner all --dry-run $(if $(RUNNER_DATE),--date $(RUNNER_DATE),)
