@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dashboard import health as H
+from dashboard import live_view
 from dashboard import results as R
 from dashboard.render import Column, banner, colored, esc, fee_money, money, money_exact, page, pill, table, tile
 from dashboard.terms import term_link
@@ -116,6 +117,7 @@ def render(d) -> str:
         "<h1>Overview</h1>"
         '<p class="lead">What the trading bot is doing, whether the machinery is working, and how the strategy research stands. '
         "Everything is in rupiah and plain words; unfamiliar terms link to the Glossary.</p>"
+        + (live_view.panel(d.online, d.now_wib.strftime("%Y-%m-%d %H:%M WIB")) if d.online is not None else "")
         + decision_block(d)
         + "<h2>Is the machinery working?</h2>"
         + health_table(d.health)

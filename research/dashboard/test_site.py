@@ -111,9 +111,10 @@ def test_every_page_is_written_with_the_shared_nav(world):
     assert any(n.startswith("strategy-aaaa") for n in names)  # a detail page for the survivor
     for n in names:
         page = text(out, n)
-        # No external scripts, ever; the only script is the small inline chart-hover one.
+        # No external scripts, ever; the only scripts are the inline chart-hover one and, on the
+        # Overview, the live "Online now" refresher.
         assert 'class="top"' in page and "<script src" not in page
-        assert page.count("<script>") == (1 if "data-hv=" in page else 0)
+        assert page.count("<script>") == (1 if "data-hv=" in page else 0) + (1 if n == "index.html" else 0)
 
 
 def test_the_account_number_is_never_rendered(world):
@@ -397,3 +398,21 @@ def test_glossary_explains_manual_trade_and_reconciliation_note(world):
     build_site(opt)
     g = text(out, "glossary.html")
     assert "Manual trade" in g and "Reconciliation note" in g
+
+
+def test_overview_has_the_online_now_panel_and_lists_every_fresh_session(world):
+    opt, runs, out = world
+    for name, strat in (("a.status.json", "wifi_momo_h5"), ("b.status.json", "ptro_momo_h5")):
+        (runs / name).write_text(json.dumps({
+            "wall_clock_ns": int((NOW.timestamp() - 5) * 1e9), "outcome": "running", "strategy_id": strat,
+            "sink_kind": "paper", "source": "live"}))
+    (runs / "dead.status.json").write_text(json.dumps({
+        "wall_clock_ns": int((NOW.timestamp() - 3600) * 1e9), "outcome": "running", "strategy_id": "orb",
+        "sink_kind": "paper", "source": "live"}))
+    build_site(opt)
+    page = text(out, "index.html")
+    assert 'id="live-panel"' in page and "Online now" in page and "(2)" in page
+    assert "wifi_momo_h5" in page and "ptro_momo_h5" in page and "Stopped without ending" in page
+    assert "static snapshot" in page and "Last rebuilt" in page
+    assert page.index('id="live-panel"') < page.index("Is the machinery working?")
+    assert "innerHTML" not in page

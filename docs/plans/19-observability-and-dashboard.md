@@ -93,6 +93,21 @@ Panels B and C are gated on work this plan itself specifies (§5 Stage 3, Stage 
 self-contained HTML file. No server, no JS build step, no runtime dependency
 that can be down when the thing being observed is down.
 
+**Live view (2026-10-15, optional).** `make dashboard-live` (`python -m dashboard serve`) serves the
+same site on `http://127.0.0.1:8765/` (this machine only; any other bind address is refused;
+`PORT=9000` changes the port, `HEALTHCHECK=skip` skips the slow S3 check on each rebuild). It adds no
+new numbers: the pages are rebuilt every 5 minutes, or sooner when a `runs/*.db`, a daily price file,
+or a heartbeat file's outcome changes, into a temp directory that is swapped in only when the build
+succeeds (a failed rebuild is logged and the previous pages stay up). The Overview's **Online now**
+panel is also in every plain `make dashboard` build (as of the build time); under the live server it
+re-reads `GET /live.json` every 5 seconds. **Online** means: the status file
+`runs/*status*.json` says `running` AND was rewritten within the last 120 seconds
+(`health.HEARTBEAT_STALE_S`). A file that says `running` but has gone quiet is shown as
+"Stopped without ending" (the program crashed or was killed), never as online. Every fresh file is
+listed, so several sessions (e.g. two paper sessions) show at once. Finished/failed runs from the last
+3 days are listed dimmed. Code: `research/dashboard/live.py` (classification), `live_view.py` (panel),
+`serve.py` (server + rebuilds).
+
 ## 3. Panel A — the alpha mining process
 
 **Question answered:** where does a candidate strategy die, and how many die there?
