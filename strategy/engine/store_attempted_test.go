@@ -79,3 +79,45 @@ func TestAttemptedWindows_EmptyStoreReturnsEmptySet(t *testing.T) {
 		t.Fatalf("AttemptedWindows = %v, want empty", got)
 	}
 }
+
+// TestAttemptedWindowsForRetry pins which prior attempts block which --retry
+// level: retry 0 sees every attempt (historical behaviour); retry N sees only
+// attempts whose order id carries the exact "-r<N>" suffix.
+func TestAttemptedWindowsForRetry(t *testing.T) {
+	recvNs := int64(1790039100000000000) // 2026-09-24 09:05 WIB
+	ids := map[string]string{"AAA": "rebalance-AAA-2026-09-24", "BBB": "rebalance-BBB-2026-09-24-r2", "CCC": "rebalance-CCC-2026-09-24-r3", "DDD": "rebalance-DDD-2026-09-24-r22"}
+	cases := []struct {
+		name  string
+		retry int
+		want  []string
+	}{
+		{"retry 0 sees all", 0, []string{"AAA", "BBB", "CCC", "DDD"}},
+		{"retry 2 sees only -r2", 2, []string{"BBB"}},
+		{"retry 3 sees only -r3", 3, []string{"CCC"}},
+		{"retry 4 sees none", 4, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := newTestStore(t)
+			var seq int64
+			for sym, id := range ids {
+				seq++
+				if err := store.InsertIntent(IntentRow{Seq: seq, RecvNs: recvNs, StrategyID: "test", Symbol: sym, Side: "buy", PriceIDR: 1, Lots: 1, OrderID: id, SinkKind: "live"}); err != nil {
+					t.Fatalf("InsertIntent: %v", err)
+				}
+			}
+			got, err := store.AttemptedWindowsForRetry("test", "live", c.retry)
+			if err != nil {
+				t.Fatalf("AttemptedWindowsForRetry: %v", err)
+			}
+			if len(got) != len(c.want) {
+				t.Fatalf("got %v, want symbols %v", got, c.want)
+			}
+			for _, sym := range c.want {
+				if !got[JakartaDate(recvNs)+"|"+sym] {
+					t.Fatalf("got %v, missing %s", got, sym)
+				}
+			}
+		})
+	}
+}

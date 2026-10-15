@@ -146,11 +146,15 @@ func run() error {
 	allowPositionMismatch := flag.Bool("allow-position-mismatch", false, "start --sink live even though the broker's holdings do not match the position loaded from --prior-stores + manual/imported trades (DANGEROUS: the bot will trade from a position the broker disagrees with; loudly logged and written to the run row)")
 	manualTradesPath := flag.String("manual-trades", defaultManualTradesPath, "manual trades file used by the position gate (a missing file means none)")
 	brokerLedgerPath := flag.String("broker-ledger", defaultBrokerLedgerPath, "broker-imported trades ledger used by the position gate (written by account-recon --stores)")
+	retryFlag := flag.Int("retry", 0, "deliberate same-day resubmission level (--strategy rebalance only): 0 = off (default, ids unchanged); N >= 2 suffixes rebalance order ids with -rN so Carina does not reject the order as a duplicate ui_ref of an earlier cancelled one; 1 is invalid")
 	flag.Parse()
 
 	if *storePath == "" {
 		flag.Usage()
 		os.Exit(2)
+	}
+	if err := validateRetry(*retryFlag, *strategyName); err != nil {
+		return err
 	}
 	if err := validateSinkSource(*sinkName, *source); err != nil {
 		return err
@@ -216,12 +220,16 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	strat, stratID, err := newStrategy(*strategyName, *targetPortfolioPath, priorState, *limitPriceIDR, at)
+	strat, stratID, err := newStrategy(*strategyName, *targetPortfolioPath, priorState, *limitPriceIDR, at, *retryFlag)
 	if err != nil {
 		return err
 	}
 	if *limitPriceIDR > 0 {
 		log.Printf("WARNING: --limit-price-idr=%d is in force: every rebalance order is submitted at this FIXED diagnostic price, not the market price (first-live-order diagnostic, not a pricing policy)", *limitPriceIDR)
+	}
+
+	if *retryFlag != 0 {
+		log.Printf("WARNING: --retry=%d is in force: rebalance order ids get suffix -r%d (deliberate same-day resubmission)", *retryFlag, *retryFlag)
 	}
 
 	if rs, ok := strat.(*rebalance.Strategy); ok && *source == "live" {
@@ -516,7 +524,10 @@ type priorStateConfig struct {
 // for any strategy but rebalance; rebalance.New refuses it for a
 // multi-target portfolio or a non-tick-valid price. at is the parsed
 // --rebalance-at window opening time (rebalance only).
-func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limitPriceIDR int64, at rebalanceAt) (engine.Strategy, string, error) {
+func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limitPriceIDR int64, at rebalanceAt, retry int) (engine.Strategy, string, error) {
+	if err := validateRetry(retry, name); err != nil {
+		return nil, "", err
+	}
 	if limitPriceIDR < 0 {
 		return nil, "", fmt.Errorf("--limit-price-idr must not be negative (got %d)", limitPriceIDR)
 	}
@@ -541,9 +552,10 @@ func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limi
 			Schedule:  rebalance.DailyAt(at.hour, at.min),
 
 			LimitPriceIDR: limitPriceIDR,
+			Retry:         retry,
 		}
 		if prior != nil && prior.glob != "" {
-			attempted, initial, err := loadPriorState(prior.glob, tp.StrategyID, prior.sinkKind, prior.account)
+			attempted, initial, err := loadPriorState(prior.glob, tp.StrategyID, prior.sinkKind, prior.account, retry)
 			if err != nil {
 				return nil, "", fmt.Errorf("recover restart state: %w", err)
 			}
@@ -580,7 +592,7 @@ func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limi
 // Each matched file's DerivedPositions reflects only THAT file's own fills
 // — one run's fills never appear in another run's store — so summing
 // positions across files is correct, not double-counting.
-func loadPriorState(glob, strategyID, sinkKind, account string) (map[string]bool, map[string]int, error) {
+func loadPriorState(glob, strategyID, sinkKind, account string, retry int) (map[string]bool, map[string]int, error) {
 	paths, err := globFiles(glob)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve %q: %w", glob, err)
@@ -594,7 +606,7 @@ func loadPriorState(glob, strategyID, sinkKind, account string) (map[string]bool
 			return nil, nil, fmt.Errorf("open %s: %w", path, err)
 		}
 
-		aw, err := s.AttemptedWindows(strategyID, sinkKind)
+		aw, err := s.AttemptedWindowsForRetry(strategyID, sinkKind, retry)
 		if err != nil {
 			s.Close()
 			return nil, nil, fmt.Errorf("attempted windows %s: %w", path, err)
@@ -629,6 +641,18 @@ func loadPriorState(glob, strategyID, sinkKind, account string) (map[string]bool
 		}
 	}
 	return attempted, positions, nil
+}
+
+// validateRetry checks --retry before anything is created: 0 (off) or N >= 2,
+// and only with --strategy rebalance (the only strategy whose ids it changes).
+func validateRetry(retry int, strategy string) error {
+	if err := rebalance.ValidateRetry(retry); err != nil {
+		return fmt.Errorf("--retry: %w", err)
+	}
+	if retry != 0 && strategy != "rebalance" {
+		return fmt.Errorf("--retry is only valid with --strategy rebalance (got --strategy %q)", strategy)
+	}
+	return nil
 }
 
 // newInnerSink builds the unwrapped order sink named by sinkName. For

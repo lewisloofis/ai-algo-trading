@@ -194,10 +194,22 @@ func (s *PostTradeStore) OrderIDs(sinkKind, account string) (map[string]struct{}
 // caller recovering state after a crash must read this from the earlier
 // file(s), not the one it is about to write to.
 func (s *PostTradeStore) AttemptedWindows(strategyID, sinkKind string) (map[string]bool, error) {
-	rows, err := s.db.Query(
-		`SELECT DISTINCT symbol, recv_ns FROM order_intent WHERE strategy_id = ? AND sink_kind = ?`,
-		strategyID, sinkKind,
-	)
+	return s.AttemptedWindowsForRetry(strategyID, sinkKind, 0)
+}
+
+// AttemptedWindowsForRetry is AttemptedWindows scoped to one --retry level.
+// retry 0 is exactly AttemptedWindows (every attempt counts). retry N >= 2
+// counts only intents whose order id ends in "-r<N>", so an earlier attempt
+// under the unsuffixed id (or another -rM) does not block the deliberate
+// resubmission, while the same -rN attempt still does.
+func (s *PostTradeStore) AttemptedWindowsForRetry(strategyID, sinkKind string, retry int) (map[string]bool, error) {
+	query := `SELECT DISTINCT symbol, recv_ns FROM order_intent WHERE strategy_id = ? AND sink_kind = ?`
+	args := []any{strategyID, sinkKind}
+	if retry != 0 {
+		query += ` AND order_id LIKE ?`
+		args = append(args, fmt.Sprintf("%%-r%d", retry))
+	}
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("attempted windows: query: %w", err)
 	}

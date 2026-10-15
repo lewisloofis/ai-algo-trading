@@ -68,7 +68,7 @@ func TestValidatePriorStores_AllowsLiveWithGlobAndPaperWithout(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewStrategy_Orb(t *testing.T) {
-	strat, stratID, err := newStrategy("orb", "", nil, 0, defaultAt(t))
+	strat, stratID, err := newStrategy("orb", "", nil, 0, defaultAt(t), 0)
 	if err != nil {
 		t.Fatalf("newStrategy: %v", err)
 	}
@@ -81,13 +81,13 @@ func TestNewStrategy_Orb(t *testing.T) {
 }
 
 func TestNewStrategy_UnknownStrategy(t *testing.T) {
-	if _, _, err := newStrategy("nope", "", nil, 0, defaultAt(t)); err == nil {
+	if _, _, err := newStrategy("nope", "", nil, 0, defaultAt(t), 0); err == nil {
 		t.Fatal("want an error for an unknown --strategy, got nil")
 	}
 }
 
 func TestNewStrategy_RebalanceRequiresTargetPortfolio(t *testing.T) {
-	if _, _, err := newStrategy("rebalance", "", nil, 0, defaultAt(t)); err == nil {
+	if _, _, err := newStrategy("rebalance", "", nil, 0, defaultAt(t), 0); err == nil {
 		t.Fatal("want an error when --strategy rebalance is given no --target-portfolio")
 	}
 }
@@ -116,7 +116,7 @@ func writeTargetPortfolio(t *testing.T, dir string) string {
 
 func TestNewStrategy_RebalanceLoadsPortfolioAndUsesItsOwnStrategyID(t *testing.T) {
 	path := writeTargetPortfolio(t, t.TempDir())
-	strat, stratID, err := newStrategy("rebalance", path, nil, 0, defaultAt(t))
+	strat, stratID, err := newStrategy("rebalance", path, nil, 0, defaultAt(t), 0)
 	if err != nil {
 		t.Fatalf("newStrategy: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestNewStrategy_RebalanceLoadsPortfolioAndUsesItsOwnStrategyID(t *testing.T
 }
 
 func TestNewStrategy_RebalanceMissingFile(t *testing.T) {
-	if _, _, err := newStrategy("rebalance", filepath.Join(t.TempDir(), "does-not-exist.json"), nil, 0, defaultAt(t)); err == nil {
+	if _, _, err := newStrategy("rebalance", filepath.Join(t.TempDir(), "does-not-exist.json"), nil, 0, defaultAt(t), 0); err == nil {
 		t.Fatal("want an error for a missing --target-portfolio file")
 	}
 }
@@ -165,7 +165,7 @@ func TestNewStrategy_RebalanceRecoversAttemptedFromPriorStores(t *testing.T) {
 		t.Fatalf("close prior: %v", err)
 	}
 
-	strat, stratID, err := newStrategy("rebalance", path, &priorStateConfig{glob: filepath.Join(dir, "prior.db"), sinkKind: "live"}, 0, defaultAt(t))
+	strat, stratID, err := newStrategy("rebalance", path, &priorStateConfig{glob: filepath.Join(dir, "prior.db"), sinkKind: "live"}, 0, defaultAt(t), 0)
 	if err != nil {
 		t.Fatalf("newStrategy: %v", err)
 	}
@@ -333,7 +333,7 @@ func writeOneSymbolPortfolio(t *testing.T, dir string) string {
 
 func TestNewStrategy_LimitPriceAcceptedForOneTargetRebalance(t *testing.T) {
 	path := writeOneSymbolPortfolio(t, t.TempDir())
-	if _, _, err := newStrategy("rebalance", path, nil, 5250, defaultAt(t)); err != nil {
+	if _, _, err := newStrategy("rebalance", path, nil, 5250, defaultAt(t), 0); err != nil {
 		t.Fatalf("newStrategy: %v", err)
 	}
 }
@@ -355,7 +355,7 @@ func TestNewStrategy_LimitPriceRefusals(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, _, err := newStrategy(c.strategy, c.path, nil, c.limit, defaultAt(t)); err == nil {
+			if _, _, err := newStrategy(c.strategy, c.path, nil, c.limit, defaultAt(t), 0); err == nil {
 				t.Fatalf("want an error for --limit-price-idr=%d with %s", c.limit, c.name)
 			}
 		})
@@ -493,7 +493,7 @@ func TestLoadPriorState_ReadsPositionsForAccount(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	_, positions, err := loadPriorState(filepath.Join(dir, "*.db"), "s", "live", "TEST-SLEEVE")
+	_, positions, err := loadPriorState(filepath.Join(dir, "*.db"), "s", "live", "TEST-SLEEVE", 0)
 	if err != nil {
 		t.Fatalf("loadPriorState: %v", err)
 	}
@@ -648,7 +648,7 @@ func TestLoadPriorState_RefusesFillsUnderAnotherAccount(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if _, _, err := loadPriorState(filepath.Join(dir, "*.db"), "s", "live", "TEST-SLEEVE"); err == nil {
+	if _, _, err := loadPriorState(filepath.Join(dir, "*.db"), "s", "live", "TEST-SLEEVE", 0); err == nil {
 		t.Fatal("loadPriorState accepted a prior store whose fills are under another account")
 	}
 }
@@ -672,5 +672,83 @@ func TestCheckTokenAccount(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "garbage") {
 		t.Fatal("error leaks token")
+	}
+}
+
+func TestValidateRetry(t *testing.T) {
+	cases := []struct {
+		name     string
+		retry    int
+		strategy string
+		wantErr  bool
+	}{
+		{"default 0 rebalance", 0, "rebalance", false},
+		{"default 0 orb", 0, "orb", false},
+		{"2 rebalance", 2, "rebalance", false},
+		{"7 rebalance", 7, "rebalance", false},
+		{"1 rejected", 1, "rebalance", true},
+		{"negative rejected", -1, "rebalance", true},
+		{"2 with orb rejected", 2, "orb", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := validateRetry(c.retry, c.strategy); (err != nil) != c.wantErr {
+				t.Fatalf("validateRetry(%d,%q) err = %v, wantErr %v", c.retry, c.strategy, err, c.wantErr)
+			}
+		})
+	}
+}
+
+func TestNewStrategy_RetryRefusals(t *testing.T) {
+	path := writeOneSymbolPortfolio(t, t.TempDir())
+	for _, c := range []struct {
+		strategy string
+		retry    int
+	}{{"rebalance", 1}, {"rebalance", -2}, {"orb", 2}} {
+		if _, _, err := newStrategy(c.strategy, path, nil, 0, defaultAt(t), c.retry); err == nil {
+			t.Fatalf("want error for %s retry=%d", c.strategy, c.retry)
+		}
+	}
+}
+
+// TestNewStrategy_RetryAttemptedSemantics: a prior-store attempt under the
+// unsuffixed id (or another -rM) must not block --retry N; the same -rN must.
+func TestNewStrategy_RetryAttemptedSemantics(t *testing.T) {
+	cases := []struct {
+		name      string
+		priorID   string
+		retry     int
+		wantCalls int
+	}{
+		{"retry 0 blocked by unsuffixed", "rebalance-BBCA-2026-09-24", 0, 0},
+		{"retry 2 not blocked by unsuffixed", "rebalance-BBCA-2026-09-24", 2, 1},
+		{"retry 3 not blocked by -r2", "rebalance-BBCA-2026-09-24-r2", 3, 1},
+		{"retry 2 blocked by same -r2", "rebalance-BBCA-2026-09-24-r2", 2, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := writeOneSymbolPortfolio(t, dir)
+			prior, err := engine.OpenStore(filepath.Join(dir, "prior.db"))
+			if err != nil {
+				t.Fatalf("OpenStore: %v", err)
+			}
+			seedRecvNs := time.Date(2026, 9, 24, 9, 5, 0, 0, calendar.Jakarta).UnixNano()
+			if err := prior.InsertIntent(engine.IntentRow{Seq: 1, RecvNs: seedRecvNs, StrategyID: portfolio.CalibrationStrategyID, Symbol: "BBCA", Side: "buy", PriceIDR: 1000, Lots: 1, OrderID: c.priorID, SinkKind: "live"}); err != nil {
+				t.Fatalf("InsertIntent: %v", err)
+			}
+			prior.Close()
+
+			strat, _, err := newStrategy("rebalance", path, &priorStateConfig{glob: filepath.Join(dir, "prior.db"), sinkKind: "live"}, 0, defaultAt(t), c.retry)
+			if err != nil {
+				t.Fatalf("newStrategy: %v", err)
+			}
+			ns := time.Date(2026, 9, 24, defaultAt(t).hour, defaultAt(t).min+5, 0, 0, calendar.Jakarta).UnixNano()
+			fe := &fakeStrategyEngine{now: time.Unix(0, ns)}
+			strat.OnEvent(context.Background(), liveEventFor("BBCA", 1000, ns), fe)
+			if len(fe.calls) != c.wantCalls {
+				t.Fatalf("SubmitOrder calls = %d, want %d: %+v", len(fe.calls), c.wantCalls, fe.calls)
+			}
+		})
 	}
 }

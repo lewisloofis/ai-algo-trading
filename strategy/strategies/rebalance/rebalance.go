@@ -118,6 +118,15 @@ type Options struct {
 	// denied there. The strategy still waits for a first liveprice
 	// observation for the symbol before acting (see rebalanceOne).
 	LimitPriceIDR int64
+
+	// Retry is the operator's deliberate same-day resubmission level
+	// (strategy-run --retry). 0 (default) leaves order ids exactly as
+	// before. N >= 2 appends "-r<N>" to every order id, which changes the
+	// ui_ref derived from it, so Carina does not reject the order as a
+	// duplicate of an earlier cancelled one. 1 and negatives are refused:
+	// the first attempt IS the unsuffixed one. The same N always yields the
+	// same id, so the restart duplicate guard still holds per attempt.
+	Retry int
 }
 
 // orderMeta is what OnFill needs to resolve a fill back to a symbol and a
@@ -147,6 +156,7 @@ type Strategy struct {
 	portfolio portfolio.TargetPortfolio
 	schedule  Schedule
 	limitIDR  int64 // Options.LimitPriceIDR; 0 = off
+	retry     int   // Options.Retry; 0 = off
 
 	lastPrice map[string]float64 // last observed EventLivePrice, per symbol
 	confirmed map[string]int     // filled position, per symbol, in lots
@@ -179,6 +189,10 @@ func New(opts Options) (*Strategy, error) {
 		return nil, err
 	}
 
+	if err := ValidateRetry(opts.Retry); err != nil {
+		return nil, err
+	}
+
 	confirmed := make(map[string]int, len(opts.Initial))
 	for symbol, lots := range opts.Initial {
 		confirmed[symbol] = lots
@@ -195,6 +209,7 @@ func New(opts Options) (*Strategy, error) {
 		portfolio: opts.Portfolio,
 		schedule:  opts.Schedule,
 		limitIDR:  opts.LimitPriceIDR,
+		retry:     opts.Retry,
 		lastPrice: make(map[string]float64),
 		confirmed: confirmed,
 		inFlight:  make(map[string]int),
@@ -457,7 +472,19 @@ func (s *Strategy) OnFill(ctx context.Context, f engine.FillRecord) {
 // Options.Attempted for any reason. See plan 18 §5 B4's restart-durability
 // gap.
 func (s *Strategy) newOrderID(symbol, window string) string {
-	return fmt.Sprintf("rebalance-%s-%s", symbol, window)
+	id := fmt.Sprintf("rebalance-%s-%s", symbol, window)
+	if s.retry >= 2 {
+		id += fmt.Sprintf("-r%d", s.retry)
+	}
+	return id
+}
+
+// ValidateRetry enforces Options.Retry's preconditions: 0 (off) or >= 2.
+func ValidateRetry(retry int) error {
+	if retry == 0 || retry >= 2 {
+		return nil
+	}
+	return fmt.Errorf("%w: retry %d is invalid: use 0 (off) or N >= 2 (the first attempt is the unsuffixed one)", ErrInvalidOptions, retry)
 }
 
 // sharesPerLot mirrors strategy/engine/sink.go's and

@@ -495,7 +495,17 @@ rejected an over-limit order" with "the order landed somewhere unexpected."
 - `live.ErrUserSuspended`, `live.ErrUnauthorized`, or a repeated
   `live.ErrDuplicateOrder` on what should be a fresh `UIRef` — each indicates
   either a credentials problem or a ui_ref-reuse bug; stop, do not push
-  through.
+  through. The exception is the expected duplicate after a same-day retry
+  without `--retry N` (see the note below).
+- **Same-day retry after a cancelled order.** Rebalance order ids are
+  `rebalance-<SYMBOL>-<day>` and the ui_ref is derived from them
+  (`live.DeterministicUIRef`), so a second attempt the same day is rejected by
+  Carina as `duplicate order (ui_ref already used)`, even after the first order
+  was cancelled unfilled. A new `--store` does not help. To resubmit on
+  purpose, pass `strategy-run --retry N` (N >= 2, a fresh N and a fresh
+  `--store` per attempt): ids get the suffix `-rN`, and only an earlier `-rN`
+  attempt blocks the run. Never reuse a `--store` file across runs (`UNIQUE
+  constraint failed: decision.seq`).
 - `market-probe` reports DENY on the symbol in use, at any point during the
   session.
 - Genuine doubt about which account was just charged, at any step — do not
@@ -722,3 +732,33 @@ the first fill made with the `data.acn` guard in place.
   `rebalance-GOTO-2026-10-14` with its deterministic ui_ref is already used.
 - It is real-fill session 3 and the first live sell-to-zero by the bot, the
   last two B4 gates.
+
+## 16. Execution log — 2026-10-15 (Thu, Session 1): GOTO round trip, leg 2 (sell to zero) — real-fill session 3
+
+- **Pre-snapshot.** `runs/2026-10-15-pre-008488L.json`: broker holds GOTO 100
+  shares, verdict DIVERGENT (`held_at_broker_only`) against the fresh, empty
+  recon store, so account-recon exited 1. Expected: the snapshot store holds no
+  positions; the bot's own position comes from `--prior-stores`.
+- **Attempt 1.** Store `runs/2026-10-15-roundtrip-sell.db`, run
+  `20261015T015929Z-c2ea33a9`. 09:00:00 WIB: intent `rebalance-GOTO-2026-10-15`,
+  sell 1 lot @ 27. It rested unfilled and was cancelled on Ctrl-C (outcome
+  `complete`, 0 fills).
+- **Attempt 2a.** The same `--store` reused at @ 26: the run died at once with
+  `UNIQUE constraint failed: decision.seq`. Nothing was sent.
+- **Attempt 2b.** A fresh store `runs/2026-10-15-roundtrip-sell-2.db`,
+  `--prior-stores` pointing at the buy store only. 09:06:00: intent sell 1 lot
+  @ 26 under the same id, rejected by Carina: `duplicate order (ui_ref already
+  used)`. This is the first live evidence that the deterministic ui_ref blocks
+  a same-day resubmission even after a cancel.
+- **Fix.** `strategy-run --retry N` added the same morning (see §11).
+- **Attempt 3.** `--retry 2`, store `runs/2026-10-15-roundtrip-sell-r2.db`, run
+  `20261015T021713Z-d3c58e19`.
+  - 09:17:15: intent `rebalance-GOTO-2026-10-15-r2`, sell 1 lot @ 26.
+  - 09:17:16: **fill**, 1 lot @ 26, fee 6.5 IDR, 0.0 bps slippage.
+    `order_reject` is empty.
+  - Ctrl-C at 09:17:50, outcome `complete`.
+- **Post-reconcile.** `runs/2026-10-15-post-008488L.json` is a **MATCH**: 0
+  broker symbols, 0 store symbols. The sleeve is flat.
+- **Round trip.** Buy @ 28 (fee 4), sell @ 26 (fee 6.5): about -210.5 IDR.
+  Real-fill session 3 and the bot's first live sell-to-zero are done, which
+  closes B4 step 1.
