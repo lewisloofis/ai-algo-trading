@@ -9,7 +9,7 @@ from typing import List, Optional
 from lib.market_calendar import CALENDAR
 from runner import livereport
 from runner.config import (ACCESS_TOKEN_ENV, BEARER_TOKEN_ENV, TELEGRAM_CHAT_ENV, TELEGRAM_TOKEN_ENV,
-                           WEBHOOK_ENV, Config, at)
+                           WEBHOOK_ENV, REVIEWER_ENV, REVIEWER_MODEL_ENV, DEFAULT_REVIEWER_MODEL, Config, at)
 from runner.guard import LiveGuardError, build_live_command
 from runner.modes import LIVE as MODE_LIVE
 from runner.modes import PAPER
@@ -59,6 +59,9 @@ def build_plan(cfg: Config, day: date, calendar=CALENDAR, now: Optional[datetime
     symbols = sorted({sym for s in [*paper, *(s for s, _ in live)] for sym in s.symbols})
     lines = [f"{day} ({wd}) plan, times WIB; dry run: nothing is executed",
              f"  arm status: {livereport.arm_status(cfg, day)}"]
+    lines.append(f"  {cfg.preflight_at}  token rotation: token_rotation.ensure_tokens(.env.local) refreshes sessions with < 12h left "
+                 "(network call to the Stockbit auth hosts, rewrites .env.local); names only are reported. "
+                 "A dry run does not call it.")
     lines.append(f"  {cfg.preflight_at}  preflight: trading day; previous bar ({calendar.prev_trading_day(day)}) complete for "
                  f"{', '.join(symbols) or '-'}; "
                  f"env presence ({_presence(cfg, ACCESS_TOKEN_ENV)}, {_presence(cfg, BEARER_TOKEN_ENV)}); "
@@ -86,7 +89,11 @@ def build_plan(cfg: Config, day: date, calendar=CALENDAR, now: Optional[datetime
     for st in post_close_steps(cfg, ids):
         note = f"   [SKIPPED: {st['skip']}]" if st["skip"] else ""
         lines.append("        " + shlex.join(st["argv"]) + note)
-    lines.append("        then a summary alert" + (", then a LIVE summary alert" if live or gate.arm.valid else ""))
+    reviewer_on = (cfg.env.get(REVIEWER_ENV) or "claude") != "off"
+    lines.append("        then ONE review message: rules over local artefacts, summary by headless `claude -p` "
+                 + (f"(ON, model {cfg.env.get(REVIEWER_MODEL_ENV) or DEFAULT_REVIEWER_MODEL}; redacted facts only)"
+                    if reviewer_on else "(OFF: plain deterministic text)")
+                 + "; also runs/runner/review-<date>.{json,txt}. A dry run sends nothing")
     channels = [n for n in (TELEGRAM_TOKEN_ENV, TELEGRAM_CHAT_ENV, WEBHOOK_ENV)]
     lines.append("  alerts: log " + str(cfg.log_file) + "; push channels: " + ", ".join(_presence(cfg, n) for n in channels))
     lines.append("  live only if ALL hold: spec status 'candidate', a valid arm file for TODAY naming it, preflight ok incl. a valid "

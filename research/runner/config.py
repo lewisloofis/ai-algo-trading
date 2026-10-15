@@ -18,6 +18,9 @@ ACCOUNT_ENV = "SB_ACCOUNT_NO"                 # recon only
 TELEGRAM_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
 TELEGRAM_CHAT_ENV = "TELEGRAM_CHAT_ID"
 WEBHOOK_ENV = "RUNNER_ALERT_WEBHOOK_URL"
+REVIEWER_ENV = "RUNNER_REVIEWER"                # claude (default) | off
+REVIEWER_MODEL_ENV = "RUNNER_REVIEWER_MODEL"    # default haiku
+DEFAULT_REVIEWER_MODEL = "haiku"
 
 
 def at(day: date, hhmm: str) -> datetime:
@@ -50,6 +53,7 @@ class Config:
     poll_s: float = 15.0
     min_access_token_hours: float = 1.5
     registry: Optional[Any] = None
+    rotate_tokens: bool = True         # call token_rotation.ensure_tokens before preflight (needs .env.local)
 
     @property
     def runs_dir(self) -> Path:
