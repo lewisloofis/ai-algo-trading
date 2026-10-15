@@ -5,6 +5,7 @@ No network: data sources are fakes, time.sleep is patched.
 from __future__ import annotations
 
 import datetime
+import json
 from unittest.mock import patch
 
 import pandas as pd
@@ -20,6 +21,7 @@ from screener.daily_store import (
     main as store_main,
     snapshot_daily,
 )
+from screener.emitten import SUBSECTOR_DAY_TRADE, SUBSECTOR_TRADING_LIMIT, ClassificationError, CompanyRecord
 from screener.sb_http import SBHttpError
 from screener.test_daily_store import _make_bars
 
@@ -140,7 +142,8 @@ class TestRefreshAll:
     def _run(self, tmp_path, src, capsys, extra=()):
         with patch("screener.daily_store._build_live_data_source", return_value=src):
             try:
-                store_main(["snapshot", "--all-stored", "--out-dir", str(tmp_path), "--end", END, *extra])
+                store_main(["snapshot", "--all-stored", "--out-dir", str(tmp_path), "--end", END,
+                            "--no-tradable-check", *extra])
                 code = 0
             except SystemExit as e:
                 code = e.code
@@ -210,3 +213,168 @@ class TestRefreshAll:
         monkeypatch.setenv("SB_BEARER_TOKEN", "sekret-sentinel-value")
         _, out = self._run(tmp_path, FakeSource(full), capsys)
         assert "sekret-sentinel-value" not in out
+
+
+class TestEndedSymbols:
+    """Delisted names stay in the store (survivorship tests) but must not be re-fetched."""
+
+    def _run(self, tmp_path, src, capsys, extra=()):
+        return TestRefreshAll._run(self, tmp_path, src, capsys, extra)
+
+    def _seed_live_and_dead(self, tmp_path):
+        full = _seed(tmp_path, ["AAAA"])
+        dead = _seed(tmp_path, ["DEAD"], start="2025-01-02", end="2025-01-15")
+        return {**full, **dead}
+
+    def test_ended_symbol_is_skipped_and_named(self, tmp_path, capsys):
+        src = FakeSource(self._seed_live_and_dead(tmp_path))
+        code, out = self._run(tmp_path, src, capsys)
+        assert code == 0
+        assert [c[0] for c in src.calls] == ["AAAA"]
+        assert "skipped 1 ended" in out.lower() and "DEAD" in out
+
+    def test_include_ended_fetches_them_too(self, tmp_path, capsys):
+        src = FakeSource(self._seed_live_and_dead(tmp_path))
+        self._run(tmp_path, src, capsys, extra=("--include-ended",))
+        assert [c[0] for c in src.calls] == ["AAAA", "DEAD"]
+
+
+def _rec(symbol, tradeable=True):
+    return CompanyRecord(symbol, tradeable, "Active", (), False)
+
+
+class FakeEmitten:
+    """Serves classification rows per subsector id, like EmittenClient.fetch_classification."""
+
+    def __init__(self, day_trade=(), trading_limit=()):
+        self._rows = {SUBSECTOR_DAY_TRADE: tuple(day_trade), SUBSECTOR_TRADING_LIMIT: tuple(trading_limit)}
+
+    def fetch_classification(self, subsector_id):
+        return self._rows[subsector_id]
+
+
+def _both(*pairs):
+    """FakeEmitten with every (symbol, tradeable) on both lists."""
+    rows = [_rec(s, t) for s, t in pairs]
+    return FakeEmitten(rows, rows)
+
+
+class TestTradableStep:
+    """The universe-status step: skip untradable, add newly eligible, fail clearly on emitten errors."""
+
+    def _run(self, tmp_path, src, capsys, emitten, extra=()):
+        with patch("screener.daily_store._build_live_data_source", return_value=src), \
+             patch("screener.daily_store._build_status_source", return_value=emitten):
+            try:
+                store_main(["snapshot", "--all-stored", "--out-dir", str(tmp_path), "--end", END, *extra])
+                code = 0
+            except SystemExit as e:
+                code = e.code
+        return code, capsys.readouterr().out
+
+    def test_untradable_symbol_is_skipped_named_and_recorded(self, tmp_path, capsys):
+        src = FakeSource(_seed(tmp_path, ["AAAA", "GREN"]))
+        code, out = self._run(tmp_path, src, capsys, _both(("AAAA", True), ("GREN", False)))
+        assert code == 0
+        assert [c[0] for c in src.calls] == ["AAAA"]
+        assert "skipped 1 not-tradable" in out.lower() and "GREN" in out
+        status = json.loads((tmp_path / "universe_status.json").read_text())
+        assert status["schema_version"] == 2
+        assert status["symbols"]["GREN"]["is_tradable"] is False
+        assert status["symbols"]["AAAA"]["is_tradable"] is True
+
+    def test_stored_symbol_off_both_lists_is_null_and_still_refreshed(self, tmp_path, capsys):
+        src = FakeSource(_seed(tmp_path, ["AAAA"]))
+        code, _ = self._run(tmp_path, src, capsys, FakeEmitten())
+        assert code == 0 and [c[0] for c in src.calls] == ["AAAA"]
+        status = json.loads((tmp_path / "universe_status.json").read_text())
+        assert status["symbols"]["AAAA"]["is_tradable"] is None
+
+    def test_disagreement_between_lists_false_wins_and_skips(self, tmp_path, capsys):
+        src = FakeSource(_seed(tmp_path, ["AAAA", "SPLT"]))
+        emitten = FakeEmitten([_rec("AAAA"), _rec("SPLT", True)], [_rec("AAAA"), _rec("SPLT", False)])
+        code, out = self._run(tmp_path, src, capsys, emitten)
+        assert code == 0 and [c[0] for c in src.calls] == ["AAAA"] and "SPLT" in out
+
+    def test_eligible_and_tradable_missing_symbol_is_added_with_full_history(self, tmp_path, capsys):
+        full = _seed(tmp_path, ["AAAA"])
+        full["NEWW"] = _make_bars(n_days=40, start_date="2026-08-31", symbol="NEWW")
+        src = FakeSource(full)
+        code, out = self._run(tmp_path, src, capsys, _both(("AAAA", True), ("NEWW", True)))
+        assert code == 0
+        assert "added 1 new" in out.lower() and "NEWW" in out
+        assert ("NEWW", ds_mod.DEFAULT_DAILY_HISTORY_START, END) in src.calls
+        assert len(load_daily("NEWW", str(tmp_path))) > 0
+
+    def test_missing_flag_or_untradable_or_single_list_is_not_added(self, tmp_path, capsys):
+        src = FakeSource(_seed(tmp_path, ["AAAA"]))
+        emitten = FakeEmitten(
+            [_rec("AAAA"), _rec("UNKN", None), _rec("DEAD", False), _rec("ONLY")],
+            [_rec("AAAA"), _rec("UNKN", None), _rec("DEAD", False)])
+        code, _ = self._run(tmp_path, src, capsys, emitten)
+        assert code == 0 and [c[0] for c in src.calls] == ["AAAA"]
+
+    def test_ended_fallback_still_applies(self, tmp_path, capsys):
+        full = {**_seed(tmp_path, ["AAAA"]), **_seed(tmp_path, ["DEAD"], start="2025-01-02", end="2025-01-15")}
+        src = FakeSource(full)
+        _, out = self._run(tmp_path, src, capsys, FakeEmitten())
+        assert [c[0] for c in src.calls] == ["AAAA"] and "ended" in out.lower()
+
+    def test_no_trading_token_is_needed(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.delenv("SB_TRADING_ACCESS_TOKEN", raising=False)
+        src = FakeSource(_seed(tmp_path, ["AAAA"]))
+        code, out = self._run(tmp_path, src, capsys, _both(("AAAA", True)))
+        assert code == 0 and "SB_TRADING_ACCESS_TOKEN" not in out
+
+    def test_missing_bearer_exits_2_before_any_fetch(self, tmp_path, capsys, monkeypatch):
+        src = FakeSource(_seed(tmp_path, ["AAAA"]))
+        monkeypatch.delenv("SB_BEARER_TOKEN", raising=False)
+        with patch("screener.daily_store._build_live_data_source", return_value=src):
+            with pytest.raises(SystemExit) as e:
+                store_main(["snapshot", "--all-stored", "--out-dir", str(tmp_path), "--end", END])
+        assert e.value.code == 2
+        assert "SB_BEARER_TOKEN" in capsys.readouterr().out
+        assert src.calls == [] and not (tmp_path / "universe_status.json").exists()
+
+    def test_emitten_http_failure_exits_2_without_writing_status(self, tmp_path, capsys):
+        src = FakeSource(_seed(tmp_path, ["AAAA"]))
+
+        class Boom(FakeEmitten):
+            def fetch_classification(self, subsector_id):
+                raise SBHttpError(403, "https://x/y?z=1")
+
+        code, out = self._run(tmp_path, src, capsys, Boom())
+        assert code == 2 and "403" in out
+        assert src.calls == [] and not (tmp_path / "universe_status.json").exists()
+
+    def test_url_error_in_emitten_prints_step_host_and_reason(self, tmp_path, capsys):
+        import urllib.error
+        src = FakeSource(_seed(tmp_path, ["AAAA"]))
+
+        class Boom(FakeEmitten):
+            def fetch_classification(self, subsector_id):
+                raise urllib.error.URLError("timed out")
+
+        code, out = self._run(tmp_path, src, capsys, Boom())
+        assert code == 2
+        assert ("Tradable check FAILED (emitten classification, exodus.stockbit.com): "
+                "URLError (timed out)") in out
+        assert src.calls == []
+
+    def test_paginated_response_exits_2_with_clear_reason(self, tmp_path, capsys):
+        src = FakeSource(_seed(tmp_path, ["AAAA"]))
+
+        class Paged(FakeEmitten):
+            def fetch_classification(self, subsector_id):
+                raise ClassificationError("classification response is paginated (2 pages); "
+                                          "pagination not implemented")
+
+        code, out = self._run(tmp_path, src, capsys, Paged())
+        assert code == 2 and "pagination not implemented" in out and src.calls == []
+
+    def test_no_tradable_check_flag_bypasses_everything(self, tmp_path, capsys, monkeypatch):
+        src = FakeSource(_seed(tmp_path, ["AAAA"]))
+        monkeypatch.delenv("SB_BEARER_TOKEN", raising=False)
+        code, out = TestRefreshAll._run(self, tmp_path, src, capsys)
+        assert code == 0 and not (tmp_path / "universe_status.json").exists()
+        assert "tradable check skipped" in out.lower()

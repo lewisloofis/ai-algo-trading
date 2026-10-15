@@ -27,7 +27,7 @@ import ssl
 import sys
 import urllib.request
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Callable, Mapping, Protocol
 
 import pandas as pd
 
@@ -100,9 +100,12 @@ DEFAULT_API_HOST = os.environ.get("SB_API_HOST", "exodus.stockbit.com")
 # two copies of an endpoint id drift, and a stale one here would silently screen
 # the wrong universe.
 from screener.emitten import (  # noqa: E402
-    EMITTEN_BASE_URL,
     SUBSECTOR_DAY_TRADE,
     SUBSECTOR_TRADING_LIMIT,
+    CompanyRecord,
+    classification_request_url,
+    merge_tradeable,
+    parse_classification,
 )
 
 # OHLCV daily history endpoint — VERIFIED live (HTTP 200).
@@ -290,6 +293,14 @@ class FixtureDataSource:
 # LiveDataSource
 # ---------------------------------------------------------------------------
 
+def _merged_tradeable(records: tuple[CompanyRecord, ...]) -> dict[str, bool | None]:
+    """symbol -> tradeable merged across every list the symbol appears on (False wins)."""
+    flags: dict[str, list[bool | None]] = {}
+    for r in records:
+        flags.setdefault(r.symbol, []).append(r.tradeable)
+    return {sym: merge_tradeable(vals) for sym, vals in flags.items()}
+
+
 class LiveDataSource:
     """
     Thin HTTP client against the Stockbit/Exodus API.
@@ -309,6 +320,7 @@ class LiveDataSource:
             )
         self._token = token
         self._ssl_ctx = _build_ssl_context()
+        self._tradeable: dict[str, bool | None] = {}
 
     def _get(self, url: str) -> dict:
         """Make an authenticated GET request; return parsed JSON body."""
@@ -327,41 +339,36 @@ class LiveDataSource:
         raw = urlopen_bytes(req, timeout=15, context=self._ssl_ctx)
         return json.loads(raw.decode())
 
-    def _fetch_subsector_symbols(self, label: str, subsector_id: str) -> set[str]:
+    def _fetch_subsector_records(self, label: str, subsector_id: str) -> tuple[CompanyRecord, ...]:
         """
-        GET one emitten subsector endpoint and return the uppercased symbol set.
+        GET one emitten classification subsector and return its company records.
 
-        On exception, logs a warning and returns an empty set so a single
-        dead endpoint does not silently corrupt the intersection.
+        On exception (HTTP, or a paginated/incomplete response), logs a warning and
+        returns () so a single dead endpoint does not silently corrupt the intersection.
         """
-        url = f"{EMITTEN_BASE_URL}/{subsector_id}/company"
         try:
-            body = self._get(url)
-            rows = body.get("data") or []
-            symbols = {row["symbol"].strip().upper() for row in rows if row.get("symbol")}
-            logger.info(
-                "emitten %s subsector (%s): %d symbols returned",
-                label, subsector_id, len(symbols),
-            )
-            return symbols
+            records = parse_classification(self._get(classification_request_url(subsector_id)))
+            logger.info("emitten %s subsector (%s): %d symbols returned", label, subsector_id, len(records))
+            return records
         except Exception as exc:
-            logger.warning(
-                "emitten fetch failed for %s subsector (%s): %s",
-                label, subsector_id, exc,
-            )
-            return set()
+            logger.warning("emitten fetch failed for %s subsector (%s): %s", label, subsector_id, exc)
+            return ()
 
     def funding_universe(self) -> set[str]:
         """
         Return the intersection of day-trade ∩ trading-limit emitten subsectors
         as uppercase symbol strings (the hard funding gate —
-        "all funding options unlocked").
+        "all funding options unlocked"). Also remembers each symbol's ``tradeable``
+        flag (see tradeable_flags).
 
         If either subsector returns an empty set (fetch failed), the intersection
         is naturally empty — that is the correct, visible behavior.
         """
-        day_trade = self._fetch_subsector_symbols("day-trade", SUBSECTOR_DAY_TRADE)
-        trading_limit = self._fetch_subsector_symbols("trading-limit", SUBSECTOR_TRADING_LIMIT)
+        dt_rows = self._fetch_subsector_records("day-trade", SUBSECTOR_DAY_TRADE)
+        tl_rows = self._fetch_subsector_records("trading-limit", SUBSECTOR_TRADING_LIMIT)
+        day_trade = {r.symbol for r in dt_rows}
+        trading_limit = {r.symbol for r in tl_rows}
+        self._tradeable = _merged_tradeable(dt_rows + tl_rows)
 
         if not day_trade:
             logger.warning("day-trade subsector returned 0 symbols — intersection will be empty")
@@ -374,6 +381,10 @@ class LiveDataSource:
             len(day_trade), len(trading_limit), len(intersection),
         )
         return intersection
+
+    def tradeable_flags(self) -> dict[str, bool | None]:
+        """symbol -> merged ``tradeable`` flag from the last funding_universe() call (False wins)."""
+        return dict(self._tradeable)
 
     def daily_history(
         self,
@@ -1047,6 +1058,20 @@ def build_report(universe: RankedUniverse) -> str:
 # Main runner
 # ---------------------------------------------------------------------------
 
+def _apply_tradeable_layer(fundable: set[str], flags: Mapping[str, bool | None]) -> set[str]:
+    """Keep only names flagged tradeable; print every dropped name with its reason (fail closed)."""
+    print(f"Checking tradeability of {len(fundable)} names (emitten classification flag)…", flush=True)
+    kept = {s for s in fundable if flags.get(s) is True}
+    for symbol in sorted(s for s in fundable if flags.get(s) is False):
+        print(f"  {symbol}: not tradeable (emitten tradeable=0) - dropped", flush=True)
+    unknown = sorted(s for s in fundable if flags.get(s) is None)
+    if unknown:
+        print(f"  {len(unknown)} with unknown tradeability (flag missing; excluded, fail closed): "
+              f"{', '.join(unknown)}", flush=True)
+    print(f"  {len(kept)} tradeable names kept", flush=True)
+    return kept
+
+
 def run_screen(
     ds: DataSource,
     start: str,
@@ -1054,6 +1079,7 @@ def run_screen(
     outdir: str,
     top_n: int = DEFAULT_WATCHLIST_TOP_N,
     watchlist_out: str | None = None,
+    tradeable_flags: Callable[[], Mapping[str, bool | None]] | None = None,
 ) -> RankedUniverse:
     """
     Fan-out per symbol → barrier → rank → write report → optionally write watchlist.
@@ -1061,6 +1087,10 @@ def run_screen(
     Sequential loop (comment marks where a workflow would parallelize).
     If watchlist_out is not None, select_capture_watchlist is called on the
     ranked universe and the result is written to watchlist_out (ADR-0006).
+
+    ``tradeable_flags`` (live runs: ``LiveDataSource.tradeable_flags``) adds a second gate
+    after the funding intersection: names flagged tradeable=0 are dropped, and names with
+    no flag are dropped too (fail closed), each reported by name. None = no gate (fixture mode).
     """
     os.makedirs(outdir, exist_ok=True)
 
@@ -1068,6 +1098,8 @@ def run_screen(
     print("Fetching funding universe (day-trade ∩ trading-limit)…", flush=True)
     fundable_set = ds.funding_universe()
     print(f"  {len(fundable_set)} symbols in intersection: {sorted(fundable_set)}", flush=True)
+    if tradeable_flags is not None:
+        fundable_set = _apply_tradeable_layer(fundable_set, tradeable_flags())
 
     # Fan-out: compute metrics per symbol
     # NOTE: a Claude workflow would run these as parallel agents (plan 08 §3).
@@ -1145,6 +1177,13 @@ def parse_args() -> argparse.Namespace:
         help="Data source: 'fixture' (default, offline) or 'live' (needs SB_BEARER_TOKEN).",
     )
     p.add_argument(
+        "--no-tradable-check", action="store_true",
+        help=(
+            "Live only: skip the tradeable gate. Without this flag a live run drops names the "
+            "emitten classification feed flags tradeable=0 or does not flag at all."
+        ),
+    )
+    p.add_argument(
         "--fixtures-dir", default=DEFAULT_FIXTURES_DIR, metavar="DIR",
         help="Directory containing fixture CSVs (default: screener/fixtures/).",
     )
@@ -1201,6 +1240,14 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def _live_tradeable_flags(args: argparse.Namespace, ds: LiveDataSource) -> Callable[[], Mapping[str, bool | None]] | None:
+    """The live source's flag accessor, or None (with a warning) under --no-tradable-check."""
+    if args.no_tradable_check:
+        print("WARNING: --no-tradable-check: names are NOT checked for tradability.", file=sys.stderr)
+        return None
+    return ds.tradeable_flags
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
     args = parse_args()
@@ -1214,7 +1261,9 @@ def main() -> None:
             )
             sys.exit(1)
         ds: DataSource = LiveDataSource(bearer_token=token)
+        tradeable_flags = _live_tradeable_flags(args, ds)
     else:
+        tradeable_flags = None
         ds = FixtureDataSource(fixtures_dir=args.fixtures_dir)
 
     # Resolve watchlist output path: explicit --watchlist-out wins; otherwise
@@ -1233,6 +1282,7 @@ def main() -> None:
         outdir=args.outdir,
         top_n=args.top,
         watchlist_out=watchlist_out,
+        tradeable_flags=tradeable_flags,
     )
 
 

@@ -94,8 +94,14 @@ recon:
 # research/data/daily (incremental: only from ~10 days before each symbol's last
 # stored bar; a corporate-action rewrite triggers a full re-pull of that symbol).
 # One bad symbol does not stop the rest; a summary lists failures and the target
-# exits non-zero if any failed. Needs SB_BEARER_TOKEN in the environment; this
-# target never reads .env.local itself and never prints the token:
+# exits non-zero if any failed. Symbols whose last bar is >60 days behind the
+# store (delisted names kept for survivorship tests) are skipped; pass
+# REFRESH_ARGS="--include-ended" to fetch them. Before refreshing it fetches both
+# emitten classification lists (day-trade, trading-limit), writes
+# research/data/daily/universe_status.json, skips stored symbols flagged tradeable=0 and
+# adds newly eligible tradeable ones (full history). Needs SB_BEARER_TOKEN only
+# (REFRESH_ARGS="--no-tradable-check" bypasses the status step explicitly); this target
+# never reads .env.local itself and never prints a token:
 #   set -a && source .env.local && set +a && make refresh-prices
 # Pass extra flags with REFRESH_ARGS="--full".
 REFRESH_ARGS ?=

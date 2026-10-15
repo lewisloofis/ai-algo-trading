@@ -14,6 +14,7 @@ What is judged and by whom:
 from __future__ import annotations
 
 import glob
+import json
 import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -135,25 +136,70 @@ def daily_data_row(daily_dir: str, today: date) -> HealthRow:
     if not last:
         return not_checked_row(name, "the daily price files could not be read", "check research/data/daily/")
     newest_all = max(last.values())
-    current = [s for s, d in last.items() if (newest_all - d).days <= config.FRESH_DAYS]
-    behind = len(last) - len(current)
     age = _age_days(newest_all, today)
     if age > config.STALE_DAYS:
         return HealthRow(
             name, RED, f"Newest price on file is {newest_all.isoformat()}, {age} days ago.", DAILY_REFRESH_HINT
         )
-    if behind == 0:
-        return HealthRow(name, _freshness_state(age), f"All {len(last)} stocks are up to {newest_all.isoformat()}.")
-    behind_dates = [d for s, d in last.items() if s not in set(current)]
+    untradable = _untradable_stocks(daily_dir, today)
+    flagged = set() if untradable is None else untradable & set(last)
+    ended = {s for s, d in last.items() if (newest_all - d).days > config.ENDED_DAYS} - flagged
+    active = {s: d for s, d in last.items() if s not in ended and s not in flagged}
+    tail = _daily_notes(len(flagged), len(ended), untradable is None)
+    behind_dates = [d for d in active.values() if (newest_all - d).days > config.FRESH_DAYS]
+    if not behind_dates:
+        return HealthRow(
+            name,
+            _freshness_state(age),
+            f"All {len(active)} trading stocks are up to {newest_all.isoformat()}.{tail}",
+        )
+    behind = len(behind_dates)
     typical = max(set(behind_dates), key=behind_dates.count)
-    state = RED if behind * 2 > len(last) else AMBER
+    state = RED if behind * 2 > len(active) else AMBER
     return HealthRow(
         name,
         state,
-        f"Newest price is {newest_all.isoformat()}, but {behind} of {len(last)} stocks stop earlier "
-        f"(most at {typical.isoformat()}). Backtests and charts for those stocks end there.",
+        f"Newest price is {newest_all.isoformat()}, but {behind} of {len(active)} trading stocks stop earlier "
+        f"(most at {typical.isoformat()}). Backtests and charts for those stocks end there.{tail}",
         DAILY_REFRESH_HINT,
     )
+
+
+def _untradable_stocks(daily_dir: str, today: date) -> set[str] | None:
+    """
+    Symbols the broker says can no longer be traded, from universe_status.json
+    (written by `make refresh-prices`). None when the file is missing, unreadable, another
+    schema, or older than STALE_DAYS: tradability was then not checked, and the caller
+    falls back to the 60-day rule. Unknown (null) is not "untradable".
+    """
+    try:
+        with open(os.path.join(daily_dir, config.UNIVERSE_STATUS_FILENAME), encoding="utf-8") as f:
+            doc = json.load(f)
+        if doc["schema_version"] != config.UNIVERSE_STATUS_SCHEMA_VERSION:
+            return None
+        if _age_days(date.fromisoformat(doc["as_of"]), today) > config.STALE_DAYS:
+            return None
+        return {s for s, v in doc["symbols"].items() if v.get("is_tradable") is False}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def _daily_notes(untradable: int, ended: int, unchecked: bool) -> str:
+    """The trailing sentences of the daily-data summary, in plain words."""
+    notes: list[str] = []
+    if untradable:
+        notes.append(
+            f"{untradable} stock{'s' if untradable != 1 else ''} {'are' if untradable != 1 else 'is'} "
+            f"no longer tradable (delisting/suspension) and not counted."
+        )
+    if ended:
+        notes.append(
+            f"{ended} stock{'s' if ended != 1 else ''} stopped trading (likely delisted) "
+            f"and {'are' if ended != 1 else 'is'} kept on file but not counted."
+        )
+    if unchecked:
+        notes.append("Tradability was not checked (no recent universe_status.json).")
+    return "".join(f" {n}" for n in notes)
 
 
 def daily_data_newest(daily_dir: str) -> dict[str, str]:

@@ -52,3 +52,12 @@ WIB_OFFSET_HOURS = 7
 # Freshness limits, in calendar days. A weekend is 3 days; a long holiday can be more.
 FRESH_DAYS = 4
 STALE_DAYS = 8
+ENDED_DAYS = 60
+"""A stock whose last daily bar is this many calendar days behind the store's newest has stopped
+trading (delisted, or a long suspension). Those are kept on file for survivorship tests and are
+reported separately, not as lagging. Matches screener.daily_store.ENDED_AFTER_DAYS."""
+
+UNIVERSE_STATUS_FILENAME = "universe_status.json"
+UNIVERSE_STATUS_SCHEMA_VERSION = 2
+"""Written next to the daily parquet files by `make refresh-prices` (screener.universe_status): per
+symbol is_tradable true/false/null. Must match screener.universe_status.STATUS_FILENAME / SCHEMA_VERSION."""

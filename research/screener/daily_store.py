@@ -115,6 +115,13 @@ INCREMENTAL_OVERLAP_DAYS = 10
 # API should not be a burst.
 REQUEST_DELAY_SECONDS = 0.25
 
+# --all-stored skips a symbol whose last stored bar is more than this many calendar
+# days behind the store's newest bar: it has stopped trading (the delisted names kept
+# for survivorship tests, or a long suspension), so a fetch only returns empty and is
+# reported as a failure. --include-ended fetches them anyway. Matches the dashboard's
+# config.ENDED_DAYS.
+ENDED_AFTER_DAYS = 60
+
 # A stored-symbol filename stem must look like an IDX ticker; anything else in
 # the store directory is not a symbol file and is ignored.
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,8}$")
@@ -398,6 +405,19 @@ def discover_store_symbols(store_dir: str) -> list[str]:
         else:
             logger.warning("Ignoring non-symbol parquet file in store: %r", fname)
     return sorted(symbols)
+
+
+def ended_symbols(store_dir: str, symbols: list[str]) -> list[str]:
+    """Symbols whose last stored bar is more than ENDED_AFTER_DAYS behind the newest, sorted."""
+    last: dict[str, datetime.date] = {}
+    for symbol in symbols:
+        existing = _load_existing(symbol, store_dir)
+        if existing is not None and not existing.empty and _DEDUP_COL in existing.columns:
+            last[symbol] = max(existing[_DEDUP_COL])
+    if not last:
+        return []
+    cutoff = max(last.values()) - datetime.timedelta(days=ENDED_AFTER_DAYS)
+    return sorted(sym for sym, d in last.items() if d < cutoff)
 
 
 def incremental_start(existing: pd.DataFrame | None, full_start: str) -> str:
@@ -713,13 +733,67 @@ def _progress_line(idx: int, total: int, s: DailyAccrualSummary) -> str:
     return f"{prefix} unchanged"
 
 
+def _build_status_source(args: argparse.Namespace) -> Any:
+    """EmittenClient for the universe-status step. Tests patch this. Never prints a token."""
+    from screener.emitten import EmittenClient
+
+    bearer = args.bearer_token or os.environ.get("SB_BEARER_TOKEN", "")
+    if not bearer:
+        raise RuntimeError("SB_BEARER_TOKEN is not set: the emitten classification lists need it.")
+    return EmittenClient(bearer)
+
+
+def _universe_status_step(args: argparse.Namespace, symbols: list[str]) -> Any | None:
+    """
+    Build and write universe_status.json; None (after printing why) means exit 2 - never
+    refresh blind. The emitten client raises on failure by design.
+    """
+    from screener.universe_status import build_universe_status, write_universe_status
+
+    try:
+        status = build_universe_status(symbols, _build_status_source(args), as_of=datetime.date.today())
+    except Exception as exc:  # noqa: BLE001 - any failure here must stop the refresh, with a reason
+        reason = str(exc) if isinstance(exc, (RuntimeError, ValueError)) else classify_error(exc)
+        where = f" {exc.where}" if hasattr(exc, "where") else ""
+        print(f"Tradable check FAILED{where}: {reason}\n"
+              f"Not refreshing blind. Fix it, or pass --no-tradable-check to skip the check explicitly.")
+        return None
+    path = write_universe_status(status, args.store_dir)
+    unknown = sum(1 for v in status.symbols.values() if v.is_tradable is None)
+    print(f"Universe status: {len(status.symbols)} symbols, {len(status.eligible)} funding-eligible, "
+          f"{len(status.not_tradable())} not tradable, {unknown} not on a funding list or unknown -> {path}")
+    return status
+
+
 def _refresh_all_stored(args: argparse.Namespace) -> int:
-    """Refresh every stored symbol; returns the process exit code (1 if any failed)."""
+    """Refresh every stored symbol; returns the process exit code (1 if any failed, 2 if the
+    tradable check could not run)."""
     symbols = discover_store_symbols(args.store_dir)
     if not symbols:
         print(f"No stored symbols found under {args.store_dir}; nothing to refresh "
               f"(use --symbols to seed the store).")
         return 2
+    added: list[str] = []
+    if args.no_tradable_check:
+        print("Tradable check skipped (--no-tradable-check): refreshing without it.")
+    else:
+        status = _universe_status_step(args, symbols)
+        if status is None:
+            return 2
+        untradable = [s for s in symbols if s in status.not_tradable()]
+        if untradable:
+            symbols = [s for s in symbols if s not in set(untradable)]
+            print(f"Skipped {len(untradable)} not-tradable symbols (delisting/suspension): "
+                  f"{', '.join(untradable)}")
+        added = sorted(status.eligible & (status.tradable() - set(discover_store_symbols(args.store_dir))))
+        if added:
+            print(f"Added {len(added)} new eligible-and-tradable symbols (full history): {', '.join(added)}")
+    ended = [] if args.include_ended else ended_symbols(args.store_dir, symbols)
+    if ended:
+        symbols = [s for s in symbols if s not in set(ended)]
+        print(f"Skipped {len(ended)} ended symbols (stopped trading, likely delisted; "
+              f"--include-ended to fetch them): {', '.join(ended)}")
+    symbols = symbols + added
     ds = _build_live_data_source(bearer_token=args.bearer_token)
     print(f"Refreshing {len(symbols)} stored symbols from {args.store_dir} "
           f"({'full' if args.full else 'incremental'}, {REQUEST_DELAY_SECONDS}s between requests)")
@@ -777,6 +851,23 @@ def main(argv: list[str] | None = None) -> None:
         "--full",
         action="store_true",
         help="With --all-stored: fetch full history for every symbol instead of incrementally",
+    )
+    snap.add_argument(
+        "--include-ended",
+        action="store_true",
+        help=(
+            f"With --all-stored: also fetch symbols whose last bar is more than "
+            f"{ENDED_AFTER_DAYS} days behind the store's newest (skipped by default as delisted)"
+        ),
+    )
+    snap.add_argument(
+        "--no-tradable-check",
+        action="store_true",
+        help=(
+            "With --all-stored: skip the universe-status step (emitten classification "
+            "lists + tradeable flag). Without this flag a failure of that step "
+            "exits 2 rather than refreshing blind."
+        ),
     )
     snap.add_argument(
         "--out-dir",

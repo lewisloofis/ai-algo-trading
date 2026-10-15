@@ -39,6 +39,8 @@ def classify_error(exc: BaseException) -> str:
         if status in (401, 403):
             return describe_status(status)
         return f"HTTP {status} ({type(exc).__name__})"
+    if isinstance(exc, urllib.error.URLError):
+        return f"URLError ({exc.reason})"  # reason is a short string/exception; no headers or tokens
     return type(exc).__name__
 
 

@@ -76,7 +76,7 @@ def test_daily_data_green_when_all_current(tmp_path):
     for n in "ABC":
         _daily(tmp_path, n, "2026-10-14")
     row = health.daily_data_row(str(tmp_path), TODAY)
-    assert row.state == GREEN and "All 3 stocks" in row.summary
+    assert row.state == GREEN and "All 3 trading stocks" in row.summary
 
 
 def test_daily_data_amber_when_a_few_stocks_lag_and_red_when_most_do(tmp_path):
@@ -187,3 +187,84 @@ def test_saved_healthcheck_file(tmp_path):
     p.write_text('{"exit_code": 0, "days": []}')
     assert inputs.load_healthcheck_file(str(p)).checked
     assert not inputs.load_healthcheck_file(str(tmp_path / "nope.json")).checked
+
+
+def test_daily_data_ended_stocks_are_not_counted_as_behind(tmp_path):
+    for n in "ABC":
+        _daily(tmp_path, n, "2026-10-14")
+    _daily(tmp_path, "DEAD", "2021-07-02")
+    row = health.daily_data_row(str(tmp_path), TODAY)
+    assert row.state == GREEN
+    assert "All 3 trading stocks" in row.summary and "1 stock stopped trading" in row.summary
+
+
+def test_daily_data_lag_inside_ended_window_still_amber(tmp_path):
+    for n in "ABC":
+        _daily(tmp_path, n, "2026-10-14")
+    _daily(tmp_path, "LAG", "2026-10-01")
+    _daily(tmp_path, "DEAD", "2021-07-02")
+    row = health.daily_data_row(str(tmp_path), TODAY)
+    assert row.state == AMBER and "1 of 4" in row.summary and "stopped trading" in row.summary
+
+
+def _status(tmp_path, as_of, flags):
+    import json
+    doc = {"schema_version": 2, "as_of": as_of,
+           "symbols": {s: {"in_day_trade": True, "in_trading_limit": True, "is_tradable": f} for s, f in flags.items()}}
+    (tmp_path / "universe_status.json").write_text(json.dumps(doc))
+
+
+def test_daily_data_untradable_stock_is_reported_not_counted_as_behind(tmp_path):
+    for n in "ABC":
+        _daily(tmp_path, n, "2026-10-14")
+    _daily(tmp_path, "GREN", "2026-10-09")  # fresh delisting: well inside the 60-day window
+    _status(tmp_path, "2026-10-14", {"A": True, "B": True, "C": True, "GREN": False})
+    row = health.daily_data_row(str(tmp_path), TODAY)
+    assert row.state == GREEN
+    assert "All 3 trading stocks" in row.summary
+    assert "1 stock is no longer tradable (delisting/suspension)" in row.summary
+    assert "not checked" not in row.summary.lower()
+
+
+def test_daily_data_without_status_file_says_tradability_was_not_checked(tmp_path):
+    for n in "ABC":
+        _daily(tmp_path, n, "2026-10-14")
+    _daily(tmp_path, "GREN", "2026-10-09")
+    row = health.daily_data_row(str(tmp_path), TODAY)
+    assert row.state == AMBER and "1 of 4" in row.summary
+    assert "tradability was not checked" in row.summary.lower()
+
+
+def test_daily_data_stale_status_file_is_ignored(tmp_path):
+    for n in "ABC":
+        _daily(tmp_path, n, "2026-10-14")
+    _daily(tmp_path, "GREN", "2026-10-09")
+    _status(tmp_path, "2026-10-01", {"GREN": False})  # 13 days old > STALE_DAYS
+    row = health.daily_data_row(str(tmp_path), TODAY)
+    assert row.state == AMBER and "no longer tradable" not in row.summary
+    assert "tradability was not checked" in row.summary.lower()
+
+
+def test_daily_data_unknown_tradability_is_not_treated_as_untradable(tmp_path):
+    for n in "ABC":
+        _daily(tmp_path, n, "2026-10-14")
+    _daily(tmp_path, "GREN", "2026-10-09")
+    _status(tmp_path, "2026-10-14", {"GREN": None})
+    row = health.daily_data_row(str(tmp_path), TODAY)
+    assert row.state == AMBER and "1 of 4" in row.summary
+
+
+def test_daily_data_untradable_and_ended_are_both_reported(tmp_path):
+    for n in "ABC":
+        _daily(tmp_path, n, "2026-10-14")
+    _daily(tmp_path, "GREN", "2026-10-09")
+    _daily(tmp_path, "DEAD", "2021-07-02")
+    _status(tmp_path, "2026-10-14", {"GREN": False})
+    row = health.daily_data_row(str(tmp_path), TODAY)
+    assert row.state == GREEN
+    assert "no longer tradable" in row.summary and "stopped trading" in row.summary
+
+
+def test_refresh_hint_needs_no_trading_token():
+    assert "SB_BEARER_TOKEN" in health.DAILY_REFRESH_HINT
+    assert "SB_TRADING_ACCESS_TOKEN" not in health.DAILY_REFRESH_HINT
