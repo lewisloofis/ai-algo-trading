@@ -138,13 +138,16 @@ func hasArg(args []string, flag string) bool {
 }
 
 type storeSpec struct {
-	hash    string
-	orders  int
-	fills   int
-	buyLots int // writes one live buy fill of this many lots for GOTO when > 0
-	rejects []string
-	account string
-	noRun   bool
+	hash     string
+	orders   int
+	fills    int
+	buyLots  int // writes one live buy fill of this many lots for GOTO when > 0
+	rejects  []string
+	account  string
+	noRun    bool
+	sink     string // default "live"; "paper" writes paper rows with run.account ""
+	symbol   string // default GOTO
+	sellLots int    // writes one sell fill of this many lots when > 0 (after the buy)
 }
 
 // writeStore creates a store file the way strategy-run would.
@@ -159,21 +162,39 @@ func writeStore(t *testing.T, path string, sp storeSpec) {
 		return
 	}
 	acc := sp.account
-	if acc == "" {
+	if acc == "" && sp.sink != "paper" {
 		acc = testAcc
 	}
-	if err := st.BeginRun(engine.RunRow{RunID: "run-" + filepath.Base(path), StartedNs: 1, Source: "live", FillMode: "taker", SinkKind: "live", StrategyID: "calibration", InputSpec: "GOTO", BinaryHash: sp.hash, Account: acc}); err != nil {
+	sink, sym := sp.sink, sp.symbol
+	if sink == "" {
+		sink = "live"
+	}
+	if sym == "" {
+		sym = "GOTO"
+	}
+	if err := st.BeginRun(engine.RunRow{RunID: "run-" + filepath.Base(path), StartedNs: 1, Source: "live", FillMode: "taker", SinkKind: sink, StrategyID: "calibration", InputSpec: sym, BinaryHash: sp.hash, Account: acc}); err != nil {
 		t.Fatal(err)
 	}
 	ts := time.Date(2026, 10, 15, 13, 45, 1, 0, account.WIB).UnixNano()
 	seq := int64(1)
 	if sp.buyLots > 0 {
 		id := "o-" + filepath.Base(path)
-		if err := st.InsertIntent(engine.IntentRow{Seq: seq, RecvNs: ts, StrategyID: "calibration", Symbol: "GOTO", Side: "buy", PriceIDR: 28, Lots: sp.buyLots, OrderID: id, SinkKind: "live"}); err != nil {
+		if err := st.InsertIntent(engine.IntentRow{Seq: seq, RecvNs: ts, StrategyID: "calibration", Symbol: sym, Side: "buy", PriceIDR: 28, Lots: sp.buyLots, OrderID: id, SinkKind: sink}); err != nil {
 			t.Fatal(err)
 		}
 		seq++
-		if err := st.InsertFill(engine.FillRow{Seq: seq, RecvNs: ts, OrderID: id, FillPriceIDR: 28, FillLots: sp.buyLots, FeeIDR: 4, SinkKind: "live"}); err != nil {
+		if err := st.InsertFill(engine.FillRow{Seq: seq, RecvNs: ts, OrderID: id, FillPriceIDR: 28, FillLots: sp.buyLots, FeeIDR: 4, SinkKind: sink}); err != nil {
+			t.Fatal(err)
+		}
+		seq++
+	}
+	if sp.sellLots > 0 {
+		id := "s-" + filepath.Base(path)
+		if err := st.InsertIntent(engine.IntentRow{Seq: seq, RecvNs: ts + 1, StrategyID: "calibration", Symbol: sym, Side: "sell", PriceIDR: 29, Lots: sp.sellLots, OrderID: id, SinkKind: sink}); err != nil {
+			t.Fatal(err)
+		}
+		seq++
+		if err := st.InsertFill(engine.FillRow{Seq: seq, RecvNs: ts + 1, OrderID: id, FillPriceIDR: 29, FillLots: sp.sellLots, FeeIDR: 7, SinkKind: sink}); err != nil {
 			t.Fatal(err)
 		}
 		seq++

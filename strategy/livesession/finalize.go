@@ -88,6 +88,8 @@ func (s *Session) finalize(ctx context.Context, stores []string, binarySHA strin
 	divergent := false
 	if cfg.Sink == "live" {
 		verdict, divergent = s.postReconcile(ctx, stores)
+	} else {
+		verdict += s.paperPositionNote(stores)
 	}
 
 	code := ExitClean
@@ -114,6 +116,17 @@ func (s *Session) finalize(ctx context.Context, stores []string, binarySHA strin
 	return code
 }
 
+// paperPositionNote is the paper summary's position line: derived from every
+// paper store of this strategy (all days) plus this session's own stores.
+func (s *Session) paperPositionNote(stores []string) string {
+	globs := append(PriorStoreGlobs(s.cfg, s.storeKey), stores...)
+	pos, names, err := PaperPositions(globs)
+	if err != nil {
+		return "; paper position unreadable: " + err.Error()
+	}
+	return fmt.Sprintf("; paper position after this session (%d store(s)): %s", len(names), FormatLots(pos))
+}
+
 // postReconcile compares the broker with the position derived from every
 // prior store plus this session's own stores, retrying briefly because the
 // broker's portfolio can lag a fill. It uses a fresh context: after an
@@ -124,7 +137,7 @@ func (s *Session) postReconcile(ctx context.Context, stores []string) (string, b
 		s.alert(KindDivergence, SeverityCritical, "", 0, "post-reconcile impossible: no broker client")
 		return "UNAVAILABLE (no broker client)", true
 	}
-	globs := PriorStoreGlobs(cfg, s.strategyID)
+	globs := PriorStoreGlobs(cfg, s.storeKey)
 	var last PositionCheck
 	var lastErr error
 	for try := 1; try <= cfg.ReconTries; try++ {

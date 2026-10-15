@@ -76,3 +76,52 @@ func TestRetryCommand_ReplacesExistingRetry(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestStoreKey_PaperIncludesTheSinkLiveDoesNot(t *testing.T) {
+	if got := StoreKey("paper", "wifi_momo_h5"); got != "wifi_momo_h5-paper" {
+		t.Errorf("paper key = %q", got)
+	}
+	if got := StoreKey("live", "wifi_momo_h5"); got != "wifi_momo_h5" {
+		t.Errorf("live key = %q", got)
+	}
+}
+
+// Paper and live stores of one strategy never share a glob, in either direction.
+func TestPaperAndLiveStoresNeverShareAGlob(t *testing.T) {
+	dir := t.TempDir()
+	now := testNow()
+	paperStore, _ := NextStorePath(dir, StoreKey("paper", "wifi_momo_h5"), now)
+	liveStore, _ := NextStorePath(dir, StoreKey("live", "wifi_momo_h5"), now)
+	if filepath.Base(paperStore) != "2026-10-15-wifi_momo_h5-paper-a1.db" || filepath.Base(liveStore) != "2026-10-15-wifi_momo_h5-a1.db" {
+		t.Fatalf("paper=%s live=%s", paperStore, liveStore)
+	}
+	match := func(glob, path string) bool {
+		ok, err := filepath.Match(glob, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	paperGlob := PriorStoreGlobs(Config{RunsDir: dir}, StoreKey("paper", "wifi_momo_h5"))[0]
+	liveGlob := PriorStoreGlobs(Config{RunsDir: dir}, StoreKey("live", "wifi_momo_h5"))[0]
+	if !match(paperGlob, paperStore) || match(paperGlob, liveStore) {
+		t.Errorf("paper glob %s: matches paper=%v live=%v", paperGlob, match(paperGlob, paperStore), match(paperGlob, liveStore))
+	}
+	if !match(liveGlob, liveStore) || match(liveGlob, paperStore) {
+		t.Errorf("live glob %s: matches live=%v paper=%v", liveGlob, match(liveGlob, liveStore), match(liveGlob, paperStore))
+	}
+}
+
+func TestPaperPositions_SumsPaperFillsAcrossDaysAndIgnoresLive(t *testing.T) {
+	dir := t.TempDir()
+	writeStore(t, filepath.Join(dir, "2026-10-14-s-paper-a1.db"), storeSpec{hash: "h", buyLots: 2, sink: "paper", symbol: "WIFI"})
+	writeStore(t, filepath.Join(dir, "2026-10-15-s-paper-a1.db"), storeSpec{hash: "h", buyLots: 1, sellLots: 1, sink: "paper", symbol: "WIFI"})
+	writeStore(t, filepath.Join(dir, "2026-10-15-s-a1.db"), storeSpec{hash: "h", buyLots: 9, symbol: "WIFI"}) // live
+	pos, names, err := PaperPositions([]string{filepath.Join(dir, "*-s-paper-a[0-9]*.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 2 || pos["WIFI"] != 2 {
+		t.Fatalf("pos=%v names=%v", pos, names)
+	}
+}

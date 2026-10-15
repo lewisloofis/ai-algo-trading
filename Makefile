@@ -10,10 +10,12 @@
 #   make test
 #   make dashboard
 #   make refresh-prices
+#   make paper-day STRATEGY=wifi_momo_h5
+#   make paper-scorecard STRATEGY=wifi_momo_h5
 #   make publish-dashboard
 #   make clean
 
-.PHONY: build build-linux-arm64 collect sbcap test dashboard refresh-prices emit-target publish-dashboard recon clean
+.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard refresh-prices emit-target paper-day paper-scorecard publish-dashboard recon clean
 
 build:
 	mkdir -p $(CURDIR)/bin
@@ -111,8 +113,9 @@ refresh-prices:
 	cd research && $(DASH_PY) -m screener.daily_store snapshot --all-stored --out-dir data/daily $(REFRESH_ARGS)
 
 # emit-target writes the day's target_portfolio.json for ONE registered strategy
-# (research/strategy_fit/emitter_specs.py) and PRINTS the matching strategy-run
-# command. It never runs strategy-run. Pre-open job, local daily parquet by default:
+# (research/strategy_fit/emitter_specs.py) and PRINTS the matching live-session
+# command (paper sink for a paper spec; a live sink only for a candidate). It never
+# runs live-session. Pre-open job, local daily parquet by default:
 #
 #   make emit-target STRATEGY=<id>                       AS_OF defaults to today (WIB)
 #   make emit-target STRATEGY=<id> AS_OF=2026-10-16 REBALANCE_AT=10:00
@@ -132,6 +135,41 @@ emit-target:
 	@mkdir -p $(CURDIR)/runs
 	cd research && $(DASH_PY) -m strategy_fit.target_emitter emit --strategy $(STRATEGY) --as-of $(AS_OF) \
 		--out $(CURDIR)/runs/target_$(STRATEGY)_$(AS_OF).json --rebalance-at $(REBALANCE_AT) $(EMIT_ARGS)
+
+# build-strategy builds the two binaries live-session needs, side by side in bin/
+# (live-session finds strategy-run next to itself and checks its sha256 against the
+# binary_hash every run row records, so `go run` is not an option).
+build-strategy:
+	mkdir -p $(CURDIR)/bin
+	cd strategy && go build -o $(CURDIR)/bin/strategy-run ./cmd/strategy-run
+	cd strategy && go build -o $(CURDIR)/bin/live-session ./cmd/live-session
+
+# paper-day: ONE command per trading day for a zero-cost PAPER forward test.
+# Emits today's target (bars strictly before today) and runs
+# `live-session --sink paper --source live` (live prices, simulated taker fills).
+# Needs SB_ACCESS_TOKEN in the environment (market data only): no trading token,
+# no ALGO_LIVE/ALGO_CONFIRM, no broker. Only status "paper" specs run.
+#
+#   make paper-day STRATEGY=wifi_momo_h5                  # AS_OF = today (WIB)
+#   make paper-day STRATEGY=ptro_momo_h5 REBALANCE_AT=10:00
+#
+# START IT BEFORE REBALANCE_AT minus 60 seconds (default 09:30 -> before 09:29:00 WIB).
+# Non-trading day: prints why and exits 0. Needs daily bars through the previous
+# session: run `make refresh-prices` after the close the day before.
+# Results: runs/target_<id>_<date>.json, runs/<date>-<id>-paper-aN.db, then
+# `make paper-scorecard STRATEGY=<id>`.
+paper-day:
+	@test -n "$(STRATEGY)" || { echo "paper-day: set STRATEGY=<id> (wifi_momo_h5 | ptro_momo_h5)"; exit 2; }
+	@$(MAKE) --no-print-directory build-strategy
+	@mkdir -p $(CURDIR)/runs
+	cd research && $(DASH_PY) -m strategy_fit.paper_day --strategy $(STRATEGY) --as-of $(AS_OF) \
+		--rebalance-at $(REBALANCE_AT) --runs-dir $(CURDIR)/runs
+
+# paper-scorecard: completed paper round trips of one strategy (all days), net of
+# fee and one tick, vs the always-long null, and the go-live screen. Read-only.
+paper-scorecard:
+	@test -n "$(STRATEGY)" || { echo "paper-scorecard: set STRATEGY=<id>"; exit 2; }
+	cd research && $(DASH_PY) -m strategy_fit.paper_scorecard --strategy $(STRATEGY) --runs-dir $(CURDIR)/runs
 
 # publish-dashboard copies the built site to S3 beside the market data, so it is
 # readable without the laptop that generated it (plan-19 Stage 6, optional).

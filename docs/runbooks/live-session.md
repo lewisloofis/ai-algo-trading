@@ -31,6 +31,33 @@ Rehearsal, no trading token and no arming (replay + paper sink):
 live-session --sink paper --target-portfolio ... --rebalance-at 13:45 --segments 'segments/2026-10-14/*.binpb.zst'
 ```
 
+### Paper on live prices (`--sink paper --source live`)
+
+Shadow run on the real feed with simulated fills. Needs only `SB_ACCESS_TOKEN`
+(market data): no `SB_TRADING_ACCESS_TOKEN`, no `ALGO_LIVE`/`ALGO_CONFIRM`, no
+`--account`, no broker reconcile. `--equity-idr` is still required (risk caps are
+fractions of it). strategy-run's paper sink fills like `PaperSink` in taker mode:
+a buy fills at the best offer, a sell at the best bid, immediately and in full (no
+queue, no partial fills), fee 0.15% buy / 0.25% sell. With no trading token the
+risk wrapper's market gate is session-only (IDX calendar + Exodus session);
+tradable / suspension / ARA-ARB are not checked.
+
+```sh
+export SB_ACCESS_TOKEN=...
+live-session --sink paper --source live --equity-idr 15000000 \
+  --target-portfolio runs/target_wifi_momo_h5_2026-10-16.json \
+  --rebalance-at 09:30 --symbols WIFI
+```
+
+Paper stores are named `runs/<date>-<strategy>-paper-aN.db` and the prior-stores
+glob is `runs/*-<strategy>-paper-a[0-9]*.db` (every day), so paper and live never
+share a glob. Pre-run and the summary report the paper position netted across all
+days' stores (a multi-day hold buys in one store and sells in a later one). Only a
+target whose emitter sidecar says `spec_status: candidate` (or that has no
+sidecar) may arm a live sink; a `paper` spec is refused. The one-command daily
+wrapper is `make paper-day STRATEGY=<id>`; results are scored with
+`make paper-scorecard STRATEGY=<id>`.
+
 ## What it does
 
 1. **Preflight** (all failures listed at once; nothing is created if any fails):

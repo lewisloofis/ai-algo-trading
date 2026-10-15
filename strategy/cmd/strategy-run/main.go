@@ -4,6 +4,10 @@
 //
 // Two sinks exist: --sink paper (engine.PaperSink, simulated fills — the
 // default) and --sink live (strategy/live.Sink, real Carina order routing).
+// --sink paper --source live (shadow run on live prices) needs only
+// SB_ACCESS_TOKEN: no trading token, no arming. It fills as PaperSink does (taker:
+// buy at the offer, sell at the bid, immediate full fill, schedule fee 15/25 bps),
+// behind the risk wrapper with a session-only market gate.
 // --sink live requires --source live (never place real orders against
 // replayed data), an explicit --account (the sleeve sub-account, e.g.
 // 008488L — no default, see docs/plans/18-alpha-and-infrastructure-split.md
@@ -28,7 +32,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -174,8 +177,11 @@ func run() error {
 		return fmt.Errorf("--source live requires --equity-idr > 0 (sleeve equity; strategy/risk caps are always denominated in it, and this binary never fetches it automatically)")
 	}
 	tradingToken := os.Getenv("SB_TRADING_ACCESS_TOKEN")
-	if riskGated && tradingToken == "" {
-		return fmt.Errorf("--source live requires SB_TRADING_ACCESS_TOKEN in the environment (used by the market gate, and by order routing itself when --sink live)")
+	if err := checkTradingToken(*sinkName, riskGated, tradingToken); err != nil {
+		return err
+	}
+	if err := requireLiveTarget(*sinkName, *targetPortfolioPath); err != nil {
+		return err
 	}
 	// Orders route by the trading token's own account claim, not --account
 	// (docs/runbooks/first-live-order.md §14). Refuse before the strategy, store,
@@ -253,7 +259,11 @@ func run() error {
 
 	sink := engine.OrderSink(inner)
 	if riskGated {
-		marketGate, err := newMarketGate(tokens, hc)
+		sessionOnly := sessionOnlyGate(*sinkName, tradingToken)
+		if sessionOnly {
+			log.Printf("paper sink on live data with no SB_TRADING_ACCESS_TOKEN: using the session-only market gate (calendar + Exodus session; tradable/suspension/ARA-ARB are NOT checked)")
+		}
+		marketGate, err := newMarketGate(tokens, hc, sessionOnly)
 		if err != nil {
 			return fmt.Errorf("market gate: %w", err)
 		}
@@ -589,9 +599,9 @@ func newStrategy(name, targetPortfolioPath string, prior *priorStateConfig, limi
 // name, never in the new run's own --store (which starts empty; see
 // engine.PostTradeStore.AttemptedWindows' doc comment for the same point).
 //
-// Each matched file's DerivedPositions reflects only THAT file's own fills
-// — one run's fills never appear in another run's store — so summing
-// positions across files is correct, not double-counting.
+// Positions are netted across ALL matched files in time order (engine.NetLots),
+// not summed per file: a multi-day hold buys in one file and sells in a later
+// one, and a per-file derivation cannot see the buy the sell closes.
 func loadPriorState(glob, strategyID, sinkKind, account string, retry int) (map[string]bool, map[string]int, error) {
 	paths, err := globFiles(glob)
 	if err != nil {
@@ -599,7 +609,7 @@ func loadPriorState(glob, strategyID, sinkKind, account string, retry int) (map[
 	}
 
 	attempted := make(map[string]bool)
-	positions := make(map[string]int)
+	var allFills []engine.StoreFill
 	for _, path := range paths {
 		s, err := engine.OpenStore(path)
 		if err != nil {
@@ -627,20 +637,23 @@ func loadPriorState(glob, strategyID, sinkKind, account string, retry int) (map[
 			}
 		}
 
-		dp, err := s.DerivedPositions(sinkKind, account)
+		fills, err := s.Fills(sinkKind, account, false)
 		if err != nil {
 			s.Close()
-			return nil, nil, fmt.Errorf("derived positions %s: %w", path, err)
+			return nil, nil, fmt.Errorf("fills %s: %w", path, err)
 		}
-		for _, pos := range dp {
-			positions[pos.Symbol] += int(math.Round(pos.Shares / sharesPerLot))
-		}
+		allFills = append(allFills, fills...)
 
 		if err := s.Close(); err != nil {
 			return nil, nil, fmt.Errorf("close %s: %w", path, err)
 		}
 	}
-	return attempted, positions, nil
+	// Net the fills ACROSS the stores in time order. Summing each store's own
+	// derived position is wrong for a hold that spans days: the exit sell sits in
+	// a later store than the buy, and per store it is a sell with nothing to sell
+	// (clamped to zero), so the buy would stay open forever.
+	sort.SliceStable(allFills, func(i, j int) bool { return allFills[i].RecvNs < allFills[j].RecvNs })
+	return attempted, engine.NetLots(allFills), nil
 }
 
 // validateRetry checks --retry before anything is created: 0 (off) or N >= 2,
@@ -704,11 +717,37 @@ type envTokens struct {
 func (t envTokens) AccessToken() string  { return t.access }
 func (t envTokens) TradingToken() string { return t.trading }
 
+// checkTradingToken: a live source needs SB_TRADING_ACCESS_TOKEN only when the
+// sink is live (order routing, and the full market gate's Carina reads). A paper
+// sink fed by live data needs just SB_ACCESS_TOKEN (the feed and the Exodus
+// session check).
+func checkTradingToken(sinkName string, riskGated bool, tradingToken string) error {
+	if riskGated && sinkName == "live" && tradingToken == "" {
+		return fmt.Errorf("--sink live requires SB_TRADING_ACCESS_TOKEN in the environment (order routing and the market gate)")
+	}
+	return nil
+}
+
+// sessionOnlyGate reports whether the market gate may skip the Carina checks:
+// only for a non-live sink with no trading token. A live sink never may.
+func sessionOnlyGate(sinkName, tradingToken string) bool {
+	return sinkName != "live" && tradingToken == ""
+}
+
+// requireLiveTarget refuses a live sink for a target whose emitter sidecar says
+// the spec is not a live candidate (a "paper" spec is paper-only).
+func requireLiveTarget(sinkName, targetPortfolioPath string) error {
+	if sinkName != "live" || strings.TrimSpace(targetPortfolioPath) == "" {
+		return nil
+	}
+	return portfolio.RequireLiveCandidate(targetPortfolioPath)
+}
+
 // newMarketGate builds the real, endpoint-backed strategy/market.Gate used
 // whenever a run is risk-gated (--source live), so risk.RiskSink never
 // falls back to risk.DenyAllGate's blanket deny for a run that genuinely
 // has a live market to check against.
-func newMarketGate(tokens market.TokenSource, hc *http.Client) (risk.MarketGate, error) {
+func newMarketGate(tokens market.TokenSource, hc *http.Client, sessionOnly bool) (risk.MarketGate, error) {
 	cal, err := calendar.Load()
 	if err != nil {
 		return nil, fmt.Errorf("calendar: %w", err)
@@ -721,7 +760,7 @@ func newMarketGate(tokens market.TokenSource, hc *http.Client) (risk.MarketGate,
 	if err != nil {
 		return nil, fmt.Errorf("client: %w", err)
 	}
-	gate, err := market.NewGate(cal, client, market.GateOptions{})
+	gate, err := market.NewGate(cal, client, market.GateOptions{SessionOnly: sessionOnly})
 	if err != nil {
 		return nil, fmt.Errorf("gate: %w", err)
 	}

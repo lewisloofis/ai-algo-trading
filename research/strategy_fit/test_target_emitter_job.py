@@ -283,43 +283,38 @@ class TestMultiSymbol:
 
 class TestPrintedCommand:
     def _cmd_line(self, capsys) -> str:
-        lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("strategy-run command: ")]
+        lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("live-session command: ")]
         assert len(lines) == 1
-        return lines[0][len("strategy-run command: "):]
+        return lines[0][len("live-session command: "):]
 
-    def test_single_line_absolute_paths_and_matching_flags(self, tmp_path, capsys):
+    def test_candidate_prints_a_live_session_live_sink_command(self, tmp_path, capsys):
         rc, out = _emit(tmp_path, "--rebalance-at", "09:45")
         assert rc == 0
         cmd = self._cmd_line(capsys)
         assert "\n" not in cmd
-        assert cmd.startswith("cd ") and "go run ./cmd/strategy-run" in cmd
-        assert "--strategy rebalance" in cmd
+        assert cmd.split(" ")[0].endswith("/bin/live-session")
+        assert "go run" not in cmd and "strategy-run" not in cmd
+        assert "--sink live" in cmd and '--account "$ACCOUNT"' in cmd and '--equity-idr "$EQUITY_IDR"' in cmd
         assert f"--target-portfolio {out.resolve()}" in cmd
         assert "--rebalance-at 09:45" in cmd
         assert "--symbols AAAA,BBBB,CCCC" in cmd
-        assert "--sink paper" in cmd
-        for flag in ("--target-portfolio", "--store", "--prior-stores"):
+        # live-session names its own stores and prior-stores: the emitter must not print them
+        assert "--store" not in cmd and "--prior-stores" not in cmd
+        for flag in ("--target-portfolio", "--runs-dir"):
             val = cmd.split(flag + " ")[1].split(" ")[0].strip("'")
             assert os.path.isabs(val), (flag, val)
 
-    def test_store_is_fresh_and_prior_glob_is_limited_to_this_strategy(self, tmp_path, capsys):
-        _, out = _emit(tmp_path)
-        cmd1 = self._cmd_line(capsys)
-        store1 = cmd1.split("--store ")[1].split(" ")[0]
-        assert Path(store1).name == f"store_test_multi_{AS_OF}_run1.db"
-        # a store from an earlier run exists -> the next printed command is a new file
-        Path(store1).parent.mkdir(parents=True, exist_ok=True)
-        Path(store1).write_bytes(b"")
-        _emit(tmp_path)
-        cmd2 = self._cmd_line(capsys)
-        store2 = cmd2.split("--store ")[1].split(" ")[0]
-        assert Path(store2).name == f"store_test_multi_{AS_OF}_run2.db"
-        glob = cmd2.split("--prior-stores ")[1].split(" ")[0].strip("'")
-        import fnmatch
-        assert fnmatch.fnmatch(store1, glob)
-        assert not fnmatch.fnmatch(str(Path(store1).parent / f"store_other_{AS_OF}_run1.db"), glob)
-        assert not fnmatch.fnmatch(str(Path(store1).parent / f"store_test_multi_x_{AS_OF}_run1.db"), glob)
-        assert glob.startswith("'") is False and str(tmp_path) in glob
+    def test_paper_spec_prints_only_a_paper_command(self, tmp_path, capsys):
+        reg = {"test_paper": replace(MULTI, strategy_id="test_paper", status=es.STATUS_PAPER)}
+        rc, _ = _emit(tmp_path, strategy="test_paper", registry=reg)
+        assert rc == 0
+        cmd = self._cmd_line(capsys)
+        assert "--sink paper --source live" in cmd
+        assert "--sink live" not in cmd and "--account" not in cmd and "ACCOUNT" not in cmd
+
+    def test_command_argv_for_a_candidate_is_refused(self):
+        with pytest.raises(te.EmitterError):
+            te.live_session_argv(MULTI, Path("/tmp/x.json"), te.DEFAULT_WINDOW)
 
     def test_default_1500_is_never_printed(self, tmp_path, capsys):
         _emit(tmp_path)

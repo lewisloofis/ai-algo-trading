@@ -15,10 +15,13 @@ the grid scored, never a reimplementation), symbol(s), hold, sizing.
         status=STATUS_CANDIDATE,            # only candidates emit without a flag
     ))
 
-Status gates the emitter: only ``candidate`` specs are emitted for live.
-``retired`` (and ``example``) specs are refused unless the operator passes the
-explicit ``--allow-retired`` flag, so a dead strategy cannot be emitted by
-accident. A spec is never inferred to be a candidate; the entry says so.
+Status gates the emitter: only ``candidate`` specs may go live. ``paper``
+specs emit like any other but only ever print a paper-sink command and are
+refused by anything that would arm live (the emitter's live command, the
+sidecar check in live-session / strategy-run). ``retired`` (and ``example``)
+specs are refused unless the operator passes the explicit ``--allow-retired``
+flag, so a dead strategy cannot be emitted by accident. A spec is never
+inferred to be a candidate; the entry says so.
 """
 
 from __future__ import annotations
@@ -32,9 +35,10 @@ import pandas as pd
 from strategy_fit.families_single_name import daily_momentum_signal
 
 STATUS_CANDIDATE = "candidate"
+STATUS_PAPER = "paper"
 STATUS_RETIRED = "retired"
 STATUS_EXAMPLE = "example"
-STATUSES = (STATUS_CANDIDATE, STATUS_RETIRED, STATUS_EXAMPLE)
+STATUSES = (STATUS_CANDIDATE, STATUS_PAPER, STATUS_RETIRED, STATUS_EXAMPLE)
 
 _ID_RE = re.compile(r"^[a-z0-9_]+$")
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]+$")
@@ -65,6 +69,15 @@ class EmitterSpec:
 
     @property
     def is_candidate(self) -> bool:
+        return self.status == STATUS_CANDIDATE
+
+    @property
+    def is_paper(self) -> bool:
+        return self.status == STATUS_PAPER
+
+    @property
+    def can_go_live(self) -> bool:
+        """Only a ``candidate`` may arm a live sink; ``paper`` never may."""
         return self.status == STATUS_CANDIDATE
 
 
@@ -116,4 +129,29 @@ register(EmitterSpec(
     signal_fn=daily_momentum_signal,
     status=STATUS_RETIRED,
     status_note="retired, not a live candidate (BNBR fails on D1 entry timing)",
+))
+
+# PAPER ONLY, zero-cost forward test (docs/research/2026-10-15-first-candidate-
+# shortlist.md section 1/6). The cells are exactly the shortlist's: daily_momentum
+# (default parameters of daily_momentum_signal, the function SINGLE_NAME_SIGNAL_FNS
+# scores), hold 5, next-session entry, sequential de-overlap, long-only. Not a
+# live candidate: no cell cleared the blocking bar (t 0.55 / 0.73).
+register(EmitterSpec(
+    strategy_id="wifi_momo_h5",
+    symbols=("WIFI",),
+    family="daily_momentum",
+    hold=5,
+    signal_fn=daily_momentum_signal,
+    status=STATUS_PAPER,
+    status_note="paper forward test only (shortlist 2026-10-15 #1); not a live candidate",
+))
+
+register(EmitterSpec(
+    strategy_id="ptro_momo_h5",
+    symbols=("PTRO",),
+    family="daily_momentum",
+    hold=5,
+    signal_fn=daily_momentum_signal,
+    status=STATUS_PAPER,
+    status_note="paper forward test only (shortlist 2026-10-15 #2); not a live candidate",
 ))

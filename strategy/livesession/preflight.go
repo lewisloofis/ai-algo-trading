@@ -109,6 +109,13 @@ func Preflight(in PreflightInput) (PreflightResult, []error) {
 		fail("--segments is required with --source replay")
 	}
 
+	// Only a "candidate" emitter spec may arm a live sink; a paper spec is paper-only.
+	if isLive && strings.TrimSpace(cfg.TargetPortfolio) != "" {
+		if err := portfolio.RequireLiveCandidate(cfg.TargetPortfolio); err != nil {
+			fail("%v", err)
+		}
+	}
+
 	// Target portfolio and rebalance window.
 	var at time.Time
 	if cfg.Strategy == "rebalance" {

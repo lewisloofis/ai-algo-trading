@@ -27,6 +27,8 @@ type Gate struct {
 	ttl    TTLs
 	now    func() time.Time
 
+	sessionOnly bool // see GateOptions.SessionOnly
+
 	mu       sync.Mutex
 	session  cacheEntry[sessionSnapshot]
 	tradable map[string]cacheEntry[TradableRow]
@@ -89,6 +91,14 @@ func (t TTLs) withDefaults() TTLs {
 type GateOptions struct {
 	TTLs  TTLs
 	Clock func() time.Time
+
+	// SessionOnly answers only the calendar (offline) and the Exodus market
+	// session (access token). Tradable, NotSuspended and WithinBand need the
+	// trading token against Carina; with SessionOnly they are reported Allow and
+	// labelled "not checked". It exists for a PAPER sink fed by live market data
+	// when no trading token is available. It must never gate a live sink: a
+	// suspended or out-of-band name would pass.
+	SessionOnly bool
 }
 
 // NewGate builds a Gate. cal and client are both required: without the
@@ -107,12 +117,13 @@ func NewGate(cal *calendar.Calendar, client *Client, opts GateOptions) (*Gate, e
 		now = time.Now
 	}
 	return &Gate{
-		cal:      cal,
-		client:   client,
-		ttl:      opts.TTLs.withDefaults(),
-		now:      now,
-		tradable: make(map[string]cacheEntry[TradableRow]),
-		band:     make(map[string]cacheEntry[AutoRejectPrice]),
+		cal:         cal,
+		client:      client,
+		sessionOnly: opts.SessionOnly,
+		ttl:         opts.TTLs.withDefaults(),
+		now:         now,
+		tradable:    make(map[string]cacheEntry[TradableRow]),
+		band:        make(map[string]cacheEntry[AutoRejectPrice]),
 	}, nil
 }
 
@@ -222,6 +233,15 @@ func (g *Gate) Detail(ctx context.Context, symbol string, priceIDR int64) Detail
 		val, reason := classifyPhase(snap)
 		d.State.MarketOpen = val
 		d.add("market_open", val, "exodus:market-time+session", reason)
+	}
+
+	if g.sessionOnly {
+		const src = "not checked (session-only gate: no trading token)"
+		d.State.Tradable, d.State.NotSuspended, d.State.WithinBand = risk.Allow, risk.Allow, risk.Allow
+		d.add("tradable", risk.Allow, src, "paper sink without a trading token: /stock/tradable not consulted")
+		d.add("not_suspended", risk.Allow, src, "paper sink without a trading token: suspension not consulted")
+		d.add("within_band", risk.Allow, src, "paper sink without a trading token: ARA/ARB band not consulted")
+		return d
 	}
 
 	// --- Tradable and NotSuspended (reference 06 §7) ---------------------

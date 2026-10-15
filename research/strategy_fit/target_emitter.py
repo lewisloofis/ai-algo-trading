@@ -12,7 +12,10 @@ loader: strategy/portfolio/target.go). Run once pre-open on day D.
 
 Strategy-agnostic: every strategy is one entry in strategy_fit/emitter_specs.py
 (id -> signal fn, symbols, hold, lots, status). ``make emit-target STRATEGY=<id>``
-wraps this and prints the matching ``strategy-run`` command (never runs it).
+wraps this and prints the matching ``live-session`` command (never runs it):
+a ``--sink paper --source live`` command for a ``paper`` spec, a live-sink command
+only for a ``candidate`` spec. ``make paper-day`` (strategy_fit/paper_day.py) emits
+and then runs the paper command.
 Exit codes: 0 ok, 2 data/arg error, 3 no token, 4 not a trading day (nothing
 written), 5 retired spec without --allow-retired, 6 rebalance time outside window.
 
@@ -80,7 +83,7 @@ import os
 import shlex
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
@@ -91,6 +94,7 @@ from lib.market_calendar import CALENDAR, MarketCalendar
 from strategy_fit.emitter_specs import SPECS, EmitterSpec, SpecError
 from strategy_fit.harness import deoverlap_sequential
 from strategy_fit.long_only import long_only_mask
+from strategy_fit.paper_stores import paper_net_lots
 from strategy_fit.run_strategy_fit import HISTORY_START
 
 SCHEMA_VERSION = 1
@@ -208,8 +212,21 @@ def normalise_bars(df: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
-def load_local_bars(path: Path) -> pd.DataFrame:
-    return normalise_bars(pd.read_parquet(path))
+def load_local_bars(path: Path, require_traded_last_bar: Optional[date] = None) -> pd.DataFrame:
+    """Normalised local bars. With ``require_traded_last_bar`` (the session before the
+    emit day), a zero-volume bar on that day is refused: it is the refresh's in-progress
+    placeholder (close = prior close), not a real close, and a signal from it is wrong."""
+    raw = pd.read_parquet(path)
+    if require_traded_last_bar is not None and "volume" in raw.columns:
+        day = require_traded_last_bar.isoformat()
+        d = pd.to_datetime(raw["date"]).dt.strftime("%Y-%m-%d")
+        vol = pd.to_numeric(raw.loc[d == day, "volume"], errors="coerce")
+        if len(vol) and (vol.fillna(0) <= 0).all():
+            raise StaleDataError(
+                f"{path.stem}: the {day} bar has zero volume (an in-progress placeholder written "
+                "during market hours, not a close); re-run `make refresh-prices` after the close"
+            )
+    return normalise_bars(raw)
 
 
 def fetch_live_bars(symbol: str, end: date) -> pd.DataFrame:
@@ -482,38 +499,72 @@ def write_outputs(out: Path, doc: dict[str, Any], sidecar: dict[str, Any]) -> No
 
 
 # ---------------------------------------------------------------------------
-# strategy-run command (printed, never executed)
+# live-session command (printed, never executed here)
 # ---------------------------------------------------------------------------
 
-STRATEGY_DIR = Path(__file__).resolve().parents[2] / "strategy"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+LIVE_SESSION_BIN = REPO_ROOT / "bin" / "live-session"
+PAPER_EQUITY_IDR = 15_000_000   # risk caps are fractions of this; paper only
 
 
-def fresh_store_path(runs_dir: Path, strategy_id: str, as_of: date) -> Path:
-    """First store_<id>_<date>_run<N>.db that does not exist yet (one store per run)."""
-    n = 1
-    while (runs_dir / f"store_{strategy_id}_{as_of}_run{n}.db").exists():
-        n += 1
-    return runs_dir / f"store_{strategy_id}_{as_of}_run{n}.db"
+def live_session_command(
+    spec: EmitterSpec, out: Path, window: RebalanceWindow,
+    equity_idr: int = PAPER_EQUITY_IDR, runs_dir: Optional[Path] = None,
+) -> str:
+    """The live-session invocation for this target.
 
-
-def prior_stores_glob(runs_dir: Path, strategy_id: str, as_of: date) -> str:
-    """Same-day stores of THIS strategy only (the id is followed by the date)."""
-    return str(runs_dir / f"store_{strategy_id}_{as_of}_run*.db")
-
-
-def strategy_run_command(spec: EmitterSpec, out: Path, as_of: date, window: RebalanceWindow) -> str:
-    runs_dir = Path(out).resolve().parent
-    parts = [
+    A paper spec (or any non-candidate) always gets ``--sink paper --source live``:
+    market data only, no trading token, no arming. Only a ``candidate`` gets a live
+    sink, with the account and equity left as shell variables the operator must set.
+    Store naming and the prior-stores glob are live-session's own (a paper sink's
+    stores are ``<date>-<id>-paper-aN.db``, so they never share a glob with live).
+    """
+    out = Path(out).resolve()
+    runs = Path(runs_dir).resolve() if runs_dir else out.parent
+    parts = [shlex.quote(str(LIVE_SESSION_BIN))]
+    if spec.can_go_live:
+        parts += ["--sink live", "--source live", '--account "$ACCOUNT"', '--equity-idr "$EQUITY_IDR"']
+    else:
+        parts += ["--sink paper", "--source live", f"--equity-idr {equity_idr}"]
+    parts += [
         "--strategy rebalance",
-        f"--target-portfolio {shlex.quote(str(Path(out).resolve()))}",
-        "--source live",
+        f"--target-portfolio {shlex.quote(str(out))}",
         f"--symbols {','.join(spec.symbols)}",
-        "--sink paper",
-        f"--store {shlex.quote(str(fresh_store_path(runs_dir, spec.strategy_id, as_of)))}",
-        f"--prior-stores {shlex.quote(prior_stores_glob(runs_dir, spec.strategy_id, as_of))}",
         f"--rebalance-at {window.rebalance_at:%H:%M}",
+        f"--runs-dir {shlex.quote(str(runs))}",
     ]
-    return f"cd {shlex.quote(str(STRATEGY_DIR))} && go run ./cmd/strategy-run " + " ".join(parts)
+    return " ".join(parts)
+
+
+def live_session_argv(
+    spec: EmitterSpec, out: Path, window: RebalanceWindow, equity_idr: int = PAPER_EQUITY_IDR,
+    runs_dir: Optional[Path] = None,
+) -> list[str]:
+    """argv form of a PAPER live-session command (paper_day runs this, never via a shell)."""
+    if spec.can_go_live:
+        raise EmitterError(f"{spec.strategy_id} is a live candidate: paper_day only runs paper specs")
+    return shlex.split(live_session_command(spec, out, window, equity_idr, runs_dir))
+
+
+def guard_paper_midhold(decision: Decision, held_lots: int) -> Decision:
+    """A paper forward test never buys into a trade already under way.
+
+    A 5-session hold enters on E and carries E..E+hold-1. If the paper stores hold
+    no position for the name but the chain says it is already past its entry day,
+    the entry was missed (the test started mid-hold, or that day's run failed):
+    buying now would be a different, late trade, so the target stays flat until the
+    next entry day. With a paper position held the target is unchanged, so the day-2
+    run keeps it and the exit day (weight 0) sells it to zero.
+    """
+    if decision.weight <= 0 or decision.entry_day is None or decision.entry_day >= decision.as_of:
+        return decision
+    if held_lots > 0:
+        return decision
+    return replace(
+        decision, weight=0.0,
+        reason=(f"flat (paper): entry day {decision.entry_day} was missed and no paper position is "
+                f"held; not entering mid-hold; waiting for the next entry. Chain said: {decision.reason}"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +578,7 @@ def _load_bars(symbol: str, source: str, as_of: date, data_dir: Path,
     path = data_dir / f"{symbol}.parquet"
     if not path.exists():
         raise EmitterError(f"local bars not found for {symbol}: {path}")
-    return load_local_bars(path)
+    return load_local_bars(path, require_traded_last_bar=calendar.prev_trading_day(as_of))
 
 
 def _window_from_args(args: argparse.Namespace) -> RebalanceWindow:
@@ -539,7 +590,7 @@ def _window_from_args(args: argparse.Namespace) -> RebalanceWindow:
 
 
 def _cmd_emit(args: argparse.Namespace, spec: EmitterSpec) -> int:
-    if not spec.is_candidate and not args.allow_retired:
+    if not (spec.is_candidate or spec.is_paper) and not args.allow_retired:
         raise RetiredSpecError(
             f"{spec.strategy_id} is {spec.status} ({spec.status_note or 'not a live candidate'}); "
             "refusing to emit it for live. Pass --allow-retired to emit it deliberately."
@@ -549,19 +600,23 @@ def _cmd_emit(args: argparse.Namespace, spec: EmitterSpec) -> int:
     if not CALENDAR.is_trading_day(as_of):
         raise NotATradingDayError(f"{as_of} is not an IDX trading day; nothing emitted")
     data_dir = Path(args.data_dir)
+    out = Path(args.out)
+    runs_dir = Path(args.runs_dir) if args.runs_dir else out.resolve().parent
     decisions = [
         decide(_load_bars(sym, args.source, as_of, data_dir, CALENDAR), as_of, spec, CALENDAR, symbol=sym)
         for sym in spec.symbols
     ]
+    if spec.is_paper:
+        held = paper_net_lots(runs_dir, spec.strategy_id)
+        decisions = [guard_paper_midhold(d, held.get(d.symbol, 0)) for d in decisions]
     doc = build_target(decisions, spec, window)
-    out = Path(args.out)
     write_outputs(out, doc, build_sidecar(decisions, spec, doc, window))
     print(f"{spec.strategy_id} {as_of}: base={doc['base_notional_idr']} -> {out}")
     for d, t in zip(decisions, doc["targets"]):
         print(f"  {d.symbol} weight={t['weight']}: {d.reason}")
     if not spec.is_candidate:
-        print(f"  WARNING: spec status is {spec.status} ({spec.status_note})")
-    print(f"strategy-run command: {strategy_run_command(spec, out, as_of, window)}")
+        print(f"  NOTE: spec status is {spec.status} ({spec.status_note}); the command below is PAPER only")
+    print(f"live-session command: {live_session_command(spec, out, window, args.equity_idr, runs_dir)}")
     return 0
 
 
@@ -593,6 +648,10 @@ def _parser() -> argparse.ArgumentParser:
                       help="bot --rebalance-at, HH:MM WIB; must fall inside the window")
     emit.add_argument("--window-start", default=f"{DEFAULT_WINDOW.start:%H:%M}")
     emit.add_argument("--window-end", default=f"{DEFAULT_WINDOW.end:%H:%M}")
+    emit.add_argument("--runs-dir", default="",
+                      help="where live-session keeps stores (default: the --out directory)")
+    emit.add_argument("--equity-idr", type=int, default=PAPER_EQUITY_IDR,
+                      help="sleeve equity for the printed PAPER command (risk caps are fractions of it)")
     emit.add_argument("--allow-retired", action="store_true",
                       help="emit a retired/example spec anyway (never for live use)")
     return p

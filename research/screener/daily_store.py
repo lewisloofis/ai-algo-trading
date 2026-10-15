@@ -43,6 +43,13 @@ beyond DEFAULT_DIVERGENCE_EPSILON is logged loudly (WARNING) and appended to
 an on-disk divergence_log.jsonl next to the store, before the new
 (back-adjusted, authoritative) value replaces the old one.
 
+In-progress bars: chartbit publishes a bar for the CURRENT session as soon as the
+market opens (volume 0 and close = prior close at the open, a partial bar after).
+Persisting it poisons every consumer (the emitter reads "yesterday" off it). The
+writer therefore never persists a bar dated today (WIB) before the session is
+final (DAILY_BAR_FINAL_AT, 16:15 WIB) or dated in the future, and a write also
+drops such a row already in the store, so a post-close refresh heals it.
+
 Security note: the live data path requires SB_BEARER_TOKEN. Tests MUST mock
 _build_live_data_source — never pass a real token through the test suite.
 """
@@ -228,6 +235,33 @@ def _normalise_daily(df: pd.DataFrame) -> pd.DataFrame:
         out = out.dropna(subset=["close"])
     out = out.sort_values(_DEDUP_COL, ignore_index=True)
     return out
+
+
+WIB = datetime.timezone(datetime.timedelta(hours=7))
+DAILY_BAR_FINAL_AT = datetime.time(16, 15)   # IDX closes 15:50, post-close ends 16:15 WIB
+
+
+def _now_wib() -> datetime.datetime:
+    return datetime.datetime.now(WIB)
+
+
+def drop_incomplete_session(df: pd.DataFrame, now: datetime.datetime | None = None) -> pd.DataFrame:
+    """Drop bars that are not a finished session: dated after today (WIB), or dated
+    today before DAILY_BAR_FINAL_AT. Past bars are untouched, including legitimate
+    zero-volume bars of a suspended name. Returns a new frame."""
+    if df is None or df.empty or _DEDUP_COL not in df.columns:
+        return df
+    now = now.astimezone(WIB) if now is not None else _now_wib()
+    today = now.date()
+    final = now.time() >= DAILY_BAR_FINAL_AT
+    d = pd.to_datetime(df[_DEDUP_COL]).dt.date
+    incomplete = (d > today) | ((d == today) & (not final))
+    if not incomplete.any():
+        return df
+    logger.info("dropping %d in-progress/future bar(s) (%s) not final before %s WIB",
+                int(incomplete.sum()), ",".join(sorted({str(x) for x in d[incomplete]})),
+                DAILY_BAR_FINAL_AT.strftime("%H:%M"))
+    return df[~incomplete].reset_index(drop=True)
 
 
 def _merge_dedup(existing: pd.DataFrame | None, new_df: pd.DataFrame) -> pd.DataFrame:
@@ -557,7 +591,7 @@ def _snapshot_one(
         )
         _append_divergence_log(store_dir, divergences)
 
-    merged = _merge_dedup(existing, fresh)
+    merged = drop_incomplete_session(_merge_dedup(existing, fresh))
 
     if not merged.empty:
         path = _store_path(symbol, store_dir)

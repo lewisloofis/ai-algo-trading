@@ -43,6 +43,7 @@ type Session struct {
 	d   Deps
 
 	strategyID string
+	storeKey   string // store-name / prior-stores key: id, or id-paper for a paper sink
 }
 
 // New builds a Session, defaulting any unset dependency.
@@ -123,18 +124,21 @@ func (s *Session) Run(ctx context.Context) int {
 			break
 		}
 		s.strategyID, binarySHA = pf.StrategyID, pf.BinarySHA
-		store, err := NextStorePath(cfg.RunsDir, pf.StrategyID, now)
+		s.storeKey = StoreKey(cfg.Sink, pf.StrategyID)
+		store, err := NextStorePath(cfg.RunsDir, s.storeKey, now)
 		if err != nil {
 			s.refuse(n, "store naming failed", err)
 			break
 		}
-		globs := PriorStoreGlobs(cfg, pf.StrategyID)
+		globs := PriorStoreGlobs(cfg, s.storeKey)
 
 		if cfg.Sink == "live" {
 			if err := s.preSnapshot(ctx, globs); err != nil {
 				s.refuse(n, "pre-snapshot failed", err)
 				break
 			}
+		} else {
+			s.preRunPaper(globs)
 		}
 
 		s.logf("attempt %d/%d: store %s, strategy-run sha256 %s", n, maxAttempts, store, shortHash(pf.BinarySHA))
@@ -195,6 +199,19 @@ func (s *Session) preSnapshot(ctx context.Context, globs []string) error {
 	}
 	s.logf("pre-snapshot: broker holdings match the position derived from %d prior store(s) + manual/imported trades", len(pc.Stores))
 	return nil
+}
+
+// preRunPaper is the paper sink's pre-snapshot: there is no broker, so the
+// position the run starts from is the one the paper stores imply, netted across
+// every day. Informational: an unreadable store is logged, strategy-run's own
+// prior-state load is what refuses a bad one.
+func (s *Session) preRunPaper(globs []string) {
+	pos, names, err := PaperPositions(globs)
+	if err != nil {
+		s.logf("pre-run (paper): cannot read prior paper stores: %v", err)
+		return
+	}
+	s.logf("pre-run (paper): position from %d prior paper store(s): %s", len(names), FormatLots(pos))
 }
 
 func (s *Session) childArgs(store string, globs []string, pf PreflightResult) []string {

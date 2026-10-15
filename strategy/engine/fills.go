@@ -57,3 +57,33 @@ func (s *PostTradeStore) Fills(sinkKind, account string, includeUnattributed boo
 	}
 	return out, nil
 }
+
+// NetLots nets fills, which must be in time order (recon.LoadStoreFills sorts
+// them), into lots per symbol across any number of stores. A sell never takes a
+// symbol below zero (long-only, as DerivedPositions clamps); flat symbols are
+// omitted.
+//
+// It exists because DerivedPositions derives from ONE store: a position bought
+// in one day's store and sold in a later day's store looks, per store, like a
+// buy and then a sell with nothing to sell, and summing per-store results
+// leaves the position open forever. Multi-day holds need the cross-store form.
+func NetLots(fills []StoreFill) map[string]int {
+	pos := map[string]int{}
+	for _, f := range fills {
+		switch f.Side {
+		case "buy":
+			pos[f.Symbol] += f.Lots
+		case "sell":
+			pos[f.Symbol] -= f.Lots
+			if pos[f.Symbol] < 0 {
+				pos[f.Symbol] = 0
+			}
+		}
+	}
+	for s, n := range pos {
+		if n == 0 {
+			delete(pos, s)
+		}
+	}
+	return pos
+}

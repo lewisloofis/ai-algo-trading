@@ -46,6 +46,7 @@ class ReplayResult:
     weight_mismatches: list[date] = field(default_factory=list)
     unmatched_backtest: list[date] = field(default_factory=list)
     unmatched_emitter: list[date] = field(default_factory=list)
+    emitter_entry_days: list[date] = field(default_factory=list)
 
 
 def calendar_from_bars(bars: pd.DataFrame, base: MarketCalendar) -> MarketCalendar:
@@ -137,6 +138,7 @@ def replay(df: pd.DataFrame, spec: EmitterSpec, calendar: MarketCalendar,
         weight_mismatches=sorted(weight_mismatches),
         unmatched_backtest=sorted(expected - emitter_entries),
         unmatched_emitter=sorted(emitter_entries - expected),
+        emitter_entry_days=sorted(emitter_entries),
     )
 
 

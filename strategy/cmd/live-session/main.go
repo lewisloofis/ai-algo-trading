@@ -45,8 +45,8 @@ func run(argv []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	var cfg livesession.Config
 	var priors listFlag
-	fs.StringVar(&cfg.Sink, "sink", "live", "order sink: live (real orders) | paper (rehearsal; no trading token needed)")
-	fs.StringVar(&cfg.Source, "source", "", "market data: live|replay (default: live for --sink live, replay for --sink paper)")
+	fs.StringVar(&cfg.Sink, "sink", "live", "order sink: live (real orders) | paper (simulated fills; no trading token, no arming; with --source live needs only SB_ACCESS_TOKEN)")
+	fs.StringVar(&cfg.Source, "source", "", "market data: live|replay (default: live for --sink live, replay for --sink paper; use --sink paper --source live for a shadow run on live prices)")
 	fs.StringVar(&cfg.Strategy, "strategy", "rebalance", "strategy: rebalance|orb")
 	fs.StringVar(&cfg.Account, "account", "", "sleeve sub-account (required for --sink live; must equal the trading token's account)")
 	fs.Int64Var(&cfg.EquityIDR, "equity-idr", 0, "sleeve equity in IDR (required with --source live)")

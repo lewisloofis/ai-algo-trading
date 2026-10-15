@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,18 @@ func SafeName(s string) string {
 		return "strategy"
 	}
 	return s
+}
+
+// StoreKey is the name component after the date in a store name and in the
+// prior-stores glob: the strategy id for a live sink, "<id>-paper" for a paper
+// sink. Including the sink means a paper strategy's stores and a live one's can
+// never share a glob, so a paper fill is never read as a live position (or the
+// reverse).
+func StoreKey(sink, strategyID string) string {
+	if sink == "paper" {
+		return strategyID + "-paper"
+	}
+	return strategyID
 }
 
 // attemptGlob matches every attempt store of strategyID on any date.
@@ -67,6 +80,40 @@ func NextStorePath(runsDir, strategyID string, now time.Time) (string, error) {
 func PriorStoreGlobs(cfg Config, strategyID string) []string {
 	cfg = cfg.withDefaults()
 	return append(append([]string{}, cfg.PriorStores...), attemptGlob(cfg.RunsDir, strategyID))
+}
+
+// PaperPositions is the paper counterpart of CheckPosition: the net lots per
+// symbol implied by every paper fill in the stores matching globs, netted
+// across stores in time order (a 5-session hold buys in one day's store and
+// sells in another's). There is no broker to compare with. Returns the base
+// names of the stores read.
+func PaperPositions(globs []string) (map[string]int, []string, error) {
+	paths, err := recon.ResolveStorePaths(globs, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	names, fills, err := recon.LoadStoreFills(paths, "paper", "", false)
+	if err != nil {
+		return nil, nil, err
+	}
+	return engine.NetLots(fills), names, nil
+}
+
+// FormatLots renders a position map ("WIFI 1 lot", "flat") for logs and the summary.
+func FormatLots(pos map[string]int) string {
+	if len(pos) == 0 {
+		return "flat"
+	}
+	syms := make([]string, 0, len(pos))
+	for s := range pos {
+		syms = append(syms, s)
+	}
+	sort.Strings(syms)
+	parts := make([]string, len(syms))
+	for i, s := range syms {
+		parts[i] = fmt.Sprintf("%s %d lot(s)", s, pos[s])
+	}
+	return strings.Join(parts, ", ")
 }
 
 // PositionCheck is the read-only holdings check shared by the pre-snapshot and
