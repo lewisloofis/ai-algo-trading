@@ -1,6 +1,6 @@
 # Alpha / Infrastructure Split — Two Tracks, One Seam
 
-> **Status:** ✅ Approved · 🔬 Track C complete · 🔨 Track B in progress (B1–B3 complete and live-verified; B4 first live fills 2026-10-13) · **Owner:** @lewis · **Updated:** 2026-10-13
+> **Status:** ✅ Approved · 🔬 Track C complete · 🔨 Track B in progress (B1–B3 complete and live-verified; B4 live round trip buy→sell-to-zero done 2026-10-15) · **Owner:** @lewis · **Updated:** 2026-10-15
 > **Related:** [ADR-0016: alpha and infrastructure are separate tracks](../adr/0016-alpha-and-infrastructure-are-separate-tracks.md) · [ADR-0015: leverage is optional](../adr/0015-leverage-optional-horizon-ceiling-lifted.md) · [ADR-0013: one Strategy interface](../adr/0013-one-strategy-interface-and-collector-public-packages.md) · [00-roadmap-research-to-live.md](./00-roadmap-research-to-live.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) · [13-capital-allocation-and-capacity.md](./13-capital-allocation-and-capacity.md) · [15-measured-fill-and-impact-calibration.md](./15-measured-fill-and-impact-calibration.md) · [16-strategy-triage-and-prioritization.md](./16-strategy-triage-and-prioritization.md) · [17-execution-and-replay-parity-engine.md](./17-execution-and-replay-parity-engine.md) · [Plans index](./README.md)
 
 > **What this is.** The re-cut of roadmap Waves 3–5 into two independently
@@ -846,17 +846,23 @@ safe without it.
       and `--prior-stores` (mandatory for live) seeds already-attempted windows
       from the day's earlier store files —
       `TestRestartDurability_CrashThenRestart_DoesNotDoubleSubmit` proves one POST
-      across a crash and restart against a fake Carina. Open: whether Carina
-      itself deduplicates on a repeated `ui_ref` is unverified, and a restart
-      does not rebuild `RiskSink`'s in-memory exposure for an order placed but
-      not yet filled.*
+      across a crash and restart against a fake Carina. **Carina's own dedup is
+      now verified live (2026-10-15):** a same-day resubmission of a cancelled,
+      unfilled GOTO sell under the same id was rejected with `duplicate order
+      (ui_ref already used)` (runbook §16). A deliberate same-day retry uses
+      `strategy-run --retry N` (`6c21950`): ids get `-rN`, and attempted
+      windows are scoped per retry level. Still open: a restart does not
+      rebuild `RiskSink`'s in-memory exposure for an order placed but not yet
+      filled.*
 - [ ] **Restart-stable, per-leg order ids for intraday strategies** (found
       2026-10-13). The live sink dedups on `ui_ref = f(client order id, trading
       day)`. Each strategy's id scheme therefore decides what can trade and
       what a restart does:
       - `rebalance` uses `rebalance-<SYM>-<date>`: deliberately one order per
         symbol per day, so no same-day round trip. The first live test's GOTO
-        sell had to go through the app.
+        sell had to go through the app. The bot's own sell-to-zero worked the
+        next day (2026-10-15, 1 lot @26, recon MATCH); a same-day retry after a
+        cancel needs `--retry N`, which covers rebalance only.
       - `orb` uses `orb-<SYM>-<counter>`, and the counter restarts at 1 with the
         process. After a same-day crash and restart, a **new** trade reuses the
         morning's id and `ui_ref`, is treated as a duplicate, and is
@@ -938,7 +944,10 @@ dedicated calibration programme.
   slippage, but they cannot check C3's impact coefficients. That cross-check
   needs a later, capped phase at a visible participation rate, roughly
   5–20M IDR per order, scheduled only after the small-size fills are in.
-- [ ] **Prerequisite — the daily target emitter.** No job yet turns a Track A
+- [ ] **Prerequisite — the daily target emitter.** *First version exists
+      (`research/strategy_fit/target_emitter.py`, `98ff3b9`), wired to the
+      retired BNBR spec only; being generalised into a strategy-agnostic
+      pre-open job (2026-10-15).* No job yet turns a Track A
       signal into `target_portfolio.json` (§3.1). Build it first: a pre-open job
       that writes the day's target for each forward-tested candidate. Then
       `strategy-run --strategy rebalance` trades it. It is the first producer on
