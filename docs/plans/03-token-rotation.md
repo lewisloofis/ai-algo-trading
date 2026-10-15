@@ -1,6 +1,6 @@
 # Seamless Token Rotation
 
-> **Status:** ✔️ Done · **Owner:** @lewis · **Updated:** 2026-06-19
+> **Status:** ✔️ Done (EC2 collector, phases 0-4) · 🟡 Phase 5 (local runner rotation) implemented 2026-10-15, first real refresh pending · **Owner:** @lewis · **Updated:** 2026-10-15
 > **Related:** [01-market-data-capture.md](./01-market-data-capture.md) · [Plans index](./README.md) · [ADR-0001: plans as tickets](../adr/0001-treat-plans-as-tickets.md) · [Authentication](../reference/01-authentication.md)
 
 This plan makes Stockbit token rotation seamless and self-healing for the
@@ -226,6 +226,33 @@ Expose SSM's monotonic version so the session can tell "I wrote this" from
 - [x] Document the two **swap runbooks**: (a) stopped instance — `put-parameter`
   refresh then access → next start adopts at boot; (b) live instance — `put-parameter`
   both → adopted within ≤20 min via version reconcile, no restart, no clobber.
+
+---
+
+### Phase 5 — Local unattended runner: rotate `.env.local` (2026-10-15)
+
+Phases 0-4 only protect the EC2 collector. The Mac runner (`research/runner/`, 08:45 preflight)
+reads hand-copied web tokens from `.env.local` and died when they expired. Implemented in
+`research/token_rotation/` (stdlib only; `runner/` untouched):
+
+- [x] **Main session (automated):** `POST /login/refresh` with `SB_REFRESH_TOKEN`; the new access
+  token is written to both `SB_ACCESS_TOKEN` (paper) and `SB_BEARER_TOKEN` (refresh-prices, same
+  exodus session), and the rotated refresh token to `SB_REFRESH_TOKEN`.
+- [x] **Refresh dead → headless re-login (automated, opt-in):** if `SB_USERNAME`, `SB_PASSWORD` and
+  `SB_PLAYER_ID` (the trusted player_id from Phase 0) are in `.env.local`, log in with it (no
+  signature). A new-device challenge (trust revoked) is surfaced as a manual action.
+- [x] **Trading session (refresh only):** `POST carina /auth/refresh` with `SB_TRADING_REFRESH_TOKEN`
+  keeps `SB_TRADING_ACCESS_TOKEN` alive for `recon`.
+- [ ] **Cannot be automated, by design:** a dead trading refresh token needs the PIN, which is never
+  stored; a revoked player_id trust needs a phone approval; a missing `SB_REFRESH_TOKEN` needs one
+  manual seed. These return `ACTION REQUIRED` messages (exit code 1/3), and a refresh token with
+  < 72h left and no re-login credentials raises an early warning, so the runner alerts days ahead.
+- Write path: flock, 0600 temp file in the same directory, fsync, `os.replace` (atomic); other
+  lines untouched. No backup is kept (the old refresh token is invalid after rotation).
+- No-op when every main token has > `--min-hours` (default 12h) left. Errors carry only a status
+  code; HTTP bodies are never read into messages.
+
+Operator steps: see `docs/runbooks/unattended-runner.md#token-rotation`.
 
 ---
 

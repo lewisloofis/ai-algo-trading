@@ -70,6 +70,31 @@ SSM per plan 03) is future work.
 gives a warning, not a failure. `ALGO_LIVE`, `ALGO_CONFIRM` are stripped from every child;
 `SB_TRADING_ACCESS_TOKEN` reaches only `recon`.
 
+## Token rotation
+
+`research/token_rotation/` keeps `.env.local` fresh so the 08:45 preflight does not fail on an
+expired web token (plan 03, phase 5). It rewrites only the token keys, atomically, mode 0600.
+
+```sh
+make token-status      # per token: expires in Xh / expired / unknown / not set (never a value)
+make token-refresh     # rotate now (first real run, or after a manual re-login)
+make token-ensure      # rotate only if < TOKEN_MIN_HOURS (12) left; what the runner calls
+```
+
+One-time seed: `.env.local` must contain `SB_REFRESH_TOKEN` (main session) alongside the existing
+`SB_ACCESS_TOKEN`/`SB_BEARER_TOKEN`; optionally `SB_TRADING_REFRESH_TOKEN` (recon) and
+`SB_USERNAME`/`SB_PASSWORD`/`SB_PLAYER_ID` (headless re-login if the refresh token dies; skip these
+to keep the password off disk, at the cost of a manual re-login at refresh-token death).
+
+Exit codes: 0 ok · 1 main session needs a manual re-login · 2 transient network error (retry) ·
+3 ok but a warning/action is pending (e.g. trading PIN login needed).
+
+**Still manual:** trading session after its refresh token dies (needs the PIN, never stored);
+revoked player_id trust (approve once on the phone); the one-time `SB_REFRESH_TOKEN` seed. The
+tool reports these as `ACTION REQUIRED ...` and warns when a refresh token has < 72h left and no
+re-login credentials are configured. Do not run it from two places at once (rotation invalidates the
+old refresh token; a file lock guards concurrent local runs only).
+
 ## Kill switch
 
 `touch runs/KILL` (the same file live-session uses). Preflight and start refuse while it
@@ -108,9 +133,9 @@ Runner restarts are the only way a second store appears for a day.
 
 ## Failure modes
 
-- **Token lifetime**: the access token is a copy from the web and expires; the runner cannot
-  refresh it. If it dies overnight, preflight fails and you get an alert. Unattended operation lasts only
-  as long as `.env.local` holds a fresh token (plan 03: SSM-backed rotation is EC2-only today).
+- **Token lifetime**: without rotation the access token is a web copy that expires and preflight fails.
+  See "Token rotation" above: once wired in (`ensure_tokens` before preflight) the main session
+  self-heals; only the manual cases listed there still need you.
 - Mac asleep / logged out / time zone not WIB: no run. Agents need a logged-in user session.
 - Daily bar stale because the previous 16:20 failed: preflight fails; run `make refresh-prices`.
 - `.env.local` unreadable or malformed: the runner reports the line number only.
