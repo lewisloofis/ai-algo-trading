@@ -25,6 +25,7 @@ import pandas as pd
 from strategy_fit.trade_export import CellTrades, export_cells
 
 from dashboard import broker_import, config, health, inputs, ledger, manual_trades, recon, results, scorecard, store, trades_data
+from dashboard.live import LiveSummary, collect as collect_live
 from dashboard.annotations import Annotation, Decision, TimelineEvent, load_annotations, load_decision, load_timeline
 
 
@@ -65,6 +66,8 @@ class SiteData:
     exported: dict[tuple[str, str, int], CellTrades]
     closes: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
     daily_last: dict[str, str] = field(default_factory=dict)
+    online: LiveSummary | None = None
+    """Every heartbeat file, as of build time (live.py); the Overview's "Online now" panel."""
 
     @property
     def now_wib(self) -> datetime:
@@ -157,6 +160,7 @@ def gather(opt: SiteOptions, log: Callable[[str], None] = lambda _m: None) -> Si
         exported=exported,
         closes=closes,
         daily_last=health.daily_data_newest(opt.daily_dir),
+        online=collect_live(opt.runs_dir, now),
     )
 
 

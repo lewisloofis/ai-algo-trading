@@ -2,6 +2,7 @@
 CLI: build the multi-page dashboard.
 
     python -m dashboard build [--out DIR]
+    python -m dashboard serve [--port 8765] [--rebuild-every 300]   (live view on 127.0.0.1, see serve.py)
 
 One command builds every page. It finds its own inputs (runs/*.db, the newest status json, the
 latest corrected strategy-fit run, research/data/daily) and runs the collector health check
@@ -14,6 +15,7 @@ import argparse
 import sys
 
 from dashboard import config
+from dashboard.serve import BindRefused, DEFAULT_PORT, DEFAULT_REBUILD_EVERY_S, ServeOptions, run as serve_run
 from dashboard.site import SiteOptions, build_site
 from dashboard.strategy_map import UnmappedStrategyError
 
@@ -23,8 +25,14 @@ def _parser() -> argparse.ArgumentParser:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd")
     b = sub.add_parser("build", help="build every page (the default command)")
-    for q in (b, p):
-        q.add_argument("--out", default=config.DEFAULT_OUT_DIR, help=f"output directory (default {config.DEFAULT_OUT_DIR})")
+    sv = sub.add_parser("serve", help="serve the site on 127.0.0.1 with a live Online panel, rebuilding as inputs change")
+    sv.add_argument("--host", default="127.0.0.1", help="bind address; only 127.0.0.1 / localhost are accepted")
+    sv.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"port (default {DEFAULT_PORT}; 0 picks a free one)")
+    sv.add_argument("--rebuild-every", type=float, default=DEFAULT_REBUILD_EVERY_S, metavar="SECONDS",
+                    help=f"rebuild the site at least this often (default {DEFAULT_REBUILD_EVERY_S:g}); sooner if inputs change")
+    for q in (b, p, sv):
+        if q is not sv:
+            q.add_argument("--out", default=config.DEFAULT_OUT_DIR, help=f"output directory (default {config.DEFAULT_OUT_DIR})")
         q.add_argument("--runs", default=config.DEFAULT_RUNS_DIR, help="directory holding the post-trade stores (runs/*.db)")
         q.add_argument("--daily-dir", default=config.DEFAULT_DAILY_DIR, help="daily price files (research/data/daily)")
         q.add_argument("--annotations", default=None, help="annotations JSON (default: the checked-in file)")
@@ -42,10 +50,21 @@ def main(argv: "list[str] | None" = None) -> int:
     opt = SiteOptions(
         runs_dir=args.runs,
         daily_dir=args.daily_dir,
-        out_dir=args.out,
+        out_dir=getattr(args, "out", config.DEFAULT_OUT_DIR),
         annotations_path=args.annotations,
         healthcheck=healthcheck,
     )
+    if args.cmd == "serve":
+        # Each rebuild goes into a temp directory and is swapped in; --out is not used (nothing is written to it).
+        try:
+            return serve_run(ServeOptions(site=opt, host=args.host, port=args.port, rebuild_every_s=args.rebuild_every),
+                             log=lambda m: print(f"dashboard: {m}", file=sys.stderr))
+        except BindRefused as exc:
+            print(f"dashboard: {exc}", file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(f"dashboard: could not listen on port {args.port}: {exc}", file=sys.stderr)
+            return 1
     try:
         written = build_site(opt, log=lambda m: print(f"dashboard: {m}", file=sys.stderr))
     except UnmappedStrategyError as exc:

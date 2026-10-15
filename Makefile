@@ -9,11 +9,12 @@
 #   make sbcap ARGS="stat segments/dt=2026-06-17/default/seg-044221.binpb.zst"
 #   make test
 #   make dashboard
+#   make dashboard-live
 #   make refresh-prices
 #   make publish-dashboard
 #   make clean
 
-.PHONY: build build-linux-arm64 collect sbcap test dashboard refresh-prices emit-target publish-dashboard recon clean
+.PHONY: build build-linux-arm64 collect sbcap test dashboard dashboard-live refresh-prices emit-target publish-dashboard recon clean
 
 build:
 	mkdir -p $(CURDIR)/bin
@@ -69,6 +70,19 @@ dashboard:
 		--out $(CURDIR)/$(DASH_OUT) \
 		$(if $(filter skip,$(HEALTHCHECK)),--no-healthcheck,)
 	@echo "Open $(CURDIR)/$(DASH_OUT)/index.html"
+
+# dashboard-live serves the same dashboard on http://127.0.0.1:$(PORT)/ (this machine only). The
+# "Online now" panel refreshes every 5 seconds from the bot's heartbeat files, and the pages
+# rebuild every 5 minutes or sooner when the run stores / daily prices change. Ctrl-C stops it.
+#   make dashboard-live                      (runs the health check on each rebuild: slow, needs AWS credentials)
+#   make dashboard-live HEALTHCHECK=skip     recommended for a live view
+#   make dashboard-live PORT=9000
+PORT ?= 8765
+
+dashboard-live:
+	@echo "Live dashboard: http://127.0.0.1:$(PORT)/"
+	cd research && $(DASH_PY) -m dashboard serve --port $(PORT) \
+		$(if $(filter skip,$(HEALTHCHECK)),--no-healthcheck,)
 
 # recon is the broker reconciliation (strategy/cmd/account-recon --stores): the
 # expected position from ALL live stores + runs/manual_trades.json + the broker-
