@@ -56,7 +56,13 @@ CREATE TABLE IF NOT EXISTS order_intent (
     lots INTEGER NOT NULL,
     order_id TEXT NOT NULL,
     sink_kind TEXT NOT NULL DEFAULT 'paper',
-    run_id TEXT NOT NULL DEFAULT ''
+    run_id TEXT NOT NULL DEFAULT '',
+    arrival_bid_idr INTEGER,
+    arrival_ask_idr INTEGER,
+    arrival_mid_idr REAL,
+    arrival_last_idr INTEGER,
+    arrival_quote_ns INTEGER,
+    arrival_quote_age_ms INTEGER
 );
 CREATE TABLE IF NOT EXISTS fill (
     seq INTEGER PRIMARY KEY,
@@ -142,6 +148,16 @@ var migrations = []struct{ table, column, ddl string }{
 	// pre-trade position gate with --allow-position-mismatch (the text says
 	// what disagreed). Older runs read back '' (no override).
 	{"run", "position_override", "TEXT NOT NULL DEFAULT ''"},
+	// order_intent.arrival_*: the market as last observed when the order was
+	// submitted (best bid/ask, their mid, last trade, book timestamp and its
+	// age). Plain nullable columns: NULL is "no quote observed", and rows
+	// written before these existed stay NULL rather than being back-filled.
+	{"order_intent", "arrival_bid_idr", "INTEGER"},
+	{"order_intent", "arrival_ask_idr", "INTEGER"},
+	{"order_intent", "arrival_mid_idr", "REAL"},
+	{"order_intent", "arrival_last_idr", "INTEGER"},
+	{"order_intent", "arrival_quote_ns", "INTEGER"},
+	{"order_intent", "arrival_quote_age_ms", "INTEGER"},
 }
 
 // DecisionRow is one OnEvent observation.
@@ -197,6 +213,10 @@ type IntentRow struct {
 	SinkKind string
 	// RunID identifies the run that wrote this row.
 	RunID string
+	// Arrival is the market as last observed when the order was submitted
+	// (see ArrivalQuote). Nil when nothing had been observed: every
+	// arrival_* column is then NULL, never zero.
+	Arrival *ArrivalQuote
 }
 
 // RejectRow is one intent the sink refused — a risk gate (cap, kill switch,
@@ -532,9 +552,16 @@ func (s *PostTradeStore) InsertDecision(r DecisionRow) error {
 
 // InsertIntent appends one order_intent row.
 func (s *PostTradeStore) InsertIntent(r IntentRow) error {
+	a := r.Arrival
+	if a == nil {
+		a = &ArrivalQuote{}
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO order_intent (seq, recv_ns, strategy_id, symbol, side, price_idr, lots, order_id, sink_kind, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO order_intent (seq, recv_ns, strategy_id, symbol, side, price_idr, lots, order_id, sink_kind, run_id,
+			arrival_bid_idr, arrival_ask_idr, arrival_mid_idr, arrival_last_idr, arrival_quote_ns, arrival_quote_age_ms)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Seq, r.RecvNs, r.StrategyID, r.Symbol, r.Side, r.PriceIDR, r.Lots, r.OrderID, r.SinkKind, s.runID,
+		a.BidIDR, a.AskIDR, a.MidIDR, a.LastIDR, a.QuoteNs, a.AgeMs,
 	)
 	if err != nil {
 		return fmt.Errorf("insert intent: %w", err)

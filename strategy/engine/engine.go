@@ -113,6 +113,7 @@ type engineHandle struct {
 	stratID string
 	recvNs  int64
 	state   *runState
+	quotes  *quoteBook
 
 	// sinkKind is resolved once per Run (see sinkKinder) and stamped onto
 	// every intent and fill row this handle writes, whether the fill came
@@ -145,6 +146,7 @@ func (h *engineHandle) SubmitOrder(ctx context.Context, intent OrderIntent) (Ord
 		Lots:       intent.Lots,
 		OrderID:    intent.OrderID,
 		SinkKind:   h.sinkKind,
+		Arrival:    h.quotes.snapshot(intent.Symbol, h.recvNs),
 	}); err != nil {
 		return "", err
 	}
@@ -344,6 +346,11 @@ func Run(ctx context.Context, src <-chan MarketEvent, strat Strategy, sink Order
 		rejects = ar.Rejects()
 	}
 
+	// quotes is the run's own view of the market, fed from every event and
+	// snapshotted onto each order_intent row at submit. It is independent of
+	// the sink, so paper and live runs record the same way.
+	quotes := newQuoteBook()
+
 	newHandle := func(recvNs int64) *engineHandle {
 		return &engineHandle{
 			sink:     sink,
@@ -353,6 +360,7 @@ func Run(ctx context.Context, src <-chan MarketEvent, strat Strategy, sink Order
 			stratID:  stratID,
 			recvNs:   recvNs,
 			state:    st,
+			quotes:   quotes,
 			sinkKind: sinkKind,
 		}
 	}
@@ -400,6 +408,7 @@ func Run(ctx context.Context, src <-chan MarketEvent, strat Strategy, sink Order
 			if obs, ok := sink.(observer); ok {
 				obs.Observe(evt)
 			}
+			quotes.observe(evt)
 
 			st.seq++
 			if err := store.InsertDecision(DecisionRow{

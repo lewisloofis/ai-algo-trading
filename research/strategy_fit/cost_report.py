@@ -10,7 +10,7 @@ What is measured, per fill (leg) and per round trip, in bps:
 
 * fee        realised (broker fee from recon where listed, else the store's) vs the 15/25 bps schedule.
 * slippage   against the decision price (the bot's own limit) always; against the arrival mid only when one was
-             recorded — the stores record none today, so live slippage vs arrival is reported as NOT MEASURED.
+             recorded (order_intent.arrival_*; older stores have none and report NOT MEASURED).
 * modelled   fee + half-tick spread + half the square-root impact at this size/name/date (cost_model.py).
 * financing  modelled only (the broker's financing charge is in no local store); shown beside, never inside totals.
 
@@ -279,9 +279,11 @@ def _flags(legs: Sequence[CostLeg], trips: Sequence[RoundTrip], cov: dict, orpha
     live = [x for x in legs if x.source == cf.SOURCE_LIVE]
     if live:
         n_arr = sum(1 for x in live if x.slippage_arrival_bps is not None)
-        flags.append(f"Live slippage vs arrival mid: {n_arr} of {len(live)} live fills have an arrival mid. "
-                     "The stores record only the decision price, so market slippage and spread are NOT MEASURED "
-                     "(B6 needs the book at submit time).")
+        msg = f"Live slippage vs arrival mid: {n_arr} of {len(live)} live fills have an arrival mid."
+        if n_arr < len(live):
+            msg += (" Fills without one come from stores that predate the arrival-quote columns, or were submitted "
+                    "with no two-sided book observed; their market slippage and spread are NOT MEASURED.")
+        flags.append(msg)
         n_store = sum(1 for x in live if x.fee_source == "store")
         if n_store:
             flags.append(f"{n_store} live fill(s) use the store's fee because the broker history has not listed them yet.")

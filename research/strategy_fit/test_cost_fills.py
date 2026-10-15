@@ -93,3 +93,22 @@ def test_broker_only_trade_already_matched_to_a_store_fill_is_not_added_again(tm
 def test_missing_recon_and_import_files_are_fine(tmp_path):
     merged, cov = cf.attach_broker_data(tmp_path, [])
     assert merged == [] and cov["recon_files"] == 0
+
+
+def test_old_store_without_arrival_columns_reads_none(tmp_path):
+    write_cost_store(tmp_path / "old.db", [_row()])
+    (f,), _ = cf.load_store_fills(tmp_path)
+    assert (f.arrival_mid_idr, f.arrival_bid_idr, f.arrival_ask_idr, f.arrival_last_idr, f.arrival_quote_age_ms) == (
+        None, None, None, None, None)
+
+
+def test_new_store_populates_arrival_quote(tmp_path):
+    arr = dict(bid=1000, ask=1005, mid=1002.5, last=1003, age_ms=40)
+    write_cost_store(tmp_path / "new.db", [_row(fill=1005, arrival=arr), _row(symbol="BBBB")])
+    fills, _ = cf.load_store_fills(tmp_path)
+    by = {f.symbol: f for f in fills}
+    a = by["AAAA"]
+    assert (a.arrival_mid_idr, a.arrival_bid_idr, a.arrival_ask_idr, a.arrival_last_idr, a.arrival_quote_age_ms) == (
+        1002.5, 1000.0, 1005.0, 1003.0, 40)
+    # a row in the same store with no quote stays None, not 0
+    assert by["BBBB"].arrival_mid_idr is None and by["BBBB"].arrival_quote_age_ms is None
