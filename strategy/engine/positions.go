@@ -323,6 +323,46 @@ func (s *PostTradeStore) RealizedPnLIDRByDate(sinkKind, asOfDate string) (int64,
 	return int64(math.Round(sumIDR)), nil
 }
 
+// BuyNotionalIDRByDate is the notional (price * lots * 100) of every BUY
+// intent of sinkKind recorded on asOfDate (a Jakarta date, as JakartaDate
+// formats it), excluding intents that were rejected (an order_reject row for
+// the same run and order id): a refused or broker-rejected order bought
+// nothing. It seeds the absolute buy cap (risk.WithMaxBoughtNotionalIDR) from
+// earlier stores of the same day, so a restart cannot reset the cap. Intents,
+// not fills: an order that is resting or was cancelled may still have filled,
+// so it keeps counting. Over-counting is the safe direction for a hard cap.
+func (s *PostTradeStore) BuyNotionalIDRByDate(sinkKind, asOfDate string) (int64, error) {
+	rows, err := s.db.Query(`
+		SELECT oi.recv_ns, oi.price_idr, oi.lots
+		FROM order_intent oi
+		WHERE oi.side = 'buy' AND oi.sink_kind = ?
+		  AND NOT EXISTS (
+		    SELECT 1 FROM order_reject r
+		    WHERE r.order_id = oi.order_id AND r.run_id = oi.run_id
+		  )
+	`, sinkKind)
+	if err != nil {
+		return 0, fmt.Errorf("buy notional by date: query: %w", err)
+	}
+	defer rows.Close()
+
+	var sum int64
+	for rows.Next() {
+		var recvNs, price int64
+		var lots int
+		if err := rows.Scan(&recvNs, &price, &lots); err != nil {
+			return 0, fmt.Errorf("buy notional by date: scan: %w", err)
+		}
+		if JakartaDate(recvNs) == asOfDate {
+			sum += price * int64(lots) * sharesPerLot
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("buy notional by date: iterate: %w", err)
+	}
+	return sum, nil
+}
+
 // FillAccounts returns the distinct run accounts, sorted, under which this
 // store holds sinkKind fills (rows with no run header count as ""). It lets
 // a caller that reads positions for one account notice fills recorded under

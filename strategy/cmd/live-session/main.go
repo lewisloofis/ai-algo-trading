@@ -50,6 +50,7 @@ func run(argv []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&cfg.Strategy, "strategy", "rebalance", "strategy: rebalance|orb")
 	fs.StringVar(&cfg.Account, "account", "", "sleeve sub-account (required for --sink live; must equal the trading token's account)")
 	fs.Int64Var(&cfg.EquityIDR, "equity-idr", 0, "sleeve equity in IDR (required with --source live)")
+	fs.Int64Var(&cfg.MaxBuyNotionalIDR, "max-buy-notional-idr", 0, "hard per-day cap on cumulative BUY notional in IDR (0 = off); forwarded to strategy-run, which refuses any buy that would exceed it. The unattended runner always sets it")
 	fs.StringVar(&cfg.TargetPortfolio, "target-portfolio", "", "target_portfolio.json (--strategy rebalance)")
 	fs.StringVar(&cfg.RebalanceAt, "rebalance-at", "", "rebalance window opening, HH:MM WIB, in-session and in the future (required for rebalance; no default)")
 	fs.StringVar(&cfg.Symbols, "symbols", "", "comma-separated symbol watchlist (--source live)")

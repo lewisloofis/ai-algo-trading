@@ -25,6 +25,17 @@ Optional: `ALGO_ALERT_WEBHOOK_URL` (internal http(s) endpoint; the URL is a secr
 never logged). Extra strategy-run flags go after `--`
 (`-- --limit-price-idr 28`).
 
+Optional hard rupiah cap: `--max-buy-notional-idr N` (default 0 = off) is forwarded to
+strategy-run, whose risk layer refuses any buy that would push the day's cumulative BUY
+notional over N. It is seeded from the buys already recorded today in the prior stores, so a
+restart cannot reset it; sells are never counted. The unattended runner
+(`unattended-runner.md`, "Live mode") always sets it to the armed cap. Negative values are
+refused, and it needs `--source live`. **The rupiah cap is enforced only when this flag is
+passed**: the runner always passes it, but a manual `live-session` run without it is uncapped
+by this mechanism (only the fraction-of-equity risk limits apply). A buy whose submit timed
+out or failed with a 5xx stays counted (it may have been accepted); only a definite refusal
+(typed broker error, 4xx other than 408) is refunded.
+
 Rehearsal, no trading token and no arming (replay + paper sink):
 
 ```sh

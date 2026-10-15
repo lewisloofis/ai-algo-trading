@@ -77,6 +77,13 @@ func Preflight(in PreflightInput) (PreflightResult, []error) {
 		fail("--retry is only valid with --strategy rebalance")
 	}
 
+	if cfg.MaxBuyNotionalIDR < 0 {
+		fail("--max-buy-notional-idr must not be negative (got %d)", cfg.MaxBuyNotionalIDR)
+	}
+	if cfg.MaxBuyNotionalIDR > 0 && cfg.Source != "live" {
+		fail("--max-buy-notional-idr needs --source live (the risk layer that enforces it only wraps live-source runs)")
+	}
+
 	// Account / token / arming.
 	if isLive {
 		if strings.TrimSpace(cfg.Account) == "" {

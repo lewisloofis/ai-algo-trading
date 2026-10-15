@@ -48,6 +48,9 @@ func (r *RiskSink) Snapshot() engine.RiskSnapshot {
 		GrossExposureCapIDR: r.caps.maxGrossExposureIDR,
 		PositionsIDR:        positions,
 		OpenReservations:    len(r.state.reservations),
+
+		BoughtNotionalIDR:    r.state.boughtNotionalIDR,
+		BoughtNotionalCapIDR: r.buyCapIDR,
 	}
 }
 

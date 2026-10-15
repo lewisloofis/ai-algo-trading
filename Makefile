@@ -14,10 +14,11 @@
 #   make paper-day STRATEGY=wifi_momo_h5
 #   make paper-scorecard STRATEGY=wifi_momo_h5
 #   make publish-dashboard
-#   make runner-dry-run | runner-install | runner-status | runner-uninstall   (unattended paper runner)
+#   make runner-dry-run | runner-install | runner-status | runner-uninstall   (unattended runner)
+#   make runner-arm STRATEGY=<id> MAX_IDR=<n> [DATE=] | runner-disarm [DATE=]   (the only way to go live)
 #   make clean
 
-.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test
+.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test runner-arm runner-disarm
 
 build:
 	mkdir -p $(CURDIR)/bin
@@ -209,15 +210,20 @@ clean:
 	rm -rf bin
 
 # ---------------------------------------------------------------------------
-# Unattended daily PAPER runner (research/runner, docs/runbooks/unattended-runner.md).
+# Unattended daily runner (research/runner, docs/runbooks/unattended-runner.md).
 # Two launchd jobs, Mon-Fri, local time must be WIB: 08:45 `runner morning`
-# (preflight, start, watch) and 16:20 `runner post-close`. It never arms live trading.
-#   make runner-dry-run [RUNNER_DATE=2026-10-16]   print the plan, execute nothing
+# (preflight, start, watch) and 16:20 `runner post-close`. Paper by default. A strategy
+# goes LIVE only if its spec status is 'candidate' AND you armed it for that day:
+#   make runner-arm STRATEGY=<id> MAX_IDR=<n> [DATE=YYYY-MM-DD]   arm ONE day, buys at most n IDR
+#   make runner-disarm [DATE=YYYY-MM-DD]                          revoke (also stops a running live session)
+#   make runner-dry-run [RUNNER_DATE=2026-10-16]   print the plan (incl. the exact live command), execute nothing
 #   make runner-install                            install + load both launchd jobs
 #   make runner-status                             loaded?  last log lines
 #   make runner-uninstall
 # ---------------------------------------------------------------------------
 RUNNER_DATE   ?=
+MAX_IDR       ?=
+DATE          ?=
 RUNNER_AGENTS := $(HOME)/Library/LaunchAgents
 RUNNER_LABELS := com.sbalgo.runner.morning com.sbalgo.runner.postclose
 RUNNER_PATH   ?= /opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/usr/sbin:/sbin
@@ -227,6 +233,18 @@ runner-dry-run:
 
 runner-test:
 	cd research && $(DASH_PY) -m pytest -q runner/
+
+# runner-arm writes runs/arm/ARM-<DATE>.json (DATE defaults to today, WIB): permission for the
+# runner to trade ONE candidate strategy live on that one date, buying at most MAX_IDR (whole
+# IDR, no default, hard ceiling in research/runner/arm.py). It refuses a spec that is not a
+# 'candidate', a past or non-trading date, and an amount outside 1..ceiling.
+runner-arm:
+	@test -n "$(STRATEGY)" || { echo "runner-arm: set STRATEGY=<candidate strategy id>"; exit 2; }
+	@test -n "$(MAX_IDR)" || { echo "runner-arm: set MAX_IDR=<most IDR it may buy that day, whole rupiah>"; exit 2; }
+	cd research && $(DASH_PY) -m runner arm --strategy $(STRATEGY) --max-idr $(MAX_IDR) $(if $(DATE),--date $(DATE),)
+
+runner-disarm:
+	cd research && $(DASH_PY) -m runner disarm $(if $(DATE),--date $(DATE),)
 
 runner-install:
 	@test -x "$(DASH_PY)" || { echo "runner-install: $(DASH_PY) not found (create research/.venv or pass DASH_PY=)"; exit 2; }

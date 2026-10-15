@@ -15,8 +15,8 @@ from runner.config import TELEGRAM_CHAT_ENV, TELEGRAM_TOKEN_ENV, WEBHOOK_ENV, WI
 from runner.redact import redact
 
 MAX_LEN = 3500
-INFO, WARN, ALERT, SUMMARY = "INFO", "WARN", "ALERT", "SUMMARY"
-_PUSH_LEVELS = (WARN, ALERT, SUMMARY)
+INFO, WARN, ALERT, SUMMARY, LIVE = "INFO", "WARN", "ALERT", "SUMMARY", "LIVE"
+_PUSH_LEVELS = (WARN, ALERT, SUMMARY, LIVE)
 
 
 def http_post_json(url: str, payload: dict, timeout: float = 10.0) -> None:
@@ -54,7 +54,7 @@ class Alerter:
         self._write(level, text.replace("\n", " | "))
         if level not in _PUSH_LEVELS:
             return channels
-        prefix = {ALERT: "[ALERT]", WARN: "[WARN]"}.get(level, "[daily]")
+        prefix = {ALERT: "[ALERT]", WARN: "[WARN]", LIVE: "[LIVE]"}.get(level, "[daily]")
         message = f"{prefix} sb-algo runner\n{text}"
         token, chat = self._env.get(TELEGRAM_TOKEN_ENV), self._env.get(TELEGRAM_CHAT_ENV)
         if token and chat:

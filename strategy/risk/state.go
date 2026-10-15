@@ -50,7 +50,11 @@ type mutableState struct {
 
 	day            tradingDay
 	dayNotionalIDR float64
-	positionsIDR   map[string]float64 // symbol -> tracked notional, >= 0 (long-only)
+	// boughtNotionalIDR is the cumulative notional of every admitted BUY, for
+	// the optional absolute buy cap (buycap.go). Unlike dayNotionalIDR it is
+	// NOT reset on a day rollover: it is a per-run (seeded per-day) hard cap.
+	boughtNotionalIDR float64
+	positionsIDR      map[string]float64 // symbol -> tracked notional, >= 0 (long-only)
 
 	// reservations records, per order id, the accounting that order applied,
 	// so it can be reversed when the order turns out never to have reached
@@ -76,6 +80,7 @@ type reservation struct {
 	symbol      string
 	posDeltaIDR float64
 	notionalIDR float64
+	boughtIDR   float64 // notional counted against the buy cap (0 for a sell)
 	day         tradingDay
 }
 
@@ -89,13 +94,15 @@ func newMutableState() *mutableState {
 
 // reserve applies an admitted intent's accounting and records it under
 // orderID so it can be reversed. Caller must hold mu.
-func (s *mutableState) reserve(orderID, symbol string, posDeltaIDR, notionalIDR float64) {
+func (s *mutableState) reserve(orderID, symbol string, posDeltaIDR, notionalIDR, boughtIDR float64) {
 	s.dayNotionalIDR += notionalIDR
+	s.boughtNotionalIDR += boughtIDR
 	s.positionsIDR[symbol] += posDeltaIDR
 	s.reservations[orderID] = reservation{
 		symbol:      symbol,
 		posDeltaIDR: posDeltaIDR,
 		notionalIDR: notionalIDR,
+		boughtIDR:   boughtIDR,
 		day:         s.day,
 	}
 }
@@ -136,6 +143,11 @@ func (s *mutableState) releaseAll(orderID string) {
 		if s.dayNotionalIDR < 0 {
 			s.dayNotionalIDR = 0
 		}
+	}
+	// Never reached the market, so it bought nothing: the buy cap is refunded.
+	s.boughtNotionalIDR -= r.boughtIDR
+	if s.boughtNotionalIDR < 0 {
+		s.boughtNotionalIDR = 0
 	}
 	s.forget(orderID)
 }

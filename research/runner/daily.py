@@ -1,7 +1,9 @@
-"""Entrypoint: python -m runner <preflight|start|watch|post-close|all> [--date D] [--dry-run].
+"""Entrypoint: python -m runner <preflight|start|watch|post-close|morning|all|arm|disarm> [--date D] [--dry-run].
 
 A scheduler/supervisor around the existing commands (paper-day, refresh-prices, recon,
-paper-scorecard, dashboard). It never arms live trading."""
+paper-scorecard, dashboard). It goes live only for a 'candidate' strategy the operator armed for
+today (`arm` / `disarm`, see runner.arm and docs/runbooks/unattended-runner.md); everything else
+is paper or skipped."""
 
 from __future__ import annotations
 
@@ -14,8 +16,10 @@ from datetime import date
 from typing import Callable, List, Mapping, Optional
 
 from lib.market_calendar import CALENDAR
+from runner import arm as arm_mod
+from runner import livereport
 from runner import preflight as pf
-from runner.alerts import ALERT, WARN, Alerter
+from runner.alerts import ALERT, SUMMARY, WARN, Alerter
 from runner.config import Clock, Config, WIB, at
 from runner.envfile import load_env_file
 from runner.executor import Executor
@@ -23,8 +27,9 @@ from runner.plan import build_plan
 from runner.postclose import post_close
 from runner.session import start_sessions, watch_sessions
 from runner.state import load_state, save_state
+from runner.strategies import build_gate, decide_all
 
-SUBCOMMANDS = ("preflight", "start", "watch", "post-close", "morning", "all")
+SUBCOMMANDS = ("preflight", "start", "watch", "post-close", "morning", "all", "arm", "disarm")
 
 
 def run_preflight_phase(cfg: Config, day: date, clock: Clock, alerter: Alerter) -> bool:
@@ -41,7 +46,8 @@ def run_preflight_phase(cfg: Config, day: date, clock: Clock, alerter: Alerter) 
         return False
     if not res.ok:
         alerter.send(ALERT, f"{day} preflight FAILED, skipping the day",
-                     "\n".join(f"{c.name}: {c.detail}" for c in res.failures))
+                     "\n".join([f"{c.name}: {c.detail}" for c in res.failures]
+                               + [f"arm: {livereport.arm_status(cfg, day)} (nothing goes live on a failed preflight)"]))
         return False
     if res.warnings:
         alerter.send(WARN, f"{day} preflight warnings", "\n".join(f"{c.name}: {c.detail}" for c in res.warnings))
@@ -53,6 +59,13 @@ def _preflight_ok(cfg: Config, day: date, clock: Clock, alerter: Alerter) -> boo
     if prior is not None:
         return bool(prior["ok"])
     return run_preflight_phase(cfg, day, clock, alerter)
+
+
+def send_morning_summary(cfg: Config, day: date, clock: Clock, alerter: Alerter, preflight_ok: bool) -> None:
+    """The 08:45 push: 'ARMED: <id>, max <n> IDR' or 'not armed', and what each strategy will do."""
+    gate = build_gate(cfg, day, clock.now(), preflight_ok, load_state(cfg.state_path(day), str(day)))
+    title, body = livereport.morning_summary(cfg, day, decide_all(cfg.registry, gate))
+    alerter.send(SUMMARY, title, body)
 
 
 def wait_until(clock: Clock, target, step_s: float = 60.0) -> None:
@@ -75,7 +88,7 @@ def dispatch(cmd: str, cfg: Config, day: date, clock: Clock, ex: Executor, alert
             return 0
         if not _preflight_ok(cfg, day, clock, alerter):
             return 1
-        return start_sessions(cfg, day, clock, ex, alerter)
+        return start_sessions(cfg, day, clock, ex, alerter, preflight_ok=True)
     if cmd == "watch":
         return watch_sessions(cfg, day, clock, ex, alerter) if CALENDAR.is_trading_day(day) else 0
     if cmd == "post-close":
@@ -83,8 +96,10 @@ def dispatch(cmd: str, cfg: Config, day: date, clock: Clock, ex: Executor, alert
     if cmd in ("all", "morning"):      # morning = all without the post-close wait (what launchd runs at 08:45)
         rc = 0
         if CALENDAR.is_trading_day(day):
-            if run_preflight_phase(cfg, day, clock, alerter):
-                rc |= start_sessions(cfg, day, clock, ex, alerter)
+            ok = run_preflight_phase(cfg, day, clock, alerter)
+            send_morning_summary(cfg, day, clock, alerter, ok)
+            if ok:
+                rc |= start_sessions(cfg, day, clock, ex, alerter, preflight_ok=True)
                 rc |= watch_sessions(cfg, day, clock, ex, alerter)
             else:
                 rc = 1
@@ -105,7 +120,14 @@ def main(argv: Optional[List[str]] = None, *, env: Optional[Mapping[str, str]] =
     p.add_argument("--dry-run", action="store_true", help="print the plan for the date and execute nothing")
     p.add_argument("--force", action="store_true", help="post-close: rerun even if already done today")
     p.add_argument("--no-env-file", action="store_true", help="do not load .env.local")
+    p.add_argument("--strategy", default="", help="arm: the candidate strategy id")
+    p.add_argument("--max-idr", default="", help="arm: the most IDR it may BUY that day (integer)")
     args = p.parse_args(argv)
+    if args.command in ("arm", "disarm"):     # operator side of the arm file: no env file, no secrets
+        return arm_mod.main([args.command, "--strategy", args.strategy, "--max-idr", args.max_idr,
+                             "--date", args.date],
+                            runs_dir=cfg.runs_dir if cfg is not None else None,
+                            registry=cfg.registry if cfg is not None else None)
 
     clock = clock or Clock()
     try:

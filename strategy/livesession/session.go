@@ -240,6 +240,9 @@ func (s *Session) childArgs(store string, globs []string, pf PreflightResult) []
 	if cfg.Retry != 0 {
 		args = append(args, "--retry", strconv.Itoa(cfg.Retry)) // operator-supplied only
 	}
+	if cfg.MaxBuyNotionalIDR > 0 {
+		args = append(args, "--max-buy-notional-idr", strconv.FormatInt(cfg.MaxBuyNotionalIDR, 10))
+	}
 	return append(args, cfg.ExtraArgs...)
 }
 

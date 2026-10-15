@@ -89,6 +89,11 @@ type RiskSnapshot struct {
 	// OpenReservations is how many admitted orders have not yet been released
 	// — a number that should return to zero and is a leak if it does not.
 	OpenReservations int `json:"open_reservations"`
+	// BoughtNotionalIDR is the cumulative notional of every admitted buy
+	// (including what the run was seeded with from earlier stores today).
+	BoughtNotionalIDR float64 `json:"bought_notional_idr"`
+	// BoughtNotionalCapIDR is the absolute buy cap, or 0 when none is set.
+	BoughtNotionalCapIDR float64 `json:"bought_notional_cap_idr"`
 }
 
 // RiskReporter is implemented by a sink that can report its risk state.

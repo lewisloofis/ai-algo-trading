@@ -144,6 +144,7 @@ func run() error {
 	riskMaxGrossFrac := flag.Float64("risk-max-gross-fraction", 1.0, "max gross exposure cap, as a fraction of --equity-idr")
 	riskMaxPositionFrac := flag.Float64("risk-max-position-fraction", 0.25, "max position-per-name cap, as a fraction of --equity-idr")
 	riskDailyLossFrac := flag.Float64("risk-daily-loss-fraction", 0.05, "daily loss limit, as a fraction of --equity-idr")
+	maxBuyNotionalIDR := flag.Int64("max-buy-notional-idr", 0, "absolute cap, in IDR, on the cumulative BUY notional of the day (0 = off): an order that would push it over is refused before it reaches the sink. Seeded from buys already recorded today in --prior-stores, so a restart cannot reset it; sells are never counted. Used by the unattended runner as its per-day rupiah ceiling")
 	limitPriceIDR := flag.Int64("limit-price-idr", 0, "DIAGNOSTIC: submit the single rebalance order at exactly this tick-valid IDR price instead of the last price (0 = off; only with --strategy rebalance and a one-target portfolio; used for the first-live-order unfilled step, docs/runbooks/first-live-order.md §5)")
 	rebalanceAtFlag := flag.String("rebalance-at", defaultRebalanceAtFlag, "rebalance window opening time, HH:MM WIB (--strategy rebalance only); the default 15:00 is after continuous trading ends, so pass an in-session time for a run meant to trade")
 	allowPositionMismatch := flag.Bool("allow-position-mismatch", false, "start --sink live even though the broker's holdings do not match the position loaded from --prior-stores + manual/imported trades (DANGEROUS: the bot will trade from a position the broker disagrees with; loudly logged and written to the run row)")
@@ -167,6 +168,15 @@ func run() error {
 	}
 	if err := validatePriorStores(*sinkName, *priorStores); err != nil {
 		return err
+	}
+	// Resolved before the strategy, store or sink exist: a bad or unreadable cap
+	// refuses the run instead of starting it uncapped.
+	buyCapOpts, err := buyCapOptions(*maxBuyNotionalIDR, *priorStores, *sinkName, time.Now())
+	if err != nil {
+		return err
+	}
+	if *maxBuyNotionalIDR > 0 && *source != "live" {
+		return fmt.Errorf("--max-buy-notional-idr needs --source live (the risk layer, which enforces it, only wraps live-source runs)")
 	}
 	// Risk-gating tracks --source, not --sink: a live run's PAPER sink is
 	// wrapped too (see package doc comment) so a shadow/dry-run session
@@ -269,7 +279,8 @@ func run() error {
 		}
 		limits := riskLimits(*riskPerOrderFrac, *riskPerDayFrac, *riskMaxGrossFrac, *riskMaxPositionFrac, *riskDailyLossFrac)
 		pnl := storePnL{store: store, sinkKind: *sinkName}
-		sink, err = wrapWithRisk(inner, *equityIDR, limits, marketGate, pnl, *killSwitchFile, nil)
+		riskOpts := append(buyCapOpts, risk.WithNotPlacedClassifier(notPlacedClassifier(*sinkName)))
+		sink, err = wrapWithRisk(inner, *equityIDR, limits, marketGate, pnl, *killSwitchFile, nil, riskOpts...)
 		if err != nil {
 			return err
 		}
@@ -812,8 +823,8 @@ func (p storePnL) DailyPnLIDR(ctx context.Context) (float64, error) {
 // wrapWithRisk wraps inner in a risk.RiskSink and returns
 // RiskSink.EngineSink() — never a bare *RiskSink, see that method's doc
 // comment for why — ready to hand to engine.Run.
-func wrapWithRisk(inner engine.OrderSink, equityIDR int64, limits risk.Limits, marketGate risk.MarketGate, pnl risk.PnLProvider, killSwitchFile string, clock risk.Clock) (engine.OrderSink, error) {
-	rs, err := risk.NewRiskSink(inner, risk.SleeveEquityIDR(equityIDR), limits, marketGate, pnl, killSwitchFile, clock)
+func wrapWithRisk(inner engine.OrderSink, equityIDR int64, limits risk.Limits, marketGate risk.MarketGate, pnl risk.PnLProvider, killSwitchFile string, clock risk.Clock, opts ...risk.Option) (engine.OrderSink, error) {
+	rs, err := risk.NewRiskSink(inner, risk.SleeveEquityIDR(equityIDR), limits, marketGate, pnl, killSwitchFile, clock, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("risk sink: %w", err)
 	}
