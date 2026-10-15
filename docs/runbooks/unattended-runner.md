@@ -271,3 +271,16 @@ Every order event is pushed once (see the alerts table), sourced from live-sessi
 - The cap counts buy **intents** (not refused or rejected ones), a conservative over-count by design.
 - Token and account checks are in-process reads of the JWT claims (signature not verified): live-session's own `data.acn` guard and the position gate remain the authoritative checks.
 - Nothing here validates a strategy. Promoting a spec to `candidate` is a deliberate edit of `emitter_specs.py`; no spec is a candidate today, so `make runner-arm` refuses everything until you promote one.
+
+## When launchd is blocked (managed Mac)
+
+If `make runner-install` fails with `Operation not permitted` / `Bootstrap failed: 5`, the
+device policy is blocking new LaunchAgents. Do not work around the policy. Instead, run the
+whole day in one foreground command each trading morning, before ~09:15 WIB:
+
+    make runner-day
+
+It runs token rotation, preflight, the paper sessions and watch, then waits until 16:20 for
+post-close and the review message. `caffeinate -i` keeps the Mac from idle-sleeping while it
+runs (no sudo). Keep the Mac on power, the lid open and the terminal window open; closing it
+stops the run. Re-running the same day is safe (lock + per-day state).

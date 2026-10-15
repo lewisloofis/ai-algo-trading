@@ -19,7 +19,7 @@
 #   make runner-arm STRATEGY=<id> MAX_IDR=<n> [DATE=] | runner-disarm [DATE=]   (the only way to go live)
 #   make clean
 
-.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard cost-report publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test runner-arm runner-disarm token-status token-refresh token-ensure token-test
+.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard cost-report publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test runner-arm runner-disarm runner-day token-status token-refresh token-ensure token-test
 
 build:
 	mkdir -p $(CURDIR)/bin
@@ -255,6 +255,12 @@ token-test:
 
 runner-dry-run:
 	cd research && $(DASH_PY) -m runner all --dry-run $(if $(RUNNER_DATE),--date $(RUNNER_DATE),)
+
+# The whole trading day in one foreground command, for Macs where launchd jobs are
+# blocked by policy: start it any time before ~09:15 WIB and leave the terminal open.
+# caffeinate -i keeps the Mac from idle-sleeping while it runs (no sudo needed).
+runner-day:
+	cd research && caffeinate -i $(DASH_PY) -m runner all
 
 runner-test:
 	cd research && $(DASH_PY) -m pytest -q runner/
