@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: `make runner-install` fills @REPO_ROOT@, @PYTHON@ and @PATH@.
+     launchd runs in the Mac's LOCAL time zone; the hours below are WIB, so the install target
+     refuses unless the Mac is set to Asia/Jakarta (see docs/runbooks/unattended-runner.md).
+     Mon-Fri 08:45: preflight -> start paper sessions -> watch until 09:45. No secrets in this file:
+     the runner reads .env.local itself. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.sbalgo.runner.morning</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@PYTHON@</string>
+    <string>-m</string>
+    <string>runner</string>
+    <string>morning</string>
+  </array>
+  <key>WorkingDirectory</key><string>@REPO_ROOT@/research</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>@PATH@</string></dict>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>45</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>45</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>45</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>45</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>8</integer><key>Minute</key><integer>45</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>@REPO_ROOT@/runs/runner/launchd-morning.out</string>
+  <key>StandardErrorPath</key><string>@REPO_ROOT@/runs/runner/launchd-morning.err</string>
+</dict>
+</plist>
