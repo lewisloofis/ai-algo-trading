@@ -64,3 +64,27 @@ research/.venv/bin/python -m pytest scripts/test_collector_healthcheck.py -q
 
 Pure unit tests against a fake, in-memory S3 client — no network, no real
 AWS, no real `go build`.
+
+## collector_livecheck.py
+
+LIVE check of the collector on EC2 (today's capture only reaches S3 at midnight/shutdown, so
+`collector_healthcheck.py` cannot confirm the current session). Finds the instance by Name tag
+`sb-algo-trading-prod-collector`, runs a fixed read-only script via SSM `AWS-RunShellScript`
+(systemd state/restarts, process VmRSS, today's in-progress segment count/bytes/newest-write age,
+disk free, last 60 journal lines redacted) and gives an OK/WARN/FAIL verdict. In IDX session
+hours (trading day, 09:00-16:00 WIB) OK needs: unit active, newest segment write < 5 min, and a
+`[capture] N frames / ...` log line with N>0 in the last 2 min (`frames total` resets per
+reconnect and is not used). Outside session hours it reports state only. A stopped instance
+outside 08:30-16:25 WIB / on non-trading days is OK ("stopped by schedule", exit 0,
+`infra/scheduler.tf`); stopped inside that window is FAIL.
+
+```bash
+make collector-live AWS_PROFILE=lewis              # or: python3 scripts/collector_livecheck.py --profile lewis
+make collector-live AWS_PROFILE=lewis ARGS=--json
+```
+
+Credentials: `--profile`, else `AWS_PROFILE`, else boto3's default chain; the script never reads
+`~/.aws/credentials` itself or prints key values. Exit: 0 OK, 1 WARN, 2 FAIL/auth/SSM error.
+Needs `ec2:DescribeInstances`, `ssm:SendCommand` (document `AWS-RunShellScript` + the instance) and
+`ssm:GetCommandInvocation`, and the SSM agent online (the instance profile already attaches
+AmazonSSMManagedInstanceCore). Tests: `python3 -m pytest scripts/test_collector_livecheck.py -q`.

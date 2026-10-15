@@ -19,7 +19,13 @@
 #   make runner-arm STRATEGY=<id> MAX_IDR=<n> [DATE=] | runner-disarm [DATE=]   (the only way to go live)
 #   make clean
 
-.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard cost-report publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test runner-arm runner-disarm runner-day token-status token-refresh token-ensure token-test
+.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard cost-report publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test runner-arm runner-disarm runner-day token-status token-refresh token-ensure token-test collector-live
+
+# collector-live: LIVE check of the EC2 collector via SSM (read-only remote script).
+# Today's S3 data does not exist until midnight, so scripts/collector_healthcheck.py cannot
+# confirm the current session; this can.   make collector-live [AWS_PROFILE=<name>] [ARGS=--json]
+collector-live:
+	$(if $(AWS_PROFILE),AWS_PROFILE=$(AWS_PROFILE) )python3 scripts/collector_livecheck.py $(ARGS)
 
 build:
 	mkdir -p $(CURDIR)/bin
