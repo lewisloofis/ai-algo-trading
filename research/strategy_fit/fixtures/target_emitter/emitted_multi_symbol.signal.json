@@ -1,0 +1,63 @@
+{
+  "strategy_id": "test_multi",
+  "spec_status": "candidate",
+  "spec_status_note": "",
+  "family": "daily_momentum",
+  "hold_sessions": 2,
+  "lots_per_name": 1,
+  "as_of_day": "2026-08-18",
+  "rebalance_window": "09:00-11:30 WIB",
+  "rebalance_at": "09:30",
+  "base_notional_idr": 226071,
+  "exact_lots_price_band": [
+    0.7,
+    1.3
+  ],
+  "history_start": "2024-01-01",
+  "deoverlap": "sequential_long_only (D2 fixed): enter s+1, exit s+1+hold, resume at exit day",
+  "timing": "signal at close D-1, trade D; backtest enters at close_{s+1} (D1 fixed)",
+  "symbols": [
+    {
+      "symbol": "AAAA",
+      "reason": "long: signal +0.0323 on grid row at close 2026-08-14 -> enter today, 2 sessions, exit leg 2026-08-20",
+      "signal_day": "2026-08-14",
+      "signal_value": 0.032258064516129004,
+      "on_deoverlap_grid": true,
+      "entry_day": "2026-08-18",
+      "exit_day": "2026-08-20",
+      "last_close": 64.0,
+      "grid_anchor_day": "2026-06-23",
+      "n_bars": 40,
+      "bars_sha256": "3fbb4f15c34a62faa4ea1a9f0384e7e3e0006902adf60598dc0bce4d36170b02",
+      "weight": 0.036802602
+    },
+    {
+      "symbol": "BBBB",
+      "reason": "flat: signal <= 0 (-0.0007) at close 2026-08-14",
+      "signal_day": "2026-08-14",
+      "signal_value": -0.0006839945280437965,
+      "on_deoverlap_grid": false,
+      "entry_day": null,
+      "exit_day": null,
+      "last_close": 1461.0,
+      "grid_anchor_day": "2026-06-23",
+      "n_bars": 40,
+      "bars_sha256": "0ed168bb3841d70575cd70a1ab4ac39a3b3b071d9196bc82d8e80f7bc549c45e",
+      "weight": 0.0
+    },
+    {
+      "symbol": "CCCC",
+      "reason": "long: signal +0.0094 on grid row at close 2026-08-14 -> enter today, 2 sessions, exit leg 2026-08-20",
+      "signal_day": "2026-08-14",
+      "signal_value": 0.009433962264151052,
+      "on_deoverlap_grid": true,
+      "entry_day": "2026-08-18",
+      "exit_day": "2026-08-20",
+      "last_close": 214.0,
+      "grid_anchor_day": "2026-06-23",
+      "n_bars": 40,
+      "bars_sha256": "5c0a0319e41c8f5f79ab38f5aab5843d909edc9f45edd9b0bdea0a011266334f",
+      "weight": 0.123058698
+    }
+  ]
+}
