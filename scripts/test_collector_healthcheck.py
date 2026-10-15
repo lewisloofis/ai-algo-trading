@@ -277,6 +277,19 @@ def test_check_zero_record_sessions_excludes_today() -> None:
     assert all(d["date"] != today.isoformat() for d in day_details)
 
 
+def test_check_zero_record_sessions_includes_today_once_flushed() -> None:
+    """After the 16:25 WIB scheduled stop has flushed today's segments, today is scored."""
+    calendar = MarketCalendar(holidays=frozenset())
+    today = date(2026, 6, 24)  # Wednesday
+    s3 = FakeS3Client(objects={})
+
+    _, day_details = check_zero_record_sessions(
+        s3, BUCKET, calendar, lookback_days=1, today=today, include_today=True,
+    )
+
+    assert any(d["date"] == today.isoformat() for d in day_details)
+
+
 # ---------------------------------------------------------------------------
 # evaluate_binary_freshness
 # ---------------------------------------------------------------------------

@@ -50,7 +50,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -101,6 +101,12 @@ STALE_ARTIFACT_DAYS: int = 14
 # days are filtered out of this window via CALENDAR; today is excluded
 # because its session may still be in progress.
 LOOKBACK_DAYS: int = 30
+
+# The EC2 schedule stops the collector at 16:25 WIB, and shutdown flushes and
+# uploads the day's segments. From this WIB time on, today's session is
+# complete in S3 and is scanned too.
+TODAY_COMPLETE_AFTER_WIB = time(16, 45)
+WIB = timezone(timedelta(hours=7))
 
 # A trading day's segments summed across all watchlists must clear this many
 # total_data_records or the day is flagged as near-zero. Real healthy days
@@ -447,6 +453,7 @@ def check_zero_record_sessions(
     min_total: int = MIN_DAILY_DATA_RECORDS,
     min_trade: int = MIN_DAILY_TRADE_RECORDS,
     progress: Optional[Callable[[str], None]] = None,
+    include_today: bool = False,
 ) -> tuple[list[Finding], list[dict]]:
     """Walk the lookback window, skipping non-trading days, scoring the rest.
 
@@ -460,7 +467,8 @@ def check_zero_record_sessions(
     day_details: list[dict] = []
 
     start = today - timedelta(days=lookback_days)
-    end = today - timedelta(days=1)  # exclude today — its session may be in progress
+    # Today only once its session has ended and been flushed (see TODAY_COMPLETE_AFTER_WIB).
+    end = today if include_today else today - timedelta(days=1)
     total_days = (end - start).days + 1
 
     current = start
@@ -524,7 +532,7 @@ def render_report(result: HealthCheckResult) -> str:
             lines.append(f"  NOTE: {bd.get('hash_note')}")
     lines.append("")
 
-    lines.append(f"[2] Zero-record session check (lookback={result.lookback_days}d, ending yesterday)")
+    lines.append(f"[2] Zero-record session check (lookback={result.lookback_days}d, today included only after {TODAY_COMPLETE_AFTER_WIB:%H:%M} WIB)")
     problem_days = [d for d in result.day_details if d["status"] not in ("ok", "skipped_non_trading_day")]
     ok_count = sum(1 for d in result.day_details if d["status"] == "ok")
     skipped_count = sum(1 for d in result.day_details if d["status"] == "skipped_non_trading_day")
@@ -596,8 +604,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return EXIT_FAILURE
 
-    today = date.fromisoformat(args.today) if args.today else date.today()
     now = datetime.now(timezone.utc)
+    now_wib = now.astimezone(WIB)
+    today = date.fromisoformat(args.today) if args.today else now_wib.date()
+    include_today = args.today is None and now_wib.time() >= TODAY_COMPLETE_AFTER_WIB
 
     say(f"=== Collector deployment self-check — {now.isoformat()} ===")
 
@@ -628,6 +638,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         session_findings, day_details = check_zero_record_sessions(
             s3, bucket, CALENDAR, args.lookback_days, today,
             args.min_daily_records, args.min_trade_records, progress=say,
+            include_today=include_today,
         )
     except S3AuthError:
         print(
