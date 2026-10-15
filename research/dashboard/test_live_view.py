@@ -23,7 +23,7 @@ def test_panel_escapes_values_from_the_status_file(tmp_path):
 
 def test_empty_panel_says_so_and_hides_the_table(tmp_path):
     html = live_view.panel(live.collect(str(tmp_path), NOW), "2026-10-15 10:00 WIB")
-    assert "No bot session is online right now." in html
+    assert "No strategy is running right now." in html
     assert '<table id="live-table" hidden>' in html and "(0)" in html
     assert "static snapshot" in html and "make dashboard-live" in html and "Last rebuilt" in html
 
@@ -35,3 +35,16 @@ def test_script_is_inline_safe_and_never_uses_innerhtml(tmp_path):
     assert 'fetch("live.json"' in html and "5000" in html
     for _header, key in live_view.COLUMNS:  # every column the table shows exists on the run object
         assert hasattr(summary.runs[0], key)
+
+
+def test_panel_lists_only_online_runs_and_script_filters_the_same_way(tmp_path):
+    (tmp_path / "old.status.json").write_text(json.dumps({
+        "wall_clock_ns": int((NOW.timestamp() - 3600) * 1e9), "outcome": "running", "sink_kind": "paper",
+        "source": "live", "strategy_id": "old_one"}))
+    (tmp_path / "done.status.json").write_text(json.dumps({
+        "wall_clock_ns": int((NOW.timestamp() - 30) * 1e9), "outcome": "complete", "sink_kind": "paper",
+        "source": "live", "strategy_id": "done_one"}))
+    html = live_view.panel(_summary(tmp_path), "t")
+    table = html.split('id="live-body">')[1].split("</tbody>")[0]
+    assert "wifi_momo_h5" in table and "old_one" not in table and "done_one" not in table
+    assert 'r.state === "online"' in html

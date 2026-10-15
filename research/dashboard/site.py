@@ -25,6 +25,7 @@ import pandas as pd
 from strategy_fit.trade_export import CellTrades, export_cells
 
 from dashboard import broker_import, config, health, inputs, ledger, manual_trades, recon, results, scorecard, store, trades_data
+from dashboard import paper_tests, strategy_status
 from dashboard.live import LiveSummary, collect as collect_live
 from dashboard.annotations import Annotation, Decision, TimelineEvent, load_annotations, load_decision, load_timeline
 
@@ -68,6 +69,12 @@ class SiteData:
     daily_last: dict[str, str] = field(default_factory=dict)
     online: LiveSummary | None = None
     """Every heartbeat file, as of build time (live.py); the Overview's "Online now" panel."""
+    strategy_inputs: "strategy_status.Inputs | None" = None
+    """Shortlist, universe status, stored symbols and the emitter registry; the Strategies page's inputs."""
+    run_history: LiveSummary | None = None
+    """Heartbeat files over the last RUN_HISTORY_DAYS days, for the Strategies page's "Recent runs"."""
+    paper_tests: list | None = None
+    """paper_tests.PaperRow per paper/candidate spec; None = strategy_fit unavailable (not checked)."""
 
     @property
     def now_wib(self) -> datetime:
@@ -161,6 +168,9 @@ def gather(opt: SiteOptions, log: Callable[[str], None] = lambda _m: None) -> Si
         closes=closes,
         daily_last=health.daily_data_newest(opt.daily_dir),
         online=collect_live(opt.runs_dir, now),
+        paper_tests=paper_tests.collect(opt.runs_dir, opt.daily_dir),
+        strategy_inputs=strategy_status.gather_inputs(opt.research_dir, opt.daily_dir),
+        run_history=collect_live(opt.runs_dir, now, recent_days=strategy_status.RUN_HISTORY_DAYS),
     )
 
 

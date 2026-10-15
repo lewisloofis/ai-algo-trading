@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dashboard import strategy_sections as SEC
+from dashboard import strategy_families as F
+from dashboard import strategy_status as S
 from dashboard import svg
 from dashboard.render import Column, banner, colored, esc, money, page, pct, table, tile
 from dashboard.scorecard import STAKE_IDR, ScoreRow, cumulative_series
@@ -14,148 +17,55 @@ FAMILY_WORDS = {
     "volume_breakout": "Volume breakout",
 }
 
-COLS = (
-    Column("Stock"),
-    Column("Strategy type", term="strategy-type"),
-    Column("Hold (days)", numeric=True, term="holding-days"),
-    Column("Verdict"),
-    Column("Trades", numeric=True),
-    Column("Avg profit per trade, after costs", numeric=True, term="after-costs"),
-    Column("Just holding the stock", numeric=True, term="buy-and-hold"),
-    Column("Win rate", numeric=True, term="win-rate"),
-    Column(f"Avg without best {TOP_N} trades", numeric=True, term="best-five"),
-    Column("Detail"),
-)
-
-
 def family_word(family: str) -> str:
     return FAMILY_WORDS.get(family, family.replace("_", " ").capitalize())
 
 
-def hold_text(r: ScoreRow) -> str:
-    return esc(r.cell.hold_label) if r.cell.hold_label else f"{r.cell.hold}"
+def _detail_links(d) -> dict[tuple[str, str, int], str]:
+    return {r.cell.key: r.detail_page for r in d.rows if r.detail_page}
 
 
-def _money_pct(pct_value: float | None, idr: float | None) -> str:
-    if pct_value is None:
-        return "–"
-    return colored(f"{pct(pct_value)}<br><span class=\"small\">{money(idr, signed=True)} per Rp 1M</span>", pct_value)
-
-
-def _holding_cell(st) -> str:
-    if st.hold_total_pct is None:
-        return "–"
-    like = ""
-    if st.any_day_avg_pct is not None:
-        like = (f'<br><span class="small">Buying any day for the same hold: {pct(st.any_day_avg_pct)} per trade '
-                f"({money(st.any_day_avg_idr, signed=True)} per Rp 1M)</span>")
-    return colored(f'{pct(st.hold_total_pct, 0)} over the same dates{like}', st.hold_total_pct)
-
-
-def _verdict_cell(r: ScoreRow) -> str:
-    cls = "v-cand" if r.verdict.headline == "Candidate" else "v-no"
-    star = ' <span class="small">(previously famous)</span>' if r.famous else ""
-    flag = ""
-    if r.reproduces is False:
-        flag = '<div class="small">⚠ re-derived trades differ from the report (price data changed since the run)</div>'
-    return f'<span class="{cls}">{esc(r.verdict.sentence)}</span>{star}{flag}'
-
-
-def _row(r: ScoreRow) -> list[str]:
-    st = r.stats
-    link = f'<a href="{r.detail_page}">Chart &amp; trades</a>' if r.detail_page else "–"
-    if st is None:
-        return [f"<b>{esc(r.cell.symbol)}</b>", esc(family_word(r.cell.family)), hold_text(r),
-                _verdict_cell(r), "–", "–", "–", "–", "–", link]
-    return [
-        f"<b>{esc(r.cell.symbol)}</b>",
-        esc(family_word(r.cell.family)),
-        hold_text(r),
-        _verdict_cell(r),
-        f"{st.n_trades}",
-        _money_pct(st.net_avg_pct, st.net_avg_idr),
-        _holding_cell(st),
-        f"{st.win_rate * 100:.0f}%",
-        _money_pct(st.net_without_best_pct, st.net_without_best_idr),
-        link,
-    ]
-
-
-def _sort_key(r: ScoreRow):
-    st = r.stats
-    return (0 if r.verdict.headline == "Candidate" else 1, -(st.net_avg_pct if st else -1e9))
+def _case_pages(d) -> str:
+    rows = sorted((r for r in d.rows if r.detail_page), key=lambda r: (r.cell.symbol, r.cell.family, r.cell.hold))
+    if not rows:
+        return ""
+    items = "".join(
+        f'<li><a href="{esc(r.detail_page)}">{esc(r.cell.symbol)} {esc(family_word(r.cell.family))}, hold '
+        f"{r.cell.hold} day{'s' if r.cell.hold != 1 else ''}</a> — {esc(r.verdict.sentence)}</li>" for r in rows)
+    return (f"<details><summary>Backtest chart pages ({len(rows)} cases with a chart and every trade)</summary>"
+            f"<ul>{items}</ul></details>")
 
 
 def render_list(d) -> str:
-    if d.run is None:
-        body = (
-            "<h1>Strategies</h1>"
-            + banner("warn", "No backtest results were found. Expected a corrected run in "
-                     "<code>research/out_d1/next_close/strategy_portfolio.md</code> (see config.CORRECTED_RUN_DIRS).")
-        )
-        from dashboard.site import footer_text
-
-        return page("Strategies", "strategies.html", body, footer_text(d))
-
-    famous = [r for r in d.rows if r.famous]
-    highlighted = sorted([r for r in d.rows if r.highlighted and not r.famous], key=_sort_key)
-    others = sorted([r for r in d.rows if not r.highlighted], key=lambda r: (r.cell.symbol, r.cell.family, r.cell.hold))
-    mismatched = sum(1 for r in d.rows if r.reproduces is False)
-    last_dates = sorted({d.daily_last.get(r.cell.symbol, "") for r in highlighted if r.cell.symbol in d.daily_last})
-    ends = f"{last_dates[0]} to {last_dates[-1]}" if last_dates else "unknown dates"
-
-    intro = (
-        '<p class="lead">A <b>backtest</b> replays each strategy over past prices. Each row is one case: a stock, a '
-        "strategy type and a holding period. The verdict says in plain words whether it could be traded, and why not. "
-        "Nothing here has been proven in live trading.</p>"
-    )
-    provenance = banner(
-        "ok",
-        f"<b>Which results:</b> strategy-fit run generated {esc(d.run.generated)}, capital model "
-        f"<code>{esc(d.run.capital_model.split('—')[0].strip(' `'))}</code>. "
-        f"All results use the <b>corrected {term_link('next-session-entry')}</b> (fixed 2026-10-14); older result sets "
-        "used a same-day price that cannot be traded and are not shown. Trades below were re-derived from local daily "
-        f"prices by the backtest's own functions (history from 2024-01-01; price files end {esc(ends)}).",
-    )
-    warn = (
-        banner("warn", f"{mismatched} case(s) do not exactly reproduce the report from today's price files; they are flagged.")
-        if mismatched
-        else ""
-    )
-    explain = (
-        f'<p class="small">How to read the columns: <b>after costs</b> includes fees, spread and the price '
-        f"movement your own order causes. <b>Just holding</b> shows what buying at the first entry and selling at the last exit would have made, and under it "
-        f"what buying that stock on any day for the same hold averaged per trade (the fair comparison with the average above). <b>Without best {TOP_N}</b> drops the {TOP_N} most profitable trades: if the average then turns "
-        f"negative, the strategy lived on a few big wins. Money is shown per Rp 1,000,000 put into each trade "
-        f"(a reading aid, {term_link('rupiah-per-1m', 'see Glossary')}).</p>"
-    )
-    n_cand = sum(1 for r in highlighted + famous if r.verdict.headline == "Candidate")
-    tiles = (
-        tile(f"{len(highlighted) + len(famous)}", "Cases shown below", "every case that passed at least the cost check, plus 3 previously famous ones")
-        + tile(f"{n_cand}", "Candidates", "pass every check; still need a forward test")
-        + tile(f"{len(d.rows):,}", "Cases in the full table", "every stock/strategy/holding case in the run")
-    )
-    full_rows = [_row(r) for r in others]
-    body = (
-        "<h1>Strategies: backtest scorecard</h1>"
-        + intro
-        + provenance
-        + warn
-        + f'<div class="tiles">{tiles}</div>'
-        + explain
-        + "<h2>The three cases you may have heard about</h2>"
-        + '<p class="small">Before the entry-timing fix these looked like winners.</p>'
-        + table(COLS, [_row(r) for r in famous], empty="Not in this run.")
-        + "<h2>Every other case that passed at least one check</h2>"
-        + table(COLS, [_row(r) for r in highlighted], empty="No case passed any check.")
-        + "<details><summary>Full table: every other case in the run "
-        + f"({len(others):,} cases, most lost after costs or had too few trades)</summary>"
-        + table(COLS, full_rows)
-        + "</details>"
-    )
     from dashboard.site import footer_text
 
+    inp = d.strategy_inputs or S.Inputs(None, "not loaded", None, (), None)
+    run_cells = d.run.cells if d.run else None
+    stages = None if inp.specs is None else S.stage_rows(inp.specs, d.paper_tests, d.online, inp.shortlist)
+    combos = S.promising_combos(inp.shortlist, inp.specs)
+    runs = None if d.run_history is None else S.recent_runs(d.run_history)
+    provenance = (
+        f'<p class="small">Backtest results: strategy-fit run {esc(d.run.generated)}, using the corrected '
+        f'{term_link("next-session-entry")}.</p>' if d.run else
+        banner("warn", "No backtest results were found. Expected a corrected run in "
+               "<code>research/out_d1/next_close/strategy_portfolio.md</code> (see config.CORRECTED_RUN_DIRS). "
+               "Family results below use the shortlist only."))
+    body = (
+        "<h1>Strategies</h1>"
+        '<p class="lead">The current condition of our strategy work: what is running, what we are considering, '
+        "which stocks are in the screen and which combinations look promising. Nothing here has been proven in live trading.</p>"
+        + stand_wrap(stages, d)
+        + SEC.families_section(F.family_rows(run_cells, inp.shortlist, inp.specs)) + provenance
+        + SEC.screen_section(inp)
+        + SEC.combos_section(inp.shortlist, inp.shortlist_problem, combos, _detail_links(d), d.now_wib.date())
+        + SEC.runs_section(runs)
+        + _case_pages(d)
+    )
     return page("Strategies", "strategies.html", body, footer_text(d))
+
+
+def stand_wrap(stages, d) -> str:
+    return SEC.stand_section(stages, d.paper_tests)
 
 
 # ---------------------------------------------------------------------------

@@ -117,6 +117,18 @@ TERMS: tuple[Term, ...] = (
          "A pass/fail check a case must clear. The funnel on the Research page shows how many cases "
          "stop at each one."),
     # --- the machinery ---------------------------------------------------
+    Term("edge-after-costs", "Edge after costs",
+         "What the strategy earned per trade beyond simply holding the same stock on any day with the same "
+         "hold, minus the cost of trading one lot (fees, the buy-sell price gap and market impact). Shown in bps "
+         "(1 bps = 0.01%). Above zero means the signal added something that paid for its costs."),
+    Term("shortlist-gates", "Shortlist checks",
+         "Five pass/fail checks applied to each promising strategy-and-stock pair: the edge is more than luck, "
+         "it covers costs, it survives dropping the 5 best trades, it also held in 2015-2023 prices, and the "
+         "strategy type works across all stocks. Passing all five is the bar for a live test; no pair passes "
+         "them all today."),
+    Term("funding-gate", "Funding gate",
+         "A stock must be on both Stockbit's day-trade list and its trading-limit list (every funding option "
+         "unlocked) to be in our screen, and must not be flagged untradeable (for example suspended)."),
     Term("collector", "Market-data collector",
          "The program on a cloud server that records the exchange's live price feed all day so "
          "that strategies can be tested on real intraday data later."),

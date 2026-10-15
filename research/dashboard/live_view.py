@@ -60,17 +60,16 @@ _SCRIPT = """
     return td;
   }
   function draw(j) {
-    var runs = j.runs || [];
+    var runs = (j.runs || []).filter(function (r) { return r.state === "online"; });
     body.textContent = "";
     runs.forEach(function (r) {
       var tr = document.createElement("tr");
-      if (r.state !== "online") { tr.className = "dim"; }
       COLS.forEach(function (c) { tr.appendChild(cell(r, c[1])); });
       body.appendChild(tr);
     });
     table.hidden = runs.length === 0;
     empty.hidden = runs.length !== 0;
-    count.textContent = "(" + (j.online_count || 0) + ")";
+    count.textContent = "(" + runs.length + ")";
     note.textContent = "Live: as of " + text(j.as_of_wib) + ", refreshed every " + (POLL_MS / 1000) + "s.";
     if (j.site_built_wib) { rebuilt.textContent = j.site_built_wib; }
     notes.textContent = (j.notes || []).join(" ");
@@ -113,16 +112,17 @@ def _row(run) -> str:
 def panel(summary: LiveSummary, built_wib: str) -> str:
     """The panel's HTML. ``built_wib`` is the build time as text, e.g. '2026-10-15 10:00 WIB'."""
     head = "".join(f"<th>{esc(h)}</th>" for h, _k in COLUMNS)
-    rows = "".join(_row(r) for r in summary.runs)
-    has = bool(summary.runs)
+    online = [r for r in summary.runs if r.state == "online"]
+    rows = "".join(_row(r) for r in online)
+    has = bool(online)
     return (
         '<section id="live-panel">'
         f'<h2>Online now <span id="live-count">({summary.online_count})</span></h2>'
-        '<p class="small">A session is online when its heartbeat file says &ldquo;running&rdquo; and was rewritten '
-        "within the last 2 minutes. One that says &ldquo;running&rdquo; but has gone quiet stopped without ending.</p>"
+        '<p class="small">Only sessions running right now are listed (heartbeat rewritten within the last 2 minutes). '
+        'Earlier runs are under &ldquo;Recent runs&rdquo; on the <a href="strategies.html">Strategies</a> page.</p>'
         f'<table id="live-table"{"" if has else " hidden"}><thead><tr>{head}</tr></thead>'
         f'<tbody id="live-body">{rows}</tbody></table>'
-        f'<p class="empty" id="live-empty"{" hidden" if has else ""}>No bot session is online right now.</p>'
+        f'<p class="empty" id="live-empty"{" hidden" if has else ""}>No strategy is running right now.</p>'
         f'<p class="small" id="live-note">As of {esc(summary.as_of_wib)} · {esc(STATIC_NOTE)}</p>'
         f'<p class="small" id="live-notes">{esc(" ".join(summary.notes))}</p>'
         f'<p class="small">Last rebuilt <span id="last-rebuilt">{esc(built_wib)}</span></p>'

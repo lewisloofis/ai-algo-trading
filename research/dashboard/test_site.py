@@ -259,7 +259,11 @@ def test_strategies_page_names_the_run_and_the_corrected_entry(world):
     build_site(opt)
     page = text(out, "strategies.html")
     assert "2026-10-14T13:06:33Z" in page and "Next-session entry" in page
-    assert "Not tradeable — loses after costs" in page
+    assert "Backtest chart pages" in page and "strategy-aaaa" in page
+    for heading in ("Where each strategy stands", "Strategy families we consider", "Stocks in the screen",
+                    "Promising strategy + stock combinations", "Recent runs"):
+        assert heading in page
+    assert "The three cases you may have heard about" not in page
 
 
 def test_internal_links_and_glossary_anchors_resolve(world):
@@ -412,7 +416,8 @@ def test_overview_has_the_online_now_panel_and_lists_every_fresh_session(world):
     build_site(opt)
     page = text(out, "index.html")
     assert 'id="live-panel"' in page and "Online now" in page and "(2)" in page
-    assert "wifi_momo_h5" in page and "ptro_momo_h5" in page and "Stopped without ending" in page
+    assert "wifi_momo_h5" in page and "ptro_momo_h5" in page
+    assert "Stopped without ending" not in page and "orb" not in page.split('id="live-panel"')[1].split("</section>")[0]
     assert "static snapshot" in page and "Last rebuilt" in page
     assert page.index('id="live-panel"') < page.index("Is the machinery working?")
     assert "innerHTML" not in page
