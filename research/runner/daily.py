@@ -13,13 +13,13 @@ import sys
 import time
 from dataclasses import replace
 from datetime import date
-from typing import Callable, List, Mapping, Optional
+from typing import Callable, List, Mapping, MutableMapping, Optional
 
 from lib.market_calendar import CALENDAR
 from runner import arm as arm_mod
 from runner import livereport
 from runner import preflight as pf
-from runner.alerts import ALERT, SUMMARY, WARN, Alerter
+from runner.alerts import ALERT, INFO, SUMMARY, WARN, Alerter
 from runner.config import Clock, Config, WIB, at
 from runner.envfile import load_env_file
 from runner.executor import Executor
@@ -29,11 +29,55 @@ from runner.session import start_sessions, watch_sessions
 from runner.state import load_state, save_state
 from runner.strategies import build_gate, decide_all
 
+ENV_FILE_NAME = ".env.local"
 SUBCOMMANDS = ("preflight", "start", "watch", "post-close", "morning", "all", "arm", "disarm")
 
 
-def run_preflight_phase(cfg: Config, day: date, clock: Clock, alerter: Alerter) -> bool:
-    """Run preflight, record it, alert on failure. True = go."""
+def _default_ensure(path, **kw):
+    from token_rotation.rotate import ensure_tokens   # imported late: nothing loads unless rotation runs
+    return ensure_tokens(path, **kw)
+
+
+def rotate_tokens(cfg: Config, day: date, clock: Clock, alerter: Alerter, ensure: Optional[Callable] = None) -> Config:
+    """Refresh .env.local's tokens before preflight (token_rotation.ensure_tokens) and return a Config
+    whose env carries the new values (also applied in place when the env is a plain dict, so every later
+    phase and child sees them). Names only are ever reported, never values. Never raises, never gates:
+    an unusable token still fails preflight, which fails closed."""
+    env_path = cfg.repo_root / ENV_FILE_NAME
+    if not cfg.rotate_tokens or not env_path.exists():
+        return cfg
+    try:
+        res = (ensure or _default_ensure)(env_path, now=clock.now().timestamp())
+    except Exception as exc:  # noqa: BLE001 - nothing about a token may leak through an error
+        alerter.send(ALERT, f"{day} token rotation crashed ({type(exc).__name__}); preflight judges the existing tokens")
+        return cfg
+    values = dict(res.values)
+    if isinstance(cfg.env, MutableMapping):
+        res.apply_to(cfg.env)
+    else:
+        cfg = replace(cfg, env={**cfg.env, **values})
+    if values or res.refreshed:
+        alerter.send(INFO, f"{day} token rotation: rotated " + (", ".join(res.refreshed) or "tokens"),
+                     "updated: " + ", ".join(sorted(values)))
+    else:
+        alerter.log("token rotation: nothing to rotate")
+    if res.actions:
+        alerter.send(ALERT, f"{day} token rotation: ACTION REQUIRED", "\n".join(res.actions))
+    if res.warnings:
+        alerter.send(WARN, f"{day} token rotation warnings", "\n".join(res.warnings))
+    sp = cfg.state_path(day)
+    state = load_state(sp, str(day))
+    state["token_rotation"] = {"ok": res.ok, "refreshed": list(res.refreshed), "actions": list(res.actions),
+                               "warnings": len(res.warnings)}
+    save_state(sp, state)
+    return cfg
+
+
+def run_preflight_phase(cfg: Config, day: date, clock: Clock, alerter: Alerter,
+                        ensure: Optional[Callable] = None) -> bool:
+    """Rotate tokens (trading days only), run preflight, record it, alert on failure. True = go."""
+    if CALENDAR.is_trading_day(day):
+        cfg = rotate_tokens(cfg, day, clock, alerter, ensure)
     res = pf.run_preflight(cfg, day, clock.now().timestamp())
     text = pf.format_result(res)
     alerter.log(text)
@@ -141,6 +185,8 @@ def main(argv: Optional[List[str]] = None, *, env: Optional[Mapping[str, str]] =
     elif not cfg.python:
         cfg = replace(cfg, python=sys.executable)
     mutable_env = dict(cfg.env)
+    if args.no_env_file:
+        cfg = replace(cfg, rotate_tokens=False)
     if not args.no_env_file:
         _added, problems = load_env_file(cfg.repo_root / ".env.local", mutable_env)
         cfg = replace(cfg, env=mutable_env)

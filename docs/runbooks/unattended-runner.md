@@ -16,11 +16,12 @@ reuses them in-process. The Go side is reached only through `paper_day` (which b
 
 | time | job | what |
 |---|---|---|
-| 08:45 | `runner morning` | **preflight**, then the **summary push** (`ARMED: <id>, max <n> IDR` or `not armed`, plus what each strategy will do), then **start**, then **watch** |
+| 08:45 | `runner morning` | **token rotation** (below), **preflight**, then the **summary push** (`ARMED: <id>, max <n> IDR` or `not armed`, plus what each strategy will do), then **start**, then **watch** |
+| 08:45 | token rotation | on a trading day, if `.env.local` exists and `--no-env-file` is not given: `token_rotation.ensure_tokens(.env.local)` refreshes sessions with < 12h left (network, rewrites `.env.local`), and the new values are applied to the runner's in-memory env so every later phase and child uses them. **INFO** (log only) names the tokens rotated, never values; **ALERT** `token rotation: ACTION REQUIRED` for each manual step; **WARN** for warnings. A crash in the rotation is an ALERT and never stops the run: preflight then judges whatever tokens exist and still fails closed. A dry run shows the step and does not call it |
 | 08:45 | preflight | trading day (repo calendar); previous session's daily bar present, not a zero-volume placeholder, for every paper spec's symbols; `SB_ACCESS_TOKEN` present and not expiring within 1.5h; `SB_BEARER_TOKEN` present (warn only); `runs/KILL` absent; strategy binaries present or `go` available. Any failure: alert, skip the day |
 | right after | start | `make build-strategy`, then `python -m strategy_fit.paper_day --strategy <id>` for each spec with status `paper` (emit target + `live-session --sink paper --source live`), so it runs before 09:29 |
 | to 09:45 | watch | every 15s: status file stale > 2 min alerts; dead process is restarted only if safe (below); at 09:45 anything still running gets a graceful SIGINT |
-| 16:20 | `runner post-close` | `refresh-prices`, `recon` (only if `SB_ACCOUNT_NO` and `SB_TRADING_ACCESS_TOKEN` are set), `paper-scorecard` per paper strategy, dashboard rebuild (`HEALTHCHECK=skip`), a summary alert, and (if live was armed or ran) a **LIVE summary** alert |
+| 16:20 | `runner post-close` | `refresh-prices`, `recon` (only if `SB_ACCOUNT_NO` and `SB_TRADING_ACCESS_TOKEN` are set), `paper-scorecard` per paper strategy, dashboard rebuild (`HEALTHCHECK=skip`), then ONE **review message** (rules over local artefacts + a short summary; see Daily ops review) that carries the day's summary and, if live was armed or ran, the LIVE summary |
 
 A failed preflight skips trading for the day but **post-close still runs**: refreshing prices
 is what repairs the next morning's stale-bar failure.
@@ -112,6 +113,7 @@ exists, the watchdog alerts when it appears, and live-session stops a running se
 
 - `runs/runner/runner.log`: every decision and alert, redacted, one line each.
 - `runs/runner/<date>-<strategy>.log`: paper-day / live-session output; `<date>-post-close.log`; `<date>-build.log`.
+- `runs/runner/review-<date>.json` / `.txt`: the post-close review (redacted facts as sent to the summary writer, and the summary).
 - `runs/runner/state-<date>.json`: phase state (preflight result, per-strategy status, pid, restarts, post-close done).
 - `runs/runner/launchd-*.err`: only if the runner itself failed to start.
 - Heartbeats stay where they were: `runs/<date>-<id>-paper-aN.status.json`; results via the dashboard.
@@ -130,7 +132,8 @@ exists, the watchdog alerts when it appears, and live-session stops a running se
 | `still running at the deadline` | graceful stop sent at 09:45 |
 | `kill switch file appeared` | live-session is stopping itself |
 | `post-close: <step> failed` | the chain continues; read `<date>-post-close.log` |
-| `daily summary` | per strategy status, fills today, paper position, step results |
+| `daily summary` | the single post-close message (the review, below): flags first (ALERT, WARN), then sessions, fills, paper position, step results, recon and scorecard verdicts, and the LIVE summary lines when live ran. Prefixed `[ALERT]` when any rule raised an ALERT |
+| `token rotation: ACTION REQUIRED` / `token rotation warnings` | a manual re-login step is needed / a refresh token is close to death (value-free text from `token_rotation`) |
 | `<date> morning plan: ARMED: <id>, max <n> IDR` / `... not armed` | the 08:45 push. Below it: `LIVE <id>` (will go live), `NOT live <id>: <why>` (armed but blocked, or not armed), `paper <id>`, and `WARNING` lines (below) |
 | `WARNING <id>: holds ... LIVE and is NOT going live today` | a candidate holds a live position in its stores but is not armed today, so nothing will sell it. Arm it for today (exit legs need an arm too) or sell by hand |
 | `LIVE session started: <id>, buys at most <n> IDR` | the one live-session was spawned |
@@ -139,7 +142,51 @@ exists, the watchdog alerts when it appears, and live-session stops a running se
 | `LIVE refused at the guard` / `LIVE not started` | the guard re-verified and said no (arm file gone or changed, kill file, spec no longer `candidate`); nothing ran |
 | `LIVE session died; NOT restarted` | exit code, the orders in the store that are neither filled nor rejected, and the result of one read-only `make recon`. **Check the Stockbit app for resting orders.** Nothing is retried |
 | `DISARMED while live; stopping the session` | you removed the arm file while it ran: graceful stop (resting orders cancelled; fills stay) |
-| `<date> LIVE summary` | after post-close: orders by outcome, bought vs the cap, fees, position now, exit code, recon note after a failure; also reports `armed but NO live session ran today` |
+| `LIVE summary` (inside the daily message) | orders by outcome, bought vs the cap, fees, position now, exit code, recon note after a failure; also reports `armed but NO live session ran today` |
+
+## Daily ops review (post-close)
+
+At the end of post-close the runner builds **one** message (`<date> daily summary (...)`) from local
+artefacts only; it replaces the separate summary and LIVE-summary pushes. It is informational: the LLM
+step can never change runner behaviour, and any failure in it falls back to plain text.
+
+1. **Rules** (`runner/review_rules.py`, deterministic): facts and severity-tagged flags from the day's
+   runner log, state file, live and paper stores, `runs/recon/*.json`, paper scorecards,
+   `research/out_cost_report/cost_report.json` (if present) and token expiry (durations only, decoded
+   in-process). ALERT: preflight failed or missing, fill >= 300 bps from the decision price, position
+   open more than its planned hold, recon mismatch or a trade the bot recorded that the broker lacks,
+   live cap exceeded, armed but no live session, failed or errored session, expired token, a manual
+   token step. WARN: fill >= 100 bps from the decision price, position on its exit day still open,
+   live cap >= 90%, unresolved or rejected order, missing/stale/unchecked recon, missing or stale
+   status files, a session that did not start or never finished, token < 24h left, scorecard verdict
+   STOP, failed post-close step, unreadable source. Planned hold = the spec's `hold` sessions after the
+   entry day. The paper scorecard has no backtest expectation field, so "drift" is its verdict only.
+2. **Redaction** (`runner/review_redact.py`): `runner/redact.py` (secret env values, JWTs, bearer
+   tokens, webhook URLs, long blobs) plus account numbers, order IDs (UUIDs, long digit runs, values
+   under `order_id`/`account`/`broker_id`-style keys) and broker IDs. Applied to every string and every
+   sensitive key before anything leaves the machine, and again to the model's reply.
+3. **Summary** (`runner/review_summary.py`): the redacted facts JSON goes on stdin to
+   `claude -p --model haiku --tools "" --system-prompt <fixed> --no-session-persistence
+   --disable-slash-commands --strict-mcp-config --permission-prompts none`, in an empty temp directory,
+   60s timeout, with only PATH/HOME/locale and `CLAUDE_*`/`ANTHROPIC_*` in its environment (never the
+   runner's `SB_*` or Telegram values). No tools means it cannot read files or run commands. The reply
+   is used only if every number in it appears in the facts and, when there is an ALERT, it mentions
+   ALERT; otherwise the deterministic text below is sent. Fallback also when `claude` is missing, times
+   out, exits non-zero or returns nothing, or `RUNNER_REVIEWER=off`.
+4. **Output**: the Telegram/webhook message, plus `runs/runner/review-<date>.json` (the redacted facts
+   and which writer produced the text) and `runs/runner/review-<date>.txt`.
+
+Config (env or `.env.local`): `RUNNER_REVIEWER=claude|off` (default `claude`), `RUNNER_REVIEWER_MODEL`
+(default `haiku`).
+
+**What leaves the machine, and where:** exactly the contents of `review-<date>.json` (redacted): strategy
+ids, symbols, lots, prices, fill-vs-decision deviations in bps, rupiah amounts (bought vs cap, fees),
+session/step statuses, recon differences (symbol and lots), scorecard verdicts and bps, cost-report
+aggregates, token names with hours left, flag texts and the ALERT/WARN lines of the runner log. It goes
+to Anthropic through the Claude Code login of the user the runner runs as. No token, account number,
+order or broker ID, `.env.local` content or chat id is sent. Set `RUNNER_REVIEWER=off` to send nothing.
+Residual risk: redaction is pattern-based, so a new identifier format would not be caught; read
+`review-<date>.json` after the first live days.
 
 ## Idempotency
 

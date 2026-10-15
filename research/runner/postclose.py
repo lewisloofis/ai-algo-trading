@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 from lib.market_calendar import CALENDAR
-from runner import livereport
+from runner import livereport, review
 from runner.alerts import SUMMARY, WARN, Alerter
 from runner.config import ACCOUNT_ENV, BEARER_TOKEN_ENV, TRADING_TOKEN_ENV, Clock, Config
 from runner.executor import Executor
@@ -78,8 +78,17 @@ def post_close(cfg: Config, day: date, clock: Clock, ex: Executor, alerter: Aler
             livereport.flush_events(cfg, day, sid, entry, alerter, final=True)
     state["post_close"] = {"at": clock.now().isoformat(timespec="seconds"), "failed": failed}
     save_state(sp, state)
-    alerter.send(SUMMARY, f"{day} daily summary ({'ALL OK' if not failed else str(len(failed)) + ' step(s) failed'})", body)
     live_summary = livereport.day_summary(cfg, day, state)
-    if live_summary is not None:
-        alerter.send(SUMMARY, *live_summary)
+    title = f"{day} daily summary ({'ALL OK' if not failed else str(len(failed)) + ' step(s) failed'})"
+    try:
+        rv = review.run_review(cfg, day, state, clock.now().timestamp(), steps=results,
+                               live_summary=([live_summary[0], *live_summary[1].splitlines()] if live_summary else None),
+                               paper_summary=day_summary(cfg, day, paper_ids))
+        alerter.log(f"post-close review: summary by {rv.source}")
+        alerter.send(rv.level, title, rv.text)       # ONE message: replaces the summary and the LIVE summary
+    except Exception as exc:  # noqa: BLE001 - the review is informational: never lose the plain summary
+        alerter.log(f"post-close review failed ({type(exc).__name__}); sending the plain summary")
+        alerter.send(SUMMARY, title, body)
+        if live_summary is not None:
+            alerter.send(SUMMARY, *live_summary)
     return 1 if failed else 0

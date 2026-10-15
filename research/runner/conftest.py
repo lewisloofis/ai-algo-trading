@@ -88,6 +88,19 @@ class Recorder:
         self.posts.append((url, payload))
 
 
+@pytest.fixture(autouse=True)
+def no_real_claude(monkeypatch):
+    """The post-close reviewer must never start a real `claude -p` in a test: its one subprocess
+    boundary fails like a missing binary (-> the deterministic fallback). Tests of the reviewer pass
+    their own `run=` fake."""
+    from runner import review_summary
+
+    def _boom(*_a, **_k):
+        raise FileNotFoundError("claude is not available in tests")
+    monkeypatch.setattr(review_summary, "_run", _boom)
+    monkeypatch.setattr(review_summary, "_which", lambda name: "/fake/bin/claude")
+
+
 @pytest.fixture
 def now():
     return datetime(2026, 10, 15, 8, 45, tzinfo=WIB)
