@@ -82,6 +82,21 @@ def test_a_phantom_fill_makes_the_row_red_even_when_positions_match(tmp_path):
     assert "phantom" in row.summary
 
 
+def test_pending_history_fills_make_the_row_amber_not_red(tmp_path):
+    tc = {"checked": True, "broker_trades": 3, "matched": 2, "broker_only": 1, "store_only": 0,
+          "pending_history": 1, "newly_imported": 0, "fee_gaps_flagged": 0}
+    write(tmp_path, "2026-10-14.json", report(trade_check=tc, warnings=["awaiting broker history: store order x"]))
+    row = recon.recon_row(str(tmp_path), NOW)
+    assert row.state == health.AMBER
+    assert "next trading day" in row.summary
+    assert "1 awaiting broker history" in row.summary
+
+
+def test_a_phantom_still_beats_pending_history(tmp_path):
+    write(tmp_path, "2026-10-14.json", report(errors=["phantom fill: store order y"], warnings=["awaiting broker history: x"]))
+    assert recon.recon_row(str(tmp_path), NOW).state == health.RED
+
+
 def test_the_newest_report_wins(tmp_path):
     write(tmp_path, "2026-10-13.json", report("mismatch"))
     write(tmp_path, "2026-10-14.json", report("match"))

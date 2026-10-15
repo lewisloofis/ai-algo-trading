@@ -75,6 +75,8 @@ def _trade_check(doc: dict) -> str:
         return f" The trade-by-trade check was not done ({why})."
     bits = [f"{tc.get('matched', 0)} matched", f"{tc.get('broker_only', 0)} placed by hand in the app",
             f"{tc.get('store_only', 0)} recorded by the bot but not at the broker"]
+    if tc.get("pending_history"):
+        bits.append(f"{tc['pending_history']} awaiting broker history")
     extra = f"; {tc['fee_gaps_flagged']} fee gap(s) over Rp 0.50" if tc.get("fee_gaps_flagged") else ""
     return f" Trades checked against the broker's history: {', '.join(bits)}{extra}."
 
@@ -111,6 +113,10 @@ def recon_row(runs_dir: str, now: datetime) -> HealthRow:
     age = _age_days(doc, now)
     summary = (f"Yes: the bot's records agree with the broker. The broker holds {_holdings(doc)}. "
                f"Checked {when}.{_trade_check(doc)}")
+    if (doc.get("trade_check") or {}).get("pending_history"):
+        return HealthRow(ROW_NAME, AMBER, f"{summary} Today's trade(s) are awaiting the broker's history, which lists "
+                         f"them from the next trading day. Re-run then: {config.RECON_RUN_HINT}",
+                         run_hint=config.RECON_RUN_HINT)
     if age is not None and age > config.RECON_STALE_DAYS:
         return HealthRow(ROW_NAME, AMBER, f"Matched when last checked, {when}, but that was {age} days ago. "
                          f"Check again: {config.RECON_RUN_HINT}", run_hint=config.RECON_RUN_HINT)

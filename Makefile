@@ -91,7 +91,9 @@ dashboard-live:
 # import ledger, against the broker's holdings, plus a trade-by-trade check against
 # the broker's history. It writes runs/recon/<date>.json (the dashboard Overview
 # reads the newest one) and imports trades made by hand in the app into
-# runs/broker_trades.json. Read-only towards the broker.
+# runs/broker_trades.json. Read-only towards the broker. The broker lists a day's
+# trades only from the next trading day, so a bot fill dated today is reported as
+# "awaiting broker history" (a warning, exit 0), not a phantom; re-run recon then.
 #
 # Needs the trading token and the sleeve account in the environment:
 #   set -a && source .env.local && set +a && make recon
