@@ -269,3 +269,18 @@ def test_status_lines_only_expiry_words(envf):
     assert lines["SB_REFRESH_TOKEN"].startswith("SB_REFRESH_TOKEN: unknown")
     assert lines["SB_TRADING_ACCESS_TOKEN"] == "SB_TRADING_ACCESS_TOKEN: not set"
     assert "opaque" not in "".join(lines.values())
+
+
+def test_post_passes_non_none_context_for_https(monkeypatch):
+    import ssl
+
+    seen = {}
+
+    def fake_urlopen(req, timeout=None, context=None):
+        seen["context"] = context
+        raise OSError("no network in tests")
+
+    monkeypatch.setattr(client.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(client.Transient):
+        client._post("https://exodus.example.com/x", "t", {}, b"{}", {})
+    assert isinstance(seen["context"], ssl.SSLContext)

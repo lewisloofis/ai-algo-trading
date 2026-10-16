@@ -5,12 +5,14 @@ never raises into the runner."""
 
 from __future__ import annotations
 
+import functools
 import json
 import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Mapping
 
+from lib.tls import ssl_context
 from runner.config import TELEGRAM_CHAT_ENV, TELEGRAM_TOKEN_ENV, WEBHOOK_ENV, WIB
 from runner.redact import redact
 
@@ -19,19 +21,21 @@ INFO, WARN, ALERT, SUMMARY, LIVE = "INFO", "WARN", "ALERT", "SUMMARY", "LIVE"
 _PUSH_LEVELS = (WARN, ALERT, SUMMARY, LIVE)
 
 
-def http_post_json(url: str, payload: dict, timeout: float = 10.0) -> None:
+def http_post_json(url: str, payload: dict, timeout: float = 10.0,
+                   env: Mapping[str, str] | None = None) -> None:
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - https URL from operator env
+    with urllib.request.urlopen(req, timeout=timeout, context=ssl_context(env or {})) as resp:  # noqa: S310 - https URL from operator env
         if resp.status >= 300:
             raise RuntimeError(f"HTTP {resp.status}")
 
 
 class Alerter:
     def __init__(self, log_path: Path, env: Mapping[str, str],
-                 post: Callable[[str, dict], None] = http_post_json,
+                 post: Callable[[str, dict], None] | None = None,
                  now: Callable[[], datetime] = lambda: datetime.now(WIB)):
-        self._log, self._env, self._post, self._now = Path(log_path), env, post, now
+        self._log, self._env, self._now = Path(log_path), env, now
+        self._post = post if post is not None else functools.partial(http_post_json, env=env)
 
     def _write(self, level: str, text: str) -> None:
         try:

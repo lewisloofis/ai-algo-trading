@@ -5,12 +5,13 @@ Only https is allowed, except loopback hosts (test fakes), so a token is never s
 from __future__ import annotations
 
 import json
-import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
+
+from lib.tls import ssl_context
 
 USER_AGENT = "okhttp/4.9.3"     # the WAF 403s other agents before auth is even checked
 EXODUS_DEFAULT = "https://exodus.stockbit.com"
@@ -55,17 +56,6 @@ def _check_url(url: str) -> None:
     raise ValueError("auth host must be https (http only for loopback)")
 
 
-def _ssl_context(env: Dict[str, str]) -> Optional[ssl.SSLContext]:
-    if env.get("SB_INSECURE_TLS") == "1":
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        return ctx
-    if env.get("SB_CA_BUNDLE"):
-        return ssl.create_default_context(cafile=env["SB_CA_BUNDLE"])
-    return None
-
-
 def _post(url: str, what: str, headers: Dict[str, str], body: Optional[bytes],
           env: Optional[Dict[str, str]] = None) -> Any:
     """POST and return parsed JSON. Maps every failure to a typed, value-free AuthError."""
@@ -74,7 +64,7 @@ def _post(url: str, what: str, headers: Dict[str, str], body: Optional[bytes],
             "X-DeviceType": "algo-token-rotation", "Accept-Language": "id", "Accept": "application/json"}
     hdrs.update(headers)
     req = urllib.request.Request(url, data=body, headers=hdrs, method="POST")
-    ctx = _ssl_context(env or {}) if url.startswith("https") else None
+    ctx = ssl_context(env or {}) if url.startswith("https") else None
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT_S, context=ctx) as resp:  # noqa: S310 - scheme checked
             raw = resp.read(1 << 20)
