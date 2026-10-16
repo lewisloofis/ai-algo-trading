@@ -38,3 +38,44 @@ deadlines:
       with: python scripts/collector_healthcheck.py (artifact age must read ~0d).
       The two JSON copies must stay byte-identical - verify with shasum -a 256.
 
+
+  - id: msci-nov26-paper-log
+    due: "2026-11-12"
+    lead_days: 14
+    desc: >
+      Plan 21 H2 paper log, step 1. MSCI announces the Nov-2026 review on
+      2026-11-11 (~23:00 CET, before the 2026-11-12 IDX open). Fetch and log it
+      the morning after, before the IDX open if possible (the log refuses once the
+      entry session is past). PAPER ONLY, no orders. From research/:
+      .venv/bin/python -m index_events.paper_log fetch --review Nov26
+      .venv/bin/python -m index_events.paper_log log --review MSCI-2026-11
+      Check the PDF dateline/effective date match the expected 2026-11-11 /
+      2026-11-30. Any name printed UNMAPPED: add it to
+      research/index_events/msci_ticker_map.py before the entry close, then run
+      `update`. Planned sessions: p 2026-11-30, entry 2026-12-01, k5 2026-12-08,
+      k10 2026-12-15, k20 2027-01-04. Routine: research/paper/plan21_h2/README.md.
+
+  - id: msci-nov26-paper-entry
+    due: "2026-12-01"
+    lead_days: 7
+    desc: >
+      Plan 21 H2 paper log, step 2: after the 2026-12-01 close (entry session
+      p+1), refresh bars for the logged tickers and IHSG with your own token in
+      the environment (never as an argv flag). From research/:
+      .venv/bin/python -m index_events.paper_log update
+      It prints the ready-to-run `python -m screener.daily_store snapshot
+      --symbols ...` line for missing or stale tickers; run it, then `update`
+      again. Records entry price, cost and eligibility/suspension/entry checks.
+
+  - id: msci-nov26-paper-exit
+    due: "2027-01-04"
+    lead_days: 21
+    desc: >
+      Plan 21 H2 paper log, step 3: k20 exit session (k5 2026-12-08, k10
+      2026-12-15 are recorded by the same routine). The k20 date assumes only Jan 1
+      2027 is closed; 2027 holidays are not in calendar/idx_holidays.json until
+      the holiday-refresh-2027 item is done, so re-verify it. After that close:
+      refresh bars (the snapshot line printed by `update`), then from research/:
+      .venv/bin/python -m index_events.paper_log update
+      .venv/bin/python -m index_events.paper_log scorecard
+      Feeds the MSCI_ST progress line "development 23 + paper N of 30" (plan 21 §10).
