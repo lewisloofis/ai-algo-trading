@@ -76,8 +76,15 @@ MUTABLE_COLS = (
      "coeffs_sha256", "flag_locked_entry"]
     + [f"{c}_k{k}" for k in HOLDS for c in ("exit_px", "gross", "ihsg_ret", "net", "net_1lot", "net_vs_ihsg")]
 )
-COLUMNS = PLANNED_COLS + MUTABLE_COLS
+# Your own manual 1-lot orders, typed in with `record-fill`. Kept apart from the paper
+# columns: the paper rows stay the record (plan 21 §10), these only measure execution.
+LIVE_COLS = [
+    "live_lots", "live_buy_px", "live_buy_at", "live_sell_px", "live_sell_at", "live_fee_idr",
+    "live_net_idr", "live_net_bps", "live_entry_slip_bps", "live_exit_slip_bps", "live_note",
+]
+COLUMNS = PLANNED_COLS + MUTABLE_COLS + LIVE_COLS
 TERMINAL_PREFIX = "excluded_"
+LIVE_FEE_BUY, LIVE_FEE_SELL = 0.0015, 0.0025   # broker schedule (backtest.FEE); sell includes the 0.1% tax
 
 
 class PaperLogError(SystemExit):
@@ -638,8 +645,79 @@ def scorecard(rows: Sequence[Dict[str, str]]) -> Dict[str, object]:
     }
 
 
+def live_summary(rows: Sequence[Dict[str, str]]) -> Dict[str, object]:
+    """Your real 1-lot round trips next to the paper result for the same rows."""
+    done = [r for r in rows if r["live_sell_px"]]
+    paper = [float(r["net_1lot_k20"]) for r in done if r["net_1lot_k20"]]
+    return {
+        "round_trips": len(done),
+        "open_positions": sum(1 for r in rows if r["live_buy_px"] and not r["live_sell_px"]),
+        "total_net_idr": sum(float(r["live_net_idr"]) for r in done) if done else None,
+        "mean_live_net_bps": _mean([float(r["live_net_bps"]) for r in done]),
+        "mean_paper_net_1lot_k20_bps_same_rows": _mean(paper),
+        "mean_entry_slip_bps": _mean([float(r["live_entry_slip_bps"]) for r in rows if r["live_entry_slip_bps"]]),
+        "mean_exit_slip_bps": _mean([float(r["live_exit_slip_bps"]) for r in done if r["live_exit_slip_bps"]]),
+    }
+
+
+def _find_row(rows: List[Dict[str, str]], review: str, ticker: str) -> Dict[str, str]:
+    hits = [r for r in rows if r["review_label"] == review and eff_ticker(r) == ticker.upper()]
+    if len(hits) != 1:
+        raise PaperLogError(f"expected exactly one ledger row for {review} {ticker}, found {len(hits)}")
+    return hits[0]
+
+
+def _slip_bps(live_px: float, paper_px: str) -> str:
+    return _f((live_px / float(paper_px) - 1.0) * BPS, 1) if paper_px else ""
+
+
+def apply_fill(row: Dict[str, str], side: str, px: float, lots: int, at: str, note: str) -> Dict[str, str]:
+    """New row with one side of your real fill recorded. Each side is written once."""
+    if px <= 0 or lots <= 0:
+        raise PaperLogError("--px and --lots must be positive")
+    new = dict(row)
+    if side == "buy":
+        if row["live_buy_px"]:
+            raise PaperLogError(f"buy already recorded for {row['review_label']} {eff_ticker(row)}")
+        new.update(live_lots=str(lots), live_buy_px=_f(px, 2), live_buy_at=at,
+                   live_entry_slip_bps=_slip_bps(px, row["entry_px"]))
+    else:
+        if not row["live_buy_px"]:
+            raise PaperLogError("record the buy before the sell")
+        if row["live_sell_px"]:
+            raise PaperLogError(f"sell already recorded for {row['review_label']} {eff_ticker(row)}")
+        if lots != int(row["live_lots"]):
+            raise PaperLogError(f"sell lots {lots} != bought lots {row['live_lots']}")
+        buy = float(row["live_buy_px"]) * lots * SHARES_PER_LOT
+        sell = px * lots * SHARES_PER_LOT
+        fee = buy * LIVE_FEE_BUY + sell * LIVE_FEE_SELL
+        net = sell - buy - fee
+        new.update(live_sell_px=_f(px, 2), live_sell_at=at, live_fee_idr=_f(fee, 0), live_net_idr=_f(net, 0),
+                   live_net_bps=_f(net / buy * BPS, 1), live_exit_slip_bps=_slip_bps(px, row["exit_px_k20"]))
+    if note:
+        new["live_note"] = (row["live_note"] + "; " if row["live_note"] else "") + note
+    return new
+
+
+def cmd_record_fill(args) -> int:
+    ledger = Path(args.ledger)
+    rows = read_ledger(ledger)
+    target = _find_row(rows, args.review, args.ticker)
+    at = args.at or datetime.now(WIB).date().isoformat()
+    r = apply_fill(target, args.side, args.px, args.lots, at, args.note)
+    new_rows = [r if x is target else x for x in rows]
+    assert_planned_unchanged(rows, new_rows)
+    write_ledger(ledger, new_rows)
+    print(f"recorded {args.side} {args.ticker.upper()} {args.lots} lot(s) @ {args.px:g} -> {ledger}")
+    if args.side == "sell":
+        print(f"  net Rp {float(r['live_net_idr']):+,.0f} ({float(r['live_net_bps']):+.0f} bps after fees)")
+    return 0
+
+
 def cmd_scorecard(args) -> int:
-    sc = scorecard(read_ledger(Path(args.ledger)))
+    rows = read_ledger(Path(args.ledger))
+    sc = scorecard(rows)
+    sc["live"] = live_summary(rows)
     if args.json:
         print(json.dumps(sc, indent=2))
         return 0
@@ -651,6 +729,13 @@ def cmd_scorecard(args) -> int:
     print("(bps, Rp 3M cost; share>0 is on net_k20)")
     print("status:", sc["status_counts"])
     print(sc["msci_st_progress"]["line"])
+    lv = sc["live"]
+    if lv["round_trips"] or lv["open_positions"]:
+        print(f"\nlive 1-lot (execution check, not evidence): {lv['round_trips']} closed, {lv['open_positions']} open")
+        if lv["round_trips"]:
+            print(f"  total net Rp {lv['total_net_idr']:+,.0f}; mean {fmt(lv['mean_live_net_bps'])} bps vs paper 1-lot "
+                  f"{fmt(lv['mean_paper_net_1lot_k20_bps_same_rows'])} bps on the same rows")
+        print(f"  slippage vs paper close: entry {fmt(lv['mean_entry_slip_bps'])} bps, exit {fmt(lv['mean_exit_slip_bps'])} bps")
     return 0
 
 
@@ -684,6 +769,15 @@ def build_parser() -> argparse.ArgumentParser:
     sc = sub.add_parser("scorecard", parents=[common], help="closed-trip summary")
     sc.add_argument("--json", action="store_true")
     sc.set_defaults(fn=cmd_scorecard)
+    rf = sub.add_parser("record-fill", parents=[common], help="record YOUR manual 1-lot fill (each side once)")
+    rf.add_argument("--review", required=True, help="e.g. MSCI-2026-11")
+    rf.add_argument("--ticker", required=True)
+    rf.add_argument("--side", required=True, choices=("buy", "sell"))
+    rf.add_argument("--px", required=True, type=float, help="your average fill price per share (IDR)")
+    rf.add_argument("--lots", type=int, default=1)
+    rf.add_argument("--at", help="fill date YYYY-MM-DD (default: today, WIB)")
+    rf.add_argument("--note", default="")
+    rf.set_defaults(fn=cmd_record_fill)
     return ap
 
 

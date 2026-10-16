@@ -341,3 +341,56 @@ def test_runtime_import_closure_excludes_order_paths():
     assert "index_events.paper_log" in loaded
     first_party = ("index_events", "lib", "strategy_fit", "screener", "runner", "strategy", "token_rotation", "study", "backtest")
     assert [m for m in loaded if m.split(".")[0] in first_party and _is_forbidden(m)] == []
+
+
+def _live_row(**over):
+    row = {c: "" for c in pl.COLUMNS}
+    row.update(review_label="MSCI-2026-11", index_name="MSCI_ST", ticker="CPIN", status="closed",
+               entry_px="5000", exit_px_k20="5200", net_1lot_k20="300")
+    row.update(over)
+    return row
+
+
+def test_record_fill_buy_then_sell_computes_net_after_fees_and_slippage():
+    bought = pl.apply_fill(_live_row(), "buy", 5050.0, 1, "2026-12-01", "closing auction")
+    assert bought["live_buy_px"] == "5050.00" and bought["live_lots"] == "1"
+    assert float(bought["live_entry_slip_bps"]) == pytest.approx(100.0)   # 5050 vs paper close 5000
+    sold = pl.apply_fill(bought, "sell", 5300.0, 1, "2027-01-04", "")
+    buy, sell = 5050 * 100, 5300 * 100
+    fee = buy * 0.0015 + sell * 0.0025
+    assert float(sold["live_fee_idr"]) == pytest.approx(round(fee))
+    assert float(sold["live_net_idr"]) == pytest.approx(round(sell - buy - fee))
+    assert float(sold["live_net_bps"]) == pytest.approx((sell - buy - fee) / buy * 1e4, abs=0.1)
+    assert float(sold["live_exit_slip_bps"]) == pytest.approx((5300 / 5200 - 1) * 1e4, abs=0.1)
+    assert sold["live_note"] == "closing auction"
+
+
+def test_record_fill_each_side_once_and_in_order():
+    with pytest.raises(SystemExit):
+        pl.apply_fill(_live_row(), "sell", 5000.0, 1, "2027-01-04", "")
+    bought = pl.apply_fill(_live_row(), "buy", 5000.0, 1, "2026-12-01", "")
+    with pytest.raises(SystemExit):
+        pl.apply_fill(bought, "buy", 5100.0, 1, "2026-12-01", "")
+    with pytest.raises(SystemExit):
+        pl.apply_fill(bought, "sell", 5100.0, 2, "2027-01-04", "")   # lots must match the buy
+    with pytest.raises(SystemExit):
+        pl.apply_fill(_live_row(), "buy", -1.0, 1, "2026-12-01", "")
+
+
+def test_record_fill_cli_leaves_planned_columns_and_scorecard_shows_live(tmp_path):
+    path = tmp_path / "ledger.csv"
+    other = _live_row(ticker="BUKA", index_name="MSCI_SC")
+    pl.write_ledger(path, [_live_row(), other])
+    before = pl.read_ledger(path)
+    for side, px, at in (("buy", "5050", "2026-12-01"), ("sell", "5300", "2027-01-04")):
+        assert pl.main(["record-fill", "--ledger", str(path), "--review", "MSCI-2026-11", "--ticker", "cpin",
+                        "--side", side, "--px", px, "--at", at]) == 0
+    after = pl.read_ledger(path)
+    pl.assert_planned_unchanged(before, after)
+    assert after[1] == before[1]                      # the other row is untouched
+    lv = pl.live_summary(after)
+    assert lv["round_trips"] == 1 and lv["open_positions"] == 0
+    assert lv["mean_paper_net_1lot_k20_bps_same_rows"] == pytest.approx(300.0)
+    with pytest.raises(SystemExit):                   # unknown ticker
+        pl.main(["record-fill", "--ledger", str(path), "--review", "MSCI-2026-11", "--ticker", "XXXX",
+                 "--side", "buy", "--px", "100"])
