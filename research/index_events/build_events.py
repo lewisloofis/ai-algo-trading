@@ -23,6 +23,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from index_events import INDEX_SYMBOLS
 from index_events.ftse_ticker_map import FTSE_TICKERS
 from index_events.msci_ticker_map import MSCI_TICKERS
 
@@ -53,10 +54,15 @@ EVENT_COLUMNS = [
 # Session calendar
 # ---------------------------------------------------------------------------
 
+def stock_files(daily_dir: Path = DAILY_DIR) -> list[Path]:
+    """Per-stock daily parquet files; index series (INDEX_SYMBOLS) are not stocks."""
+    return [f for f in sorted(Path(daily_dir).glob("*.parquet")) if f.stem not in INDEX_SYMBOLS]
+
+
 def trading_sessions(daily_dir: Path = DAILY_DIR, min_names: int = MIN_NAMES_TRADING) -> pd.DatetimeIndex:
     """Sorted union of dates on which >= min_names local files have a traded bar (volume > 0)."""
     counts: dict[str, int] = {}
-    for f in sorted(Path(daily_dir).glob("*.parquet")):
+    for f in stock_files(daily_dir):
         df = pd.read_parquet(f, columns=["date", "volume"])
         d = df.loc[pd.to_numeric(df["volume"], errors="coerce").fillna(0) > 0, "date"].astype(str)
         for x in set(d):
@@ -349,7 +355,7 @@ def finalize(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def local_tickers(daily_dir: Path = DAILY_DIR) -> set[str]:
-    return {p.stem for p in Path(daily_dir).glob("*.parquet")}
+    return {p.stem for p in stock_files(daily_dir)}
 
 
 def coverage_tables(ev: pd.DataFrame, have: set[str]) -> dict[str, pd.DataFrame]:

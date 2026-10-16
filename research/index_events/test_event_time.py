@@ -129,3 +129,18 @@ def test_is_suspended_needs_a_run_of_zero_volume_sessions():
     assert not is_suspended(np.array([100, 0, 100, 0, 0, 100], float))
     assert is_suspended(np.array([100, 0, 0, 0, 0, 0, 100], float))
     assert is_suspended(np.array([np.nan] * 5, float))
+
+
+def test_index_series_is_not_a_stock_in_the_panel(tmp_path):
+    from index_events import INDEX_SYMBOLS
+    from index_events.build_events import local_tickers, trading_sessions
+    dates = pd.bdate_range("2020-01-01", periods=5)
+    for sym in ("AAAA", "BBBB", "IHSG"):
+        pd.DataFrame({"date": dates.strftime("%Y-%m-%d"), "open": 1.0, "high": 1.0, "low": 1.0,
+                      "close": 1.0, "volume": 10.0}).to_parquet(tmp_path / f"{sym}.parquet")
+    assert "IHSG" in INDEX_SYMBOLS
+    assert set(et.load_hist(tmp_path)) == {"AAAA", "BBBB"}
+    assert local_tickers(tmp_path) == {"AAAA", "BBBB"}
+    # IHSG alone must not tip a date over the min-names threshold
+    assert len(trading_sessions(tmp_path, min_names=3)) == 0
+    assert len(trading_sessions(tmp_path, min_names=2)) == 5

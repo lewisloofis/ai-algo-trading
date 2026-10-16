@@ -19,7 +19,8 @@ import numpy as np
 import pandas as pd
 
 from index_events import event_legs as el
-from index_events.build_events import DAILY_DIR, EVENTS_CSV, OUT_DIR, RESEARCH, coverage_tables, local_tickers
+from index_events.build_events import (DAILY_DIR, EVENTS_CSV, OUT_DIR, RESEARCH, coverage_tables, local_tickers,
+                                       stock_files)
 
 DEV_END = pd.Timestamp("2021-12-31")
 HOLDOUT_START = pd.Timestamp("2022-01-01")
@@ -63,9 +64,14 @@ def split_events(ev: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 # Panel
 # ---------------------------------------------------------------------------
 
+def load_hist(daily_dir: Path = DAILY_DIR) -> dict[str, pd.DataFrame]:
+    """Per-stock daily frames; index series (INDEX_SYMBOLS, e.g. IHSG) are excluded."""
+    return {p.stem: pd.read_parquet(p) for p in stock_files(daily_dir)}
+
+
 def load_panel():
     from strategy_fit.families_idx_structural import build_panel, detect_limit_events, locked_up_entry
-    hist = {p.stem: pd.read_parquet(p) for p in sorted(DAILY_DIR.glob("*.parquet"))}
+    hist = load_hist()
     panel = build_panel(hist)
     lim_up = detect_limit_events(panel, "up").to_numpy()
     lock_next = locked_up_entry(panel).to_numpy()
@@ -327,7 +333,7 @@ def build_report(ev: pd.DataFrame, dev_res: pd.DataFrame, frz_res: pd.DataFrame,
       "are the untouched holdout: no statistic was computed on them (the code raises if one reaches the analysis). "
       "Freeze reviews (MSCI >= 2026-02, FTSE >= 2026-03) are a separate descriptive block.\n")
     P("**Market null**: equal-weight mean daily log return of all local-panel names that traded that day "
-      "(volume > 0, |daily return| <= 50%), excluding the event name. IHSG is not available yet. "
+      "(volume > 0, |daily return| <= 50%), excluding the event name. IHSG (index series) is excluded from the panel. "
       f"Panel: {len(ctx.symbols)} local names, {len(ctx.dates)} sessions "
       f"({ctx.dates[0].date()} .. {ctx.dates[-1].date()}). "
       "L2/L3 use the market's overnight (close to open) and intraday (open to close) means on the same name set, "

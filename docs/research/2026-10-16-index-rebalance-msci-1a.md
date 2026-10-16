@@ -4,7 +4,7 @@ Plan: [21-index-rebalance-event-study](../plans/21-index-rebalance-event-study.m
 
 **Development window only**: reviews announced <= 2021-12-31. Non-freeze reviews announced in 2022 or later are the untouched holdout: no statistic was computed on them (the code raises if one reaches the analysis). Freeze reviews (MSCI >= 2026-02, FTSE >= 2026-03) are a separate descriptive block.
 
-**Market null**: equal-weight mean daily log return of all local-panel names that traded that day (volume > 0, |daily return| <= 50%), excluding the event name. IHSG is not available yet. Panel: 299 local names, 6290 sessions (2000-10-17 .. 2026-10-15). L2/L3 use the market's overnight (close to open) and intraday (open to close) means on the same name set, so the five market legs sum exactly to the full-window market return. All returns in bps of log return.
+**Market null**: equal-weight mean daily log return of all local-panel names that traded that day (volume > 0, |daily return| <= 50%), excluding the event name. IHSG (index series) is excluded from the panel. Panel: 298 local names, 6284 sessions (2000-10-17 .. 2026-10-15). L2/L3 use the market's overnight (close to open) and intraday (open to close) means on the same name set, so the five market legs sum exactly to the full-window market return. All returns in bps of log return.
 
 ## 1. Data coverage
 
@@ -77,12 +77,12 @@ Cells with fewer than 12 reviews are **below floor** (descriptive only). Additio
 | leg | N | reviews | mean bps | median bps | share of L1-L4 | t (review-clustered) |
 |---|---|---|---|---|---|---|
 | L1 pre-announce | 15 | 12 | 262 | 314 | 45% | 1.44 |
-| L2 gap | 15 | 12 | 212 | 215 | 37% | 6.55 |
-| L3 first session | 15 | 12 | 31 | 95 | 5% | 0.47 |
-| L4 run-in | 15 | 12 | 74 | 84 | 13% | 0.60 |
-| **L1-L4 total** | 15 | 12 | 579 | 471 | 100% | 1.82 |
-| L5 post-passive | 15 | 12 | -249 | -414 |  | -0.47 |
-| full L1-L5 | 15 | 12 | 330 | 258 |  | 0.82 |
+| L2 gap | 15 | 12 | 212 | 215 | 37% | 6.54 |
+| L3 first session | 15 | 12 | 31 | 96 | 5% | 0.47 |
+| L4 run-in | 15 | 12 | 74 | 83 | 13% | 0.60 |
+| **L1-L4 total** | 15 | 12 | 579 | 471 | 100% | 1.81 |
+| L5 post-passive | 15 | 12 | -248 | -410 |  | -0.47 |
+| full L1-L5 | 15 | 12 | 331 | 265 |  | 0.82 |
 
 Reading: no reading applies
 
@@ -90,13 +90,13 @@ Reading: no reading applies
 
 | leg | N | reviews | mean bps | median bps | share of L1-L4 | t (review-clustered) |
 |---|---|---|---|---|---|---|
-| L1 pre-announce | 23 | 14 | -468 | -515 | 37% | -1.51 |
+| L1 pre-announce | 23 | 14 | -467 | -515 | 37% | -1.51 |
 | L2 gap | 23 | 14 | -146 | -97 | 12% | -3.35 |
 | L3 first session | 23 | 14 | -342 | -327 | 27% | -3.40 |
 | L4 run-in | 23 | 14 | -294 | -391 | 24% | -1.33 |
-| **L1-L4 total** | 23 | 14 | -1250 | -1272 | 100% | -3.73 |
-| L5 post-passive | 23 | 14 | 647 | 635 |  | 1.47 |
-| full L1-L5 | 23 | 14 | -603 | -721 |  | -1.43 |
+| **L1-L4 total** | 23 | 14 | -1249 | -1272 | 100% | -3.72 |
+| L5 post-passive | 23 | 14 | 647 | 637 |  | 1.47 |
+| full L1-L5 | 23 | 14 | -602 | -719 |  | -1.43 |
 
 Reading: deletions L1-L4 negative then L5 positive (L5 t < 2): pattern only, not supported
 
@@ -104,13 +104,13 @@ Reading: deletions L1-L4 negative then L5 positive (L5 t < 2): pattern only, not
 
 | leg | N | reviews | mean bps | median bps | share of L1-L4 | t (review-clustered) |
 |---|---|---|---|---|---|---|
-| L1 pre-announce | 80 | 18 | -208 | -180 | -68% | -1.77 |
+| L1 pre-announce | 80 | 18 | -208 | -181 | -68% | -1.77 |
 | L2 gap | 80 | 18 | 58 | 48 | 19% | 1.51 |
 | L3 first session | 80 | 18 | 134 | 51 | 44% | 1.01 |
 | L4 run-in | 80 | 18 | 321 | 312 | 105% | 0.55 |
 | **L1-L4 total** | 80 | 18 | 305 | 195 | 100% | -0.22 |
-| L5 post-passive | 80 | 18 | -92 | -45 |  | -0.38 |
-| full L1-L5 | 80 | 18 | 213 | 74 |  | -0.46 |
+| L5 post-passive | 80 | 18 | -91 | -44 |  | -0.38 |
+| full L1-L5 | 80 | 18 | 214 | 76 |  | -0.46 |
 
 Reading: no reading applies
 
@@ -118,13 +118,13 @@ Reading: no reading applies
 
 | leg | N | reviews | mean bps | median bps | share of L1-L4 | t (review-clustered) |
 |---|---|---|---|---|---|---|
-| L1 pre-announce | 101 | 25 | -422 | -226 | 29% | -1.82 |
+| L1 pre-announce | 101 | 25 | -421 | -226 | 29% | -1.82 |
 | L2 gap | 101 | 25 | -50 | -20 | 3% | -1.81 |
 | L3 first session | 101 | 25 | -55 | -38 | 4% | -1.79 |
-| L4 run-in | 101 | 25 | -943 | -907 | 64% | -5.24 |
-| **L1-L4 total** | 101 | 25 | -1470 | -1177 | 100% | -5.98 |
-| L5 post-passive | 101 | 25 | 558 | 316 |  | 1.52 |
-| full L1-L5 | 101 | 25 | -912 | -841 |  | -1.46 |
+| L4 run-in | 101 | 25 | -943 | -908 | 64% | -5.24 |
+| **L1-L4 total** | 101 | 25 | -1469 | -1177 | 100% | -5.99 |
+| L5 post-passive | 101 | 25 | 559 | 315 |  | 1.52 |
+| full L1-L5 | 101 | 25 | -911 | -841 |  | -1.46 |
 
 Reading: deletions L1-L4 negative then L5 positive (L5 t < 2): pattern only, not supported
 
@@ -132,13 +132,13 @@ Reading: deletions L1-L4 negative then L5 positive (L5 t < 2): pattern only, not
 
 | leg | N | reviews | mean bps | median bps | share of L1-L4 | t (review-clustered) |
 |---|---|---|---|---|---|---|
-| L1 pre-announce | 31 | 9 | -4 | -80 | -2% | 0.18 |
-| L2 gap | 31 | 9 | 50 | 6 | 22% | 1.69 |
+| L1 pre-announce | 31 | 9 | -5 | -81 | -2% | 0.18 |
+| L2 gap | 31 | 9 | 49 | 6 | 22% | 1.69 |
 | L3 first session | 31 | 9 | 128 | 92 | 58% | 2.25 |
 | L4 run-in | 31 | 9 | 48 | 8 | 22% | 0.71 |
-| **L1-L4 total** | 31 | 9 | 221 | 21 | 100% | 0.82 |
-| L5 post-passive | 31 | 9 | -320 | -336 |  | -0.44 |
-| full L1-L5 | 31 | 9 | -98 | -339 |  | 0.25 |
+| **L1-L4 total** | 31 | 9 | 221 | 22 | 100% | 0.82 |
+| L5 post-passive | 31 | 9 | -320 | -337 |  | -0.45 |
+| full L1-L5 | 31 | 9 | -99 | -336 |  | 0.25 |
 
 Reading: no reading applies [below floor: descriptive only]
 
@@ -146,13 +146,13 @@ Reading: no reading applies [below floor: descriptive only]
 
 | leg | N | reviews | mean bps | median bps | share of L1-L4 | t (review-clustered) |
 |---|---|---|---|---|---|---|
-| L1 pre-announce | 23 | 11 | -614 | -669 | 138% | -3.75 |
+| L1 pre-announce | 23 | 11 | -614 | -671 | 138% | -3.75 |
 | L2 gap | 23 | 11 | 13 | -14 | -3% | 1.24 |
 | L3 first session | 23 | 11 | -39 | -70 | 9% | -0.57 |
-| L4 run-in | 23 | 11 | 195 | -39 | -44% | -0.21 |
-| **L1-L4 total** | 23 | 11 | -445 | -754 | 100% | -2.35 |
-| L5 post-passive | 23 | 11 | -46 | -257 |  | 1.43 |
-| full L1-L5 | 23 | 11 | -491 | -337 |  | -0.07 |
+| L4 run-in | 23 | 11 | 195 | -38 | -44% | -0.21 |
+| **L1-L4 total** | 23 | 11 | -446 | -757 | 100% | -2.35 |
+| L5 post-passive | 23 | 11 | -46 | -258 |  | 1.43 |
+| full L1-L5 | 23 | 11 | -492 | -338 |  | -0.08 |
 
 Reading: anticipation (L1 share >= 50% of L1-L4 and |t| >= 2): promote H4 [below floor: descriptive only]
 
@@ -164,9 +164,9 @@ Reading: anticipation (L1 share >= 50% of L1-L4 and |t| >= 2): promote H4 [below
 | L2 gap | 9 | 8 | 55 | -7 | -19% | 0.97 |
 | L3 first session | 9 | 8 | 28 | 17 | -10% | 0.38 |
 | L4 run-in | 9 | 8 | 65 | 81 | -23% | 0.60 |
-| **L1-L4 total** | 9 | 8 | -287 | -420 | 100% | -0.40 |
-| L5 post-passive | 9 | 8 | -337 | -475 |  | -0.59 |
-| full L1-L5 | 9 | 8 | -624 | -895 |  | -0.56 |
+| **L1-L4 total** | 9 | 8 | -287 | -421 | 100% | -0.40 |
+| L5 post-passive | 9 | 8 | -337 | -476 |  | -0.59 |
+| full L1-L5 | 9 | 8 | -624 | -897 |  | -0.56 |
 
 Reading: L1-L4 total is not in the expected direction (additions > 0, deletions < 0): no anticipation / L2 / L4 reading [below floor: descriptive only]
 
@@ -174,13 +174,13 @@ Reading: L1-L4 total is not in the expected direction (additions > 0, deletions 
 
 | leg | N | reviews | mean bps | median bps | share of L1-L4 | t (review-clustered) |
 |---|---|---|---|---|---|---|
-| L1 pre-announce | 3 | 3 | -151 | -411 | 82% | -0.45 |
-| L2 gap | 3 | 3 | -26 | -15 | 14% | -1.74 |
-| L3 first session | 3 | 3 | -163 | -159 | 89% | -2.83 |
-| L4 run-in | 3 | 3 | 156 | 368 | -85% | 0.25 |
-| **L1-L4 total** | 3 | 3 | -184 | -163 | 100% | -0.19 |
-| L5 post-passive | 3 | 3 | 264 | 689 |  | 0.43 |
-| full L1-L5 | 3 | 3 | 80 | 886 |  | 0.05 |
+| L1 pre-announce | 3 | 3 | -151 | -411 | 81% | -0.45 |
+| L2 gap | 3 | 3 | -26 | -14 | 14% | -1.73 |
+| L3 first session | 3 | 3 | -164 | -159 | 88% | -2.82 |
+| L4 run-in | 3 | 3 | 155 | 369 | -84% | 0.25 |
+| **L1-L4 total** | 3 | 3 | -185 | -163 | 100% | -0.20 |
+| L5 post-passive | 3 | 3 | 264 | 688 |  | 0.43 |
+| full L1-L5 | 3 | 3 | 79 | 886 |  | 0.05 |
 
 Reading: deletions L1-L4 negative then L5 positive (L5 t < 2): pattern only, not supported [below floor: descriptive only]
 
@@ -209,16 +209,16 @@ Mean market-adjusted legs in bps per review x index x change:
 | review | index | change | N | L1 | L2 | L3 | L4 | L5 | L1-L4 | L5 sessions | sessions after p |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | FTSE-2026-09 | FTSE_GEIS | del | 11 | -205 | -113 | -46 | -828 | 2 | -1192 | 19-19 | 19 |
-| MSCI-2026-02 | MSCI_SC | del | 2 | 172 | -87 | -84 | -83 | 638 | -81 | 20-20 | 149 |
-| MSCI-2026-02 | MSCI_SC | migrate_in | 1 | 1448 | -358 | -184 | -465 | 1516 | 441 | 20-20 | 149 |
-| MSCI-2026-02 | MSCI_ST | migrate_out | 1 | 1448 | -358 | -184 | -465 | 1516 | 441 | 20-20 | 149 |
-| MSCI-2026-05 | MSCI_SC | del | 13 | -90 | -387 | 115 | -1980 | 444 | -2341 | 20-20 | 95 |
-| MSCI-2026-05 | MSCI_SC | migrate_in | 1 | -92 | -33 | 131 | -884 | 2837 | -877 | 20-20 | 95 |
-| MSCI-2026-05 | MSCI_ST | del | 5 | -4463 | -1003 | -106 | -2830 | 1287 | -8401 | 20-20 | 95 |
-| MSCI-2026-05 | MSCI_ST | migrate_out | 1 | -92 | -33 | 131 | -884 | 2837 | -877 | 20-20 | 95 |
-| MSCI-2026-08 | MSCI_SC | del | 9 | -1573 | -356 | -70 | -1725 | -734 | -3723 | 20-20 | 33 |
+| MSCI-2026-02 | MSCI_SC | del | 2 | 173 | -88 | -84 | -83 | 637 | -82 | 20-20 | 149 |
+| MSCI-2026-02 | MSCI_SC | migrate_in | 1 | 1448 | -358 | -184 | -466 | 1514 | 441 | 20-20 | 149 |
+| MSCI-2026-02 | MSCI_ST | migrate_out | 1 | 1448 | -358 | -184 | -466 | 1514 | 441 | 20-20 | 149 |
+| MSCI-2026-05 | MSCI_SC | del | 13 | -91 | -387 | 115 | -1979 | 445 | -2342 | 20-20 | 95 |
+| MSCI-2026-05 | MSCI_SC | migrate_in | 1 | -93 | -33 | 131 | -883 | 2839 | -878 | 20-20 | 95 |
+| MSCI-2026-05 | MSCI_ST | del | 5 | -4465 | -1003 | -106 | -2829 | 1288 | -8403 | 20-20 | 95 |
+| MSCI-2026-05 | MSCI_ST | migrate_out | 1 | -93 | -33 | 131 | -883 | 2839 | -878 | 20-20 | 95 |
+| MSCI-2026-08 | MSCI_SC | del | 9 | -1573 | -355 | -70 | -1725 | -733 | -3723 | 20-20 | 33 |
 | MSCI-2026-08 | MSCI_SC | migrate_in | 1 | -342 | -170 | 56 | -675 | 788 | -1130 | 20-20 | 33 |
-| MSCI-2026-08 | MSCI_ST | del | 1 | -600 | -9 | 154 | -376 | -760 | -831 | 20-20 | 33 |
+| MSCI-2026-08 | MSCI_ST | del | 1 | -600 | -9 | 154 | -376 | -760 | -832 | 20-20 | 33 |
 | MSCI-2026-08 | MSCI_ST | migrate_out | 1 | -342 | -170 | 56 | -675 | 788 | -1130 | 20-20 | 33 |
 
 Per event:
@@ -226,49 +226,49 @@ Per event:
 | review_label | index_name | change | ticker | L1 | L2 | L3 | L4 | L5 | l5_k | flag_locked_a1 |
 |---|---|---|---|---|---|---|---|---|---|---|
 | FTSE-2026-09 | FTSE_GEIS | del | BBYB | -300 | -35 | -125 | -922 | -781 | 19 | False |
-| FTSE-2026-09 | FTSE_GEIS | del | BJBR | -378 | -99 | 160 | -436 | 983 | 19 | False |
-| FTSE-2026-09 | FTSE_GEIS | del | BSDE | 275 | -195 | 192 | -403 | 92 | 19 | False |
+| FTSE-2026-09 | FTSE_GEIS | del | BJBR | -379 | -99 | 160 | -436 | 983 | 19 | False |
+| FTSE-2026-09 | FTSE_GEIS | del | BSDE | 275 | -195 | 192 | -403 | 93 | 19 | False |
 | FTSE-2026-09 | FTSE_GEIS | del | BTPS | -678 | -86 | 33 | 32 | 1451 | 19 | False |
-| FTSE-2026-09 | FTSE_GEIS | del | LPKR | -378 | -35 | -125 | -1653 | -819 | 19 | False |
-| FTSE-2026-09 | FTSE_GEIS | del | LPPF | -97 | -35 | -29 | -524 | 1405 | 19 | False |
+| FTSE-2026-09 | FTSE_GEIS | del | LPKR | -379 | -35 | -125 | -1653 | -819 | 19 | False |
+| FTSE-2026-09 | FTSE_GEIS | del | LPPF | -98 | -35 | -29 | -524 | 1406 | 19 | False |
 | FTSE-2026-09 | FTSE_GEIS | del | MNCN | -667 | -35 | -65 | -737 | -3974 | 19 | False |
 | FTSE-2026-09 | FTSE_GEIS | del | PNLF | -32 | -207 | -54 | -831 | 97 | 19 | False |
-| FTSE-2026-09 | FTSE_GEIS | del | SCMA | 1 | -129 | -157 | -1244 | 430 | 19 | False |
-| FTSE-2026-09 | FTSE_GEIS | del | SILO | 680 | -346 | -58 | -1123 | 604 | 19 | False |
-| FTSE-2026-09 | FTSE_GEIS | del | SMRA | -680 | -35 | -278 | -1267 | 530 | 19 | False |
-| MSCI-2026-02 | MSCI_SC | del | ACES | 854 | -112 | -85 | -282 | 153 | 20 | False |
-| MSCI-2026-02 | MSCI_SC | del | CLEO | -510 | -63 | -82 | 117 | 1123 | 20 | False |
-| MSCI-2026-02 | MSCI_SC | migrate_in | INDF | 1448 | -358 | -184 | -465 | 1516 | 20 | False |
-| MSCI-2026-02 | MSCI_ST | migrate_out | INDF | 1448 | -358 | -184 | -465 | 1516 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | AALI | 651 | -338 | -172 | -410 | 231 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | ANTM | 0 | -357 | 256 | -690 | -55 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | APIC | 3155 | -100 | 285 | -4652 | -3681 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | BANK | 693 | -875 | 489 | -5970 | 1574 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | BSDE | 169 | -399 | 162 | -349 | -376 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | DSNG | 258 | -229 | -131 | -1806 | 426 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | MIDI | 1174 | -479 | 87 | -360 | 476 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | MIKA | -501 | -574 | 299 | -135 | 1505 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | MSIN | -6240 | -228 | -130 | -3351 | 2148 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | SIDO | -510 | -276 | -111 | -259 | 761 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | SSMS | 570 | -155 | -655 | -4338 | 1432 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | TAPG | 709 | -416 | 514 | -989 | 572 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | del | TKIM | -1295 | -601 | 606 | -2428 | 760 | 20 | False |
-| MSCI-2026-05 | MSCI_SC | migrate_in | AMRT | -92 | -33 | 131 | -884 | 2837 | 20 | False |
-| MSCI-2026-05 | MSCI_ST | del | AMMN | -2391 | -964 | 106 | 50 | 452 | 20 | False |
-| MSCI-2026-05 | MSCI_ST | del | BREN | -4732 | -439 | -673 | 1507 | 420 | 20 | False |
-| MSCI-2026-05 | MSCI_ST | del | CUAN | -3665 | -1289 | 324 | -1809 | -656 | 20 | False |
-| MSCI-2026-05 | MSCI_ST | del | DSSA | -9525 | -780 | -310 | -6269 | 5898 | 20 | False |
-| MSCI-2026-05 | MSCI_ST | del | TPIA | -2002 | -1540 | 24 | -7630 | 320 | 20 | False |
-| MSCI-2026-05 | MSCI_ST | migrate_out | AMRT | -92 | -33 | 131 | -884 | 2837 | 20 | False |
-| MSCI-2026-08 | MSCI_SC | del | ARTO | -560 | -293 | -54 | -2471 | -811 | 20 | False |
-| MSCI-2026-08 | MSCI_SC | del | BUKA | 477 | -356 | -24 | -1024 | 561 | 20 | False |
-| MSCI-2026-08 | MSCI_SC | del | ESSA | 924 | -517 | -72 | -529 | -565 | 20 | False |
-| MSCI-2026-08 | MSCI_SC | del | FILM | -4931 | -514 | -269 | -1888 | -1725 | 20 | False |
+| FTSE-2026-09 | FTSE_GEIS | del | SCMA | 0 | -129 | -157 | -1244 | 431 | 19 | False |
+| FTSE-2026-09 | FTSE_GEIS | del | SILO | 679 | -346 | -58 | -1123 | 605 | 19 | False |
+| FTSE-2026-09 | FTSE_GEIS | del | SMRA | -680 | -35 | -278 | -1267 | 531 | 19 | False |
+| MSCI-2026-02 | MSCI_SC | del | ACES | 855 | -112 | -85 | -283 | 152 | 20 | False |
+| MSCI-2026-02 | MSCI_SC | del | CLEO | -509 | -63 | -83 | 116 | 1122 | 20 | False |
+| MSCI-2026-02 | MSCI_SC | migrate_in | INDF | 1448 | -358 | -184 | -466 | 1514 | 20 | False |
+| MSCI-2026-02 | MSCI_ST | migrate_out | INDF | 1448 | -358 | -184 | -466 | 1514 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | AALI | 649 | -338 | -172 | -409 | 232 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | ANTM | -1 | -357 | 256 | -689 | -54 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | APIC | 3153 | -101 | 285 | -4651 | -3680 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | BANK | 691 | -875 | 489 | -5969 | 1575 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | BSDE | 168 | -399 | 162 | -348 | -374 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | DSNG | 256 | -229 | -131 | -1804 | 427 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | MIDI | 1173 | -479 | 87 | -359 | 477 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | MIKA | -502 | -574 | 299 | -133 | 1506 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | MSIN | -6242 | -228 | -130 | -3350 | 2149 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | SIDO | -511 | -277 | -111 | -258 | 762 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | SSMS | 568 | -155 | -655 | -4337 | 1433 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | TAPG | 707 | -416 | 514 | -988 | 573 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | del | TKIM | -1297 | -601 | 605 | -2427 | 761 | 20 | False |
+| MSCI-2026-05 | MSCI_SC | migrate_in | AMRT | -93 | -33 | 131 | -883 | 2839 | 20 | False |
+| MSCI-2026-05 | MSCI_ST | del | AMMN | -2393 | -965 | 106 | 51 | 453 | 20 | False |
+| MSCI-2026-05 | MSCI_ST | del | BREN | -4734 | -440 | -673 | 1509 | 421 | 20 | False |
+| MSCI-2026-05 | MSCI_ST | del | CUAN | -3667 | -1290 | 324 | -1808 | -655 | 20 | False |
+| MSCI-2026-05 | MSCI_ST | del | DSSA | -9527 | -780 | -310 | -6268 | 5899 | 20 | False |
+| MSCI-2026-05 | MSCI_ST | del | TPIA | -2003 | -1540 | 24 | -7629 | 322 | 20 | False |
+| MSCI-2026-05 | MSCI_ST | migrate_out | AMRT | -93 | -33 | 131 | -883 | 2839 | 20 | False |
+| MSCI-2026-08 | MSCI_SC | del | ARTO | -560 | -293 | -54 | -2471 | -810 | 20 | False |
+| MSCI-2026-08 | MSCI_SC | del | BUKA | 477 | -355 | -24 | -1024 | 562 | 20 | False |
+| MSCI-2026-08 | MSCI_SC | del | ESSA | 924 | -517 | -72 | -529 | -564 | 20 | False |
+| MSCI-2026-08 | MSCI_SC | del | FILM | -4931 | -514 | -269 | -1888 | -1724 | 20 | False |
 | MSCI-2026-08 | MSCI_SC | del | HEAL | -2186 | -142 | -467 | -1269 | 518 | 20 | False |
-| MSCI-2026-08 | MSCI_SC | del | KPIG | -1631 | -284 | -129 | -1120 | -3395 | 20 | False |
-| MSCI-2026-08 | MSCI_SC | del | RATU | -946 | -631 | 154 | -1481 | 190 | 20 | False |
-| MSCI-2026-08 | MSCI_SC | del | SMGR | 102 | -371 | 221 | -577 | 989 | 20 | False |
-| MSCI-2026-08 | MSCI_SC | del | TCPI | -5407 | -92 | 14 | -5163 | -2364 | 20 | False |
+| MSCI-2026-08 | MSCI_SC | del | KPIG | -1631 | -284 | -129 | -1120 | -3394 | 20 | False |
+| MSCI-2026-08 | MSCI_SC | del | RATU | -946 | -630 | 154 | -1482 | 191 | 20 | False |
+| MSCI-2026-08 | MSCI_SC | del | SMGR | 102 | -371 | 221 | -578 | 989 | 20 | False |
+| MSCI-2026-08 | MSCI_SC | del | TCPI | -5407 | -92 | 14 | -5164 | -2364 | 20 | False |
 | MSCI-2026-08 | MSCI_SC | migrate_in | CPIN | -342 | -170 | 56 | -675 | 788 | 20 | False |
 | MSCI-2026-08 | MSCI_ST | del | GOTO | -600 | -9 | 154 | -376 | -760 | 20 | False |
 | MSCI-2026-08 | MSCI_ST | migrate_out | CPIN | -342 | -170 | 56 | -675 | 788 | 20 | False |
@@ -290,13 +290,13 @@ L3-L5 means (bps) and review-clustered t per cell, development window:
 
 | cell | events | reviews | floor | L3 mean (t) | L4 mean (t) | L5 mean (t) |
 |---|---|---|---|---|---|---|
-| MSCI_ST add | 15 | 12 | ok | 31 (0.47) | 74 (0.60) | -249 (-0.47) |
+| MSCI_ST add | 15 | 12 | ok | 31 (0.47) | 74 (0.60) | -248 (-0.47) |
 | MSCI_ST del | 23 | 14 | ok | -342 (-3.40) | -294 (-1.33) | 647 (1.47) |
-| MSCI_SC add | 80 | 18 | ok | 134 (1.01) | 321 (0.55) | -92 (-0.38) |
-| MSCI_SC del | 101 | 25 | ok | -55 (-1.79) | -943 (-5.24) | 558 (1.52) |
-| FTSE_ALL add | 31 | 9 | below | 128 (2.25) | 48 (0.71) | -320 (-0.44) |
+| MSCI_SC add | 80 | 18 | ok | 134 (1.01) | 321 (0.55) | -91 (-0.38) |
+| MSCI_SC del | 101 | 25 | ok | -55 (-1.79) | -943 (-5.24) | 559 (1.52) |
+| FTSE_ALL add | 31 | 9 | below | 128 (2.25) | 48 (0.71) | -320 (-0.45) |
 | FTSE_ALL del | 23 | 11 | below | -39 (-0.57) | 195 (-0.21) | -46 (1.43) |
 | FTSE_AW(L+M) add | 9 | 8 | below | 28 (0.38) | 65 (0.60) | -337 (-0.59) |
-| FTSE_AW(L+M) del | 3 | 3 | below | -163 (-2.83) | 156 (0.25) | 264 (0.43) |
+| FTSE_AW(L+M) del | 3 | 3 | below | -164 (-2.82) | 155 (0.25) | 264 (0.43) |
 
 Phase 0b only runs this descriptive step. The plan's rule for closing the family (no material L3-L5 move at MSCI-sized flows) and for promoting H4 applies to the cells above that are at or above the 12-review floor; cells below it are descriptive and cannot trigger either. Bars for the tickers listed in section 1.2 are still missing; the excluded counts in section 1.3 will change after the fetch.

@@ -442,3 +442,41 @@ separately, descriptive only.
 | date | change | by |
 |---|---|---|
 | | | |
+
+## 10. Results log (append-only; gates and cells are not edited here)
+
+### 10.1 H2 development run (2026-10-16)
+
+Report: [2026-10-16-index-rebalance-h2-dev.md](../research/2026-10-16-index-rebalance-h2-dev.md);
+numbers in `research/out_index_rebalance/h2_dev.json`. Development window only;
+the holdout was **not** run.
+
+| cell | trades / reviews | net, k=20 (bps, Rp 3M) | verdict |
+|---|---|---|---|
+| MSCI_ST | 23 / 14 | +650 (edge t 2.90) | `insufficient_n` (< 30 trades) |
+| MSCI_SC | 42 / 17 | +218 (t 1.71) | FAIL: G2, G4, G7 at every k |
+| FTSE | 12 / 7 | +303 (t 1.19) | `insufficient_n` |
+| IDX | 0 | — | `no_data` |
+| pooled | 77 / 25 | +360 (t 2.90, Holm p 0.028), net − IHSG +167 | PASS_DEV at k=20 only; FAIL at k=5, 10 |
+
+**§5 reading: only the pooled cell passes → not a candidate; investigate.**
+
+Investigation (diagnostic, not a gate):
+* **One review drives the IHSG-adjusted result.** MSCI-2020-05 (the COVID
+  low) has 11 trades averaging +1227 bps of edge. Without it the pooled k=20
+  cell has edge +329 (t 2.46), net +232, and **net − IHSG −35 bps**. Without
+  every 2020 review: net − IHSG +9.
+* G8 points the same way: net − IHSG is +353 bps when IHSG is below its
+  200-session average at `a`, and −57 bps when it is above.
+* Cost does not bind: G3 passes under all three cost variants in every scored cell.
+* The harness eligibility filter removes 69 of 147 pooled candidates (58 of
+  101 MSCI_SC). Turning it off is optimistic (floor-only cost for names
+  without ADV history) and is reported only as a sensitivity.
+
+**Decision (owner, 2026-10-16):** record as *investigate, not a candidate*.
+The holdout is **kept unspent**: no development cell qualifies under §5, so
+a holdout run could not produce a candidate. Next:
+1. Paper-log forward MSCI and FTSE deletions from the Nov-2026 MSCI review on
+   (no orders; MSCI deletions continue under the freeze, §0).
+2. Revisit when MSCI_ST reaches ≥ 30 trades (development + paper), or when
+   IDX events exist.
