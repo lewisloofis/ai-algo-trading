@@ -46,6 +46,11 @@ RECON_RUN_HINT = f"set -a && source .env.local && set +a && make -C {REPO_ROOT} 
 RECON_STALE_DAYS = 2
 """A reconciliation older than this many calendar days is shown amber, not green."""
 
+COLLECTOR_RECENT_TRADING_DAYS = 3
+"""The collector row's colour is set by this many most recent trading days. Older gaps in the
+health check's lookback are reported as a note: a closed, unrecoverable outage must not keep the
+row red for a month and hide a new one."""
+
 WIB_OFFSET_HOURS = 7
 """Jakarta time (Western Indonesia Time), UTC+7, no daylight saving."""
 

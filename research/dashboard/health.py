@@ -74,25 +74,32 @@ def collector_row(outcome: HealthOutcome) -> HealthRow:
         return not_checked_row(name, outcome.reason or "the health check did not run")
     doc = outcome.doc or {}
     days = doc.get("days") or []
-    trading = [d for d in days if d.get("status") != "skipped_non_trading_day"]
-    bad = [d for d in trading if d.get("status") != "ok"]
-    exit_code = int(doc.get("exit_code", 0))
-    if bad:
-        last_bad = max(d.get("date", "") for d in bad)
+    trading = sorted((d for d in days if d.get("status") != "skipped_non_trading_day"),
+                     key=lambda d: d.get("date", ""))
+    recent = trading[-config.COLLECTOR_RECENT_TRADING_DAYS:]
+    earlier = trading[:-config.COLLECTOR_RECENT_TRADING_DAYS]
+    recent_bad = [d for d in recent if d.get("status") != "ok"]
+    earlier_bad = [d for d in earlier if d.get("status") != "ok"]
+    if recent_bad:
         return HealthRow(
             name,
-            RED if exit_code >= 2 else AMBER,
-            f"No usable market data on {len(bad)} of the last {len(trading)} trading days "
-            f"(most recent bad day: {last_bad}).",
+            RED,
+            f"No usable market data on {len(recent_bad)} of the last {len(recent)} trading days "
+            f"(most recent bad day: {recent_bad[-1].get('date', '')}).",
         )
-    if exit_code == 1:
-        msgs = "; ".join(str(f.get("message", "")) for f in (doc.get("findings") or [])[:2])
-        return HealthRow(name, AMBER, f"Recording data every day, with a warning: {msgs}")
-    if exit_code >= 2:
-        msgs = "; ".join(str(f.get("message", "")) for f in (doc.get("findings") or [])[:2])
+    # Day-level failures are scored above; the rest (e.g. binary freshness) set the colour here.
+    other = [f for f in (doc.get("findings") or []) if f.get("check") != "zero_record_session"]
+    msgs = "; ".join(str(f.get("message", "")) for f in other[:2])
+    if any(f.get("severity") == "FAILURE" for f in other):
         return HealthRow(name, RED, f"The collector program on the server looks out of date: {msgs}")
+    note = ""
+    if earlier_bad:
+        note = (f" Note: {len(earlier_bad)} earlier trading days in the last {len(trading)} had no data "
+                f"(most recent: {earlier_bad[-1].get('date', '')}).")
+    if other:
+        return HealthRow(name, AMBER, f"Recording data every day, with a warning: {msgs}.{note}")
     return HealthRow(
-        name, GREEN, f"Recorded real market data on all {len(trading)} of the last {len(trading)} trading days."
+        name, GREEN, f"Recorded real market data on all {len(recent)} of the last {len(recent)} trading days.{note}"
     )
 
 
@@ -127,10 +134,11 @@ def daily_data_row(daily_dir: str, today: date) -> HealthRow:
             DAILY_REFRESH_HINT,
         )
     last: dict[str, date] = {}
+    last_traded: dict[str, date] = {}
     for path in files:
         try:
-            newest = pd.read_parquet(path, columns=["date"])["date"].astype(str).max()
-            last[os.path.basename(path)[:-8]] = date.fromisoformat(newest)
+            symbol = os.path.basename(path)[:-8]
+            last[symbol], last_traded[symbol] = _last_bar_and_trade(path)
         except (OSError, ValueError, KeyError):
             continue
     if not last:
@@ -143,7 +151,8 @@ def daily_data_row(daily_dir: str, today: date) -> HealthRow:
         )
     untradable = _untradable_stocks(daily_dir, today)
     flagged = set() if untradable is None else untradable & set(last)
-    ended = {s for s, d in last.items() if (newest_all - d).days > config.ENDED_DAYS} - flagged
+    # Judged on the last real trade: the feed can pad a dead stock with flat zero-volume bars for years.
+    ended = {s for s, d in last_traded.items() if (newest_all - d).days > config.ENDED_DAYS} - flagged
     active = {s: d for s, d in last.items() if s not in ended and s not in flagged}
     tail = _daily_notes(len(flagged), len(ended), untradable is None)
     behind_dates = [d for d in active.values() if (newest_all - d).days > config.FRESH_DAYS]
@@ -163,6 +172,20 @@ def daily_data_row(daily_dir: str, today: date) -> HealthRow:
         f"(most at {typical.isoformat()}). Backtests and charts for those stocks end there.{tail}",
         DAILY_REFRESH_HINT,
     )
+
+
+def _last_bar_and_trade(path: str) -> tuple[date, date]:
+    """
+    (newest bar, newest bar with volume > 0). Without a volume column, or with no traded bar
+    at all, the newest bar stands in for both, so the stock is judged as before.
+    """
+    df = pd.read_parquet(path)
+    dates = df["date"].astype(str)
+    newest = date.fromisoformat(dates.max())
+    if "volume" not in df.columns:
+        return newest, newest
+    traded = dates[pd.to_numeric(df["volume"], errors="coerce").fillna(0) > 0]
+    return newest, (date.fromisoformat(traded.max()) if len(traded) else newest)
 
 
 def _untradable_stocks(daily_dir: str, today: date) -> set[str] | None:

@@ -48,16 +48,45 @@ def test_collector_green_when_every_trading_day_has_data():
     assert row.state == GREEN and "2 of the last 2" in row.summary
 
 
+def bad(d):
+    return {"date": d, "status": "no_segments", "message": "m"}
+
+
+ZERO_RECORD = {"severity": "FAILURE", "check": "zero_record_session", "message": "m"}
+
+
 def test_collector_red_on_a_zero_data_week():
-    days = [{"date": f"2026-10-{d:02d}", "status": "no_segments", "message": "m"} for d in (8, 9, 12, 13)]
-    row = health.collector_row(doc(days, exit_code=2, findings=[{"message": "m"}]))
+    days = [bad(f"2026-10-{d:02d}") for d in (8, 9, 12, 13)]
+    row = health.collector_row(doc(days, exit_code=2, findings=[ZERO_RECORD] * 4))
     assert row.state == RED
-    assert "4 of the last 4" in row.summary and "2026-10-13" in row.summary
+    assert "3 of the last 3" in row.summary and "2026-10-13" in row.summary
+
+
+def test_collector_red_when_only_the_latest_day_is_bad():
+    days = [ok("2026-10-09"), ok("2026-10-12"), bad("2026-10-13")]
+    row = health.collector_row(doc(days, exit_code=2, findings=[ZERO_RECORD]))
+    assert row.state == RED and "1 of the last 3" in row.summary
+
+
+def test_collector_green_with_a_note_once_an_old_outage_is_closed():
+    days = [ok("2026-10-06"), bad("2026-10-07"), bad("2026-10-08"),
+            ok("2026-10-09"), ok("2026-10-12"), ok("2026-10-13")]
+    row = health.collector_row(doc(days, exit_code=2, findings=[ZERO_RECORD] * 2))
+    assert row.state == GREEN
+    assert "3 of the last 3" in row.summary
+    assert "2 earlier trading days" in row.summary and "2026-10-08" in row.summary
 
 
 def test_collector_amber_on_warnings_only():
-    row = health.collector_row(doc([ok("2026-10-13")], exit_code=1, findings=[{"message": "binary is 9 days old"}]))
+    warning = {"severity": "WARNING", "check": "binary_freshness", "message": "binary is 9 days old"}
+    row = health.collector_row(doc([ok("2026-10-13")], exit_code=1, findings=[warning]))
     assert row.state == AMBER and "binary is 9 days old" in row.summary
+
+
+def test_collector_red_on_a_failing_binary_check_even_with_recent_data():
+    failure = {"severity": "FAILURE", "check": "binary_freshness", "message": "artifact missing"}
+    row = health.collector_row(doc([ok("2026-10-13")], exit_code=2, findings=[failure]))
+    assert row.state == RED and "artifact missing" in row.summary
 
 
 def test_s3_freshness_colours():
@@ -205,6 +234,25 @@ def test_daily_data_lag_inside_ended_window_still_amber(tmp_path):
     _daily(tmp_path, "DEAD", "2021-07-02")
     row = health.daily_data_row(str(tmp_path), TODAY)
     assert row.state == AMBER and "1 of 4" in row.summary and "stopped trading" in row.summary
+
+
+def test_daily_data_zero_volume_padding_does_not_keep_a_dead_stock_active(tmp_path):
+    for n in "ABC":
+        _daily(tmp_path, n, "2026-10-14")
+    # GREN-shaped: last real trade in 2017, then flat zero-volume filler bars that stop a few days ago.
+    pd.DataFrame({"date": ["2017-06-16", "2026-10-08", "2026-10-09"], "close": [328.0] * 3,
+                  "volume": [1000, 0, 0]}).to_parquet(tmp_path / "PAD.parquet")
+    row = health.daily_data_row(str(tmp_path), TODAY)
+    assert row.state == GREEN
+    assert "All 3 trading stocks" in row.summary and "1 stock stopped trading" in row.summary
+
+
+def test_daily_data_todays_zero_volume_placeholder_is_not_a_lag(tmp_path):
+    for n in "ABC":
+        pd.DataFrame({"date": ["2026-10-13", "2026-10-14"], "close": [1.0, 1.0],
+                      "volume": [500, 0]}).to_parquet(tmp_path / f"{n}.parquet")
+    row = health.daily_data_row(str(tmp_path), TODAY)
+    assert row.state == GREEN and "up to 2026-10-14" in row.summary
 
 
 def _status(tmp_path, as_of, flags):
