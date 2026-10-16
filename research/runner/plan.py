@@ -86,6 +86,8 @@ def build_plan(cfg: Config, day: date, calendar=CALENDAR, now: Optional[datetime
         lines.append("        LIVE watch: every order event (submitted / partial / filled / rejected / cancelled) is pushed; "
                      "deleting the arm file stops the session; a dead live process is NEVER restarted")
     lines.append(f"  {cfg.post_close_at}  post-close:")
+    lines.append("        token rotation retry: the same ensure_tokens call (a no-op unless a session is stale or "
+                 "under 12h), so a morning network miss cannot leave recon on an expired token. A dry run does not call it.")
     for st in post_close_steps(cfg, ids):
         note = f"   [SKIPPED: {st['skip']}]" if st["skip"] else ""
         lines.append("        " + shlex.join(st["argv"]) + note)

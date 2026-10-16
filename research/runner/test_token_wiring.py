@@ -110,7 +110,7 @@ def test_immutable_env_is_replaced_not_mutated(env_cfg, clock, alerter, now):
 def test_rotation_is_recorded_in_the_state_file(env_cfg, clock, alerter, now):
     daily.rotate_tokens(env_cfg, DAY, clock, alerter, ensure=FakeEnsure(fresh_result(now, warnings=("w",))))
     st = daily.load_state(env_cfg.state_path(DAY), str(DAY))["token_rotation"]
-    assert st == {"ok": True, "refreshed": ["main"], "actions": [], "warnings": 1}
+    assert st == {"ok": True, "refreshed": ["main"], "actions": [], "warnings": 1, "transient": False}
 
 
 def test_dry_run_shows_the_step_and_calls_nothing(cfg, capsys, monkeypatch):
@@ -120,3 +120,60 @@ def test_dry_run_shows_the_step_and_calls_nothing(cfg, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "token rotation: token_rotation.ensure_tokens" in out and "A dry run does not call it" in out
     assert out.index("token rotation") < out.index("preflight:")
+
+
+# --- post-close retry (2026-10-16: a morning network miss left recon on an expired trading token) ---
+
+def _stub_post_close(monkeypatch, seen):
+    def fake(cfg, day, clock, ex, alerter, force=False):
+        seen.append(dict(cfg.env))
+        return 0
+    monkeypatch.setattr(daily, "post_close", fake)
+
+
+def test_post_close_retries_rotation_and_children_get_the_new_token(env_cfg, clock, alerter, now, monkeypatch):
+    seen = []
+    _stub_post_close(monkeypatch, seen)
+    vals = {"SB_TRADING_ACCESS_TOKEN": jwt(now.timestamp() + 20 * 3600)}
+    ens = FakeEnsure(EnsureResult(True, ("trading",), values=vals))
+    assert daily.post_close_phase(env_cfg, DAY, clock, None, alerter, ensure=ens) == 0
+    assert len(ens.calls) == 1
+    assert seen[0]["SB_TRADING_ACCESS_TOKEN"] == vals["SB_TRADING_ACCESS_TOKEN"]
+    st = daily.load_state(env_cfg.state_path(DAY), str(DAY))
+    assert st["token_rotation_post_close"]["refreshed"] == ["trading"]
+    assert "token_rotation" not in st                      # the morning record is never overwritten
+    assert "token rotation (post-close): rotated trading" in env_cfg.log_file.read_text()
+
+
+def test_post_close_retry_skipped_when_post_close_is_skipped(env_cfg, clock, alerter, monkeypatch):
+    _stub_post_close(monkeypatch, [])
+    ens = FakeEnsure(EnsureResult(True))
+    daily.post_close_phase(env_cfg, SAT, clock, None, alerter, ensure=ens)          # not a trading day
+    sp = env_cfg.state_path(DAY)
+    st = daily.load_state(sp, str(DAY))
+    st["post_close"] = {"at": "16:21"}
+    daily.save_state(sp, st)
+    daily.post_close_phase(env_cfg, DAY, clock, None, alerter, ensure=ens)          # already done today
+    assert ens.calls == []
+    daily.post_close_phase(env_cfg, DAY, clock, None, alerter, force=True, ensure=ens)
+    assert len(ens.calls) == 1                                                      # --force reruns, so it retries too
+
+
+def test_post_close_retry_crash_never_blocks_the_chain(env_cfg, clock, alerter, post, monkeypatch):
+    seen = []
+    _stub_post_close(monkeypatch, seen)
+    ens = FakeEnsure(raises=OSError("network down, SB_TRADING_REFRESH_TOKEN=secretvalue"))
+    assert daily.post_close_phase(env_cfg, DAY, clock, None, alerter, ensure=ens) == 0
+    assert len(seen) == 1                                                           # the chain still ran
+    t = "\n".join(texts(post))
+    assert "token rotation (post-close) crashed (OSError)" in t and "secretvalue" not in t
+
+
+def test_post_close_retry_action_reaches_the_review(env_cfg, now):
+    from runner import review_rules as rr
+    state = {"date": str(DAY), "preflight": {"ok": True}, "strategies": {}, "post_close": None,
+             "token_rotation_post_close": {"actions": ["trading refresh token expired; PIN login needed"]}}
+    facts = rr.build_facts(env_cfg, DAY, state, now.timestamp())
+    texts_ = [f["text"] for f in facts["flags"] if f["code"] == "token_action" and f["severity"] == "ALERT"]
+    assert texts_ == ["token rotation (post-close) needs a manual step: trading refresh token expired; PIN login needed"]
+    assert facts["token_rotation_post_close"]["actions"]

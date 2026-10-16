@@ -38,18 +38,22 @@ def _default_ensure(path, **kw):
     return ensure_tokens(path, **kw)
 
 
-def rotate_tokens(cfg: Config, day: date, clock: Clock, alerter: Alerter, ensure: Optional[Callable] = None) -> Config:
+def rotate_tokens(cfg: Config, day: date, clock: Clock, alerter: Alerter, ensure: Optional[Callable] = None,
+                  phase: str = "morning") -> Config:
     """Refresh .env.local's tokens before preflight (token_rotation.ensure_tokens) and return a Config
     whose env carries the new values (also applied in place when the env is a plain dict, so every later
     phase and child sees them). Names only are ever reported, never values. Never raises, never gates:
-    an unusable token still fails preflight, which fails closed."""
+    an unusable token still fails preflight, which fails closed.
+
+    ``phase`` labels the run in alerts and the state file: "morning" (before preflight) or
+    "post-close" (the retry before the post-close chain, see ``post_close_phase``)."""
     env_path = cfg.repo_root / ENV_FILE_NAME
     if not cfg.rotate_tokens or not env_path.exists():
         return cfg
     try:
         res = (ensure or _default_ensure)(env_path, now=clock.now().timestamp())
     except Exception as exc:  # noqa: BLE001 - nothing about a token may leak through an error
-        alerter.send(ALERT, f"{day} token rotation crashed ({type(exc).__name__}); preflight judges the existing tokens")
+        alerter.send(ALERT, f"{day} {_label(phase)} crashed ({type(exc).__name__}); the existing tokens are used")
         return cfg
     values = dict(res.values)
     if isinstance(cfg.env, MutableMapping):
@@ -57,20 +61,42 @@ def rotate_tokens(cfg: Config, day: date, clock: Clock, alerter: Alerter, ensure
     else:
         cfg = replace(cfg, env={**cfg.env, **values})
     if values or res.refreshed:
-        alerter.send(INFO, f"{day} token rotation: rotated " + (", ".join(res.refreshed) or "tokens"),
+        alerter.send(INFO, f"{day} {_label(phase)}: rotated " + (", ".join(res.refreshed) or "tokens"),
                      "updated: " + ", ".join(sorted(values)))
     else:
-        alerter.log("token rotation: nothing to rotate")
+        alerter.log(f"{_label(phase)}: nothing to rotate")
     if res.actions:
-        alerter.send(ALERT, f"{day} token rotation: ACTION REQUIRED", "\n".join(res.actions))
+        alerter.send(ALERT, f"{day} {_label(phase)}: ACTION REQUIRED", "\n".join(res.actions))
     if res.warnings:
-        alerter.send(WARN, f"{day} token rotation warnings", "\n".join(res.warnings))
+        alerter.send(WARN, f"{day} {_label(phase)} warnings", "\n".join(res.warnings))
     sp = cfg.state_path(day)
     state = load_state(sp, str(day))
-    state["token_rotation"] = {"ok": res.ok, "refreshed": list(res.refreshed), "actions": list(res.actions),
-                               "warnings": len(res.warnings)}
+    state[_STATE_KEYS.get(phase, f"token_rotation_{phase}")] = {
+        "ok": res.ok, "refreshed": list(res.refreshed), "actions": list(res.actions),
+        "warnings": len(res.warnings), "transient": bool(res.transient)}
     save_state(sp, state)
     return cfg
+
+
+_STATE_KEYS = {"morning": "token_rotation", "post-close": "token_rotation_post_close"}
+
+
+def _label(phase: str) -> str:
+    return "token rotation" if phase == "morning" else f"token rotation ({phase})"
+
+
+def post_close_phase(cfg: Config, day: date, clock: Clock, ex: Executor, alerter: Alerter, force: bool = False,
+                     ensure: Optional[Callable] = None) -> int:
+    """Retry token rotation, then run the post-close chain.
+
+    The morning rotation can miss (2026-10-16: a network error skipped the trading refresh, and the
+    16:20 recon then ran on an expired trading token). ensure_tokens only rotates sessions that are
+    stale or under the threshold, so the retry is a no-op when the morning run worked. It is skipped
+    when post-close itself is skipped (non-trading day, or already done without --force)."""
+    done = load_state(cfg.state_path(day), str(day)).get("post_close")
+    if CALENDAR.is_trading_day(day) and (force or not done):
+        cfg = rotate_tokens(cfg, day, clock, alerter, ensure, phase="post-close")
+    return post_close(cfg, day, clock, ex, alerter, force=force)
 
 
 def run_preflight_phase(cfg: Config, day: date, clock: Clock, alerter: Alerter,
@@ -136,7 +162,7 @@ def dispatch(cmd: str, cfg: Config, day: date, clock: Clock, ex: Executor, alert
     if cmd == "watch":
         return watch_sessions(cfg, day, clock, ex, alerter) if CALENDAR.is_trading_day(day) else 0
     if cmd == "post-close":
-        return post_close(cfg, day, clock, ex, alerter, force=force)
+        return post_close_phase(cfg, day, clock, ex, alerter, force=force)
     if cmd in ("all", "morning"):      # morning = all without the post-close wait (what launchd runs at 08:45)
         rc = 0
         if CALENDAR.is_trading_day(day):
@@ -149,7 +175,7 @@ def dispatch(cmd: str, cfg: Config, day: date, clock: Clock, ex: Executor, alert
                 rc = 1
             if cmd == "all":
                 wait_until(clock, at(day, cfg.post_close_at))
-                rc |= post_close(cfg, day, clock, ex, alerter, force=force)
+                rc |= post_close_phase(cfg, day, clock, ex, alerter, force=force)
         else:
             alerter.log(f"{cmd} {day}: not a trading day, nothing to do")
         return rc

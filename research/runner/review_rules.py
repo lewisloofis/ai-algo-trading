@@ -184,8 +184,10 @@ def build_facts(cfg: Config, day: date, state: dict, now_epoch: float, *, steps:
     elif not pre.get("ok"):
         flags.append(flag(ALERT, "preflight_failed", "preflight failed; the day was skipped"))
     rot = state.get("token_rotation") or {}
-    for action in rot.get("actions") or []:
-        flags.append(flag(ALERT, "token_action", f"token rotation needs a manual step: {action}"[:MAX_LINE]))
+    rot_pc = state.get("token_rotation_post_close") or {}
+    for label, r in (("token rotation", rot), ("token rotation (post-close)", rot_pc)):
+        for action in r.get("actions") or []:
+            flags.append(flag(ALERT, "token_action", f"{label} needs a manual step: {action}"[:MAX_LINE]))
     for name, result in steps:
         if str(result).startswith("FAILED"):
             flags.append(flag(WARN, "step_failed", f"post-close step {name} {result}"))
@@ -321,7 +323,8 @@ def build_facts(cfg: Config, day: date, state: dict, now_epoch: float, *, steps:
     flags.sort(key=lambda f: SEVERITY_ORDER[f["severity"]])
     counts = {sev: sum(1 for f in flags if f["severity"] == sev) for sev in (ALERT, WARN, INFO)}
     return {"schema": 1, "date": str(day), "counts": counts, "flags": flags, "preflight": pre,
-            "token_rotation": rot or None, "tokens": tokens, "sessions": sessions,
+            "token_rotation": rot or None, "token_rotation_post_close": rot_pc or None,
+            "tokens": tokens, "sessions": sessions,
             "steps": [{"name": n, "result": r} for n, r in steps], "fills": fills, "live_cap": live_cap,
             "positions": positions, "recon": recon, "scorecards": scorecards, "cost_report": cost,
             "log": log, "live_summary": list(live_summary or []),
