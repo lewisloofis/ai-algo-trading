@@ -11,3 +11,5 @@ PyYAML
 scikit-learn
 scipy
 statsmodels
+openpyxl
+xlrd
