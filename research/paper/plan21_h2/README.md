@@ -1,5 +1,7 @@
 # Plan 21 H2 paper forward log (PAPER ONLY, no orders)
 
+> **STOPPED 2026-10-16** by the owner after the MSCI_ST holdout FAIL (plan 21 §10.2). The ledger was never used and the reminders are removed. The code is kept, tested and inert, in case a future candidate needs an event-driven paper log.
+
 Frozen rule: plan 21 §3, §4.3, §9a. Ledger: `ledger.csv` (tracked, append-only; units are bps).
 Run everything from `research/`. Per MSCI review (example Nov-2026, announced 2026-11-11):
 

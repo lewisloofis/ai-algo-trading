@@ -505,3 +505,6 @@ result leaned on the 2020 crash-and-recovery (§10.1), not a lasting deletion
 effect. The paper log continues as pre-stated. It no longer has a candidate to
 feed, and no live money is warranted (owner rule: a live test needs a real
 chance of profit).
+
+**Paper log stopped (owner, 2026-10-16):** the Nov-2026 reminders were removed and the
+ledger was never used. `index_events.paper_log` is kept as inert, tested code.
