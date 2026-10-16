@@ -412,13 +412,20 @@ def decision(results: dict) -> dict:
 # Whole run
 # ---------------------------------------------------------------------------
 
-def run_window(ev: pd.DataFrame, env: Env, window: str = "dev") -> dict:
-    """All 15 cells, every sensitivity. ``ev`` must already be the window's events."""
+def run_window(ev: pd.DataFrame, env: Env, window: str = "dev", cells: tuple[str, ...] = CELLS) -> dict:
+    """The given cells (default all 15), every sensitivity. ``ev`` must already be the window's events.
+
+    A subset leaves the other cells uncomputed (plan 21 §9: the MSCI_ST holdout amendment
+    keeps the rest of the holdout unseen). Holm is then over the subset only and is not a gate.
+    """
     if window == "dev":
         guard_dev_events(ev)
-    results: dict = {c: {} for c in CELLS}
+    unknown = set(cells) - set(CELLS)
+    if unknown:
+        raise ValueError(f"unknown cells {sorted(unknown)}; choose from {CELLS}")
+    results: dict = {c: {} for c in cells}
     trades_out: list[pd.DataFrame] = []
-    for cell in CELLS:
+    for cell in cells:
         d = cell_events(ev, cell)
         if d.empty:
             for k in HOLDS:
@@ -440,8 +447,8 @@ def run_window(ev: pd.DataFrame, env: Env, window: str = "dev") -> dict:
             results[cell][k] = res
             if len(T):
                 trades_out.append(T.assign(cell=cell, k=k))
-    adj = holm_adjust({(c, k): cell_p(results[c][k]) for c in CELLS for k in HOLDS})
-    for c in CELLS:
+    adj = holm_adjust({(c, k): cell_p(results[c][k]) for c in cells for k in HOLDS})
+    for c in cells:
         for k in HOLDS:
             r = results[c][k]
             r["p_one_sided"] = cell_p(r)
@@ -449,8 +456,8 @@ def run_window(ev: pd.DataFrame, env: Env, window: str = "dev") -> dict:
             if r["status"] == "tested":
                 r["gates"] = {**r["gates"], "G7": bool(np.isfinite(r["p_holm"]) and r["p_holm"] < HOLM_ALPHA)}
             r["verdict"], r["failed_gates"] = verdict(r)
-    return {"window": window, "cells": results, "decision": decision(results),
-            "n_cells": len(CELLS) * len(HOLDS), "_trades": trades_out}
+    return {"window": window, "cells": results, "decision": decision(results) if cells == CELLS else None,
+            "n_cells": len(cells) * len(HOLDS), "_trades": trades_out}
 
 
 def _json_default(o):
@@ -472,7 +479,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--holdout", action="store_true",
                     help="plan 21 G5 holdout. Refuses to run unless research/out_index_rebalance/HOLDOUT_AUTHORIZED exists.")
+    ap.add_argument("--cells", default=",".join(CELLS),
+                    help="comma-separated subset of cells to compute (default all); others stay uncomputed")
     args = ap.parse_args(argv)
+    cells = tuple(c.strip() for c in args.cells.split(",") if c.strip())
     window = "holdout" if args.holdout else "dev"
     if args.holdout and not holdout_authorized():
         print(f"REFUSED: holdout run needs {HOLDOUT_FLAG} (owner authorization). Nothing was computed.", file=sys.stderr)
@@ -481,17 +491,40 @@ def main(argv: list[str] | None = None) -> int:
     ev = pd.read_csv(EVENTS_CSV, dtype=str, keep_default_na=False)
     sel = select_window(ev, window)
     env = load_env()
-    out = run_window(sel, env, window)
+    out = run_window(sel, env, window, cells)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    tag = "h2_dev" if window == "dev" else "h2_holdout"
+    tag = ("h2_dev" if window == "dev" else "h2_holdout") + ("" if cells == CELLS else "_" + "_".join(cells).lower())
     (OUT_DIR / f"{tag}.json").write_text(json.dumps(jsonable(out), indent=1, default=_json_default))
     if out["_trades"]:
         pd.concat(out["_trades"], ignore_index=True).to_csv(OUT_DIR / f"{tag}_trades.csv", index=False)
+    if cells != CELLS:
+        text = subset_summary(out)
+        (OUT_DIR / f"{tag}.md").write_text(text)
+        print(text)
+        return 0
     (OUT_DIR / f"{tag}.md").write_text(h2_report.render_full(out))
     if window == "dev":
         DOC_PATH.write_text(h2_report.render_doc(out))
     print(h2_report.render_full(out))
     return 0
+
+
+SUMMARY_KEYS = ("n", "reviews", "gross", "null", "edge", "t", "net_edge_cur", f"net_edge_{GATE_FIT}",
+                "net_edge_1lot", "net_minus_ihsg")
+
+
+def subset_summary(out: dict) -> str:
+    """Plain per-cell, per-hold lines for a --cells run (the full renderer assumes all 15 cells)."""
+    lines = [f"# H2 {out['window']} run, cells: {', '.join(out['cells'])} (bps)", ""]
+    for c, by_k in out["cells"].items():
+        for k, r in by_k.items():
+            m = r.get("metrics", {})
+            vals = "  ".join(f"{key}={m[key]:.1f}" if isinstance(m.get(key), float) else f"{key}={m.get(key)}"
+                             for key in SUMMARY_KEYS)
+            lines.append(f"{c} k={k} [{r['status']}] {vals}")
+            lines.append(f"    gates={r.get('gates')} drop_top5={m.get('drop5_net_edge_cur')}")
+            lines.append(f"    exclusions={r.get('exclusions')}")
+    return "\n".join(lines) + "\n"
 
 
 if __name__ == "__main__":

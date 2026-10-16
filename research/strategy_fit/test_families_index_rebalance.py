@@ -172,3 +172,13 @@ def test_ihsg_is_an_index_symbol_not_a_panel_stock():
     assert "IHSG" in INDEX_SYMBOLS
     panel = _panel()
     assert "IHSG" not in panel.symbols
+
+
+def test_run_window_rejects_unknown_cells_and_cli_subset_still_needs_authorization(tmp_path, monkeypatch):
+    import pandas as pd
+    import pytest
+    from strategy_fit import families_index_rebalance as fr
+    with pytest.raises(ValueError):
+        fr.run_window(pd.DataFrame(), env=None, window="holdout", cells=("NOPE",))
+    monkeypatch.setattr(fr, "HOLDOUT_FLAG", tmp_path / "HOLDOUT_AUTHORIZED")
+    assert fr.main(["--holdout", "--cells", "MSCI_ST"]) == 2

@@ -481,3 +481,27 @@ a holdout run could not produce a candidate. Next:
    (no orders; MSCI deletions continue under the freeze, §0).
 2. Revisit when MSCI_ST reaches ≥ 30 trades (development + paper), or when
    IDX events exist.
+
+### 10.2 MSCI_ST holdout (2026-10-16, run once under the §9 amendment `f08a804`)
+
+Output: `research/out_index_rebalance/h2_holdout_msci_st.{json,md}` and
+`_trades.csv`. Only MSCI_ST was computed. The authorization file was deleted
+after the run, so the other cells' holdout stays unseen.
+
+| k | trades / reviews | gross | edge | net (current / candidate / 1 lot) | net − IHSG |
+|---|---|---|---|---|---|
+| **20 (decisive)** | 14 / 9 | −260 | **−267** (t −0.6) | **−342 / −343 / −341** | **−163** |
+| 10 | 14 / 9 | −239 | −238 | −313 | −180 |
+| 5 | 14 / 9 | −79 | −74 | −149 | −131 |
+
+All bps. One event was excluded as not eligible. Floor: 23 + 14 = 37 trades across 23 reviews, so it is met.
+5 of the 14 trades made money; drop-top-5 net at k=20 is −965 bps. Every trade's gross and
+IHSG return was recomputed independently from the raw bars and matched exactly.
+
+**Verdict: FAIL on all three criteria** (edge ≤ 0, G3, G6). Per the amendment,
+**MSCI_ST H2 is closed.** The development-window rebound (+650 bps net at k=20)
+did not carry over to 2022–2025. The likeliest reading is that the 2014–2021
+result leaned on the 2020 crash-and-recovery (§10.1), not a lasting deletion
+effect. The paper log continues as pre-stated. It no longer has a candidate to
+feed, and no live money is warranted (owner rule: a live test needs a real
+chance of profit).
