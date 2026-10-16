@@ -1,6 +1,6 @@
 # Index-Rebalance Event Study: Pre-Registration
 
-> **Status:** 📝 Draft · pre-registration, **not frozen** · **Owner:** @lewis · **Updated:** 2026-10-16 (MSCI reclassification re-scope, §0)
+> **Status:** 🔒 Frozen 2026-10-16 (§9a) · pre-registration · **Owner:** @lewis · **Updated:** 2026-10-16 (MSCI reclassification re-scope, §0)
 > **Related:** [first-candidate shortlist](../research/2026-10-15-first-candidate-shortlist.md) (why the catalogue is exhausted) · [alpha-search-2026-10](../research/alpha-search-2026-10.md) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [18-alpha-and-infrastructure-split.md](./18-alpha-and-infrastructure-split.md) · [20-bnbr-forward-test-preregistration.md](./20-bnbr-forward-test-preregistration.md) (template) · [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md)
 
 > **What this is.** The data-sourcing plan and the frozen test rules for one
@@ -389,24 +389,30 @@ PDF is required before Phase 2. The error rate is reported.
 Frozen when the owner fills this in. Gates and cells are not edited after this
 line. Any later change is a new dated row with the reason.
 
-### 9a. Proposed freeze (DRAFT, unsigned, 2026-10-16)
+### 9a. Freeze (2026-10-16)
 
 Drafted after Phase 0b
 ([report](../research/2026-10-16-index-rebalance-msci-1a.md)). That run read
-only the development window, so the holdout is untouched. **Nothing below is in
-force until the owner signs the table at the end of this section.**
+only the development window, so the holdout is untouched. Signed by the owner
+(table at the end of this section).
 
-**Cells (the G7 Holm denominator is fixed here, 20 cells):**
+**Cells (the G7 Holm denominator is fixed here, 15 cells):**
 
 | hypothesis | providers | holds | cells |
 |---|---|---|---|
-| H1 additions, `close_{a+1}` → `close_p` | MSCI_ST, MSCI_SC, FTSE, IDX, pooled | one per provider (its own `p`) | 5 |
 | H2 deletions, `close_{p+1}` → `close_{p+1+k}` | MSCI_ST, MSCI_SC, FTSE, IDX, pooled | k ∈ {5, 10, 20} | 15 |
 
-* H1 still runs, even though §1a reads it as expected to fail (§5: an
-  expected fail is not a reason to drop it from the count).
+* **H1 is dropped from the gated test (owner decision, 2026-10-16).** §1a read
+  the additions as "priced in at the open": MSCI_ST L2 = +212 bps (t 6.5)
+  against L4 = +74 bps (t 0.6), and MSCI_SC/FTSE additions show no reliable
+  run-in. §1a's job is to decide which hypotheses are worth testing, and for
+  this reading it says H1 is expected to fail. H1's legs stay in the Phase 0b
+  report as descriptive results. H1 is not run on the holdout and is not
+  counted in G7. (The "promote H4" rule, the only §1a case that keeps H1 in
+  regardless, did not trigger.)
+* H3 stays a control (§1): reported, not gated.
 * IDX stays in the denominator although IDX events are not transcribed yet
-  (§2.3a gap accepted). If IDX is never run, the denominator stays 20, which is conservative.
+  (§2.3a gap accepted). If IDX is never run, the denominator stays 15, which is conservative.
 * MSCI_ST and MSCI_SC are separate providers for the §5 single-provider rule.
 * Deletions = `del` ∪ `migrate_out`; additions = `add` ∪ `migrate_in`. FTSE
   uses the L/M/S segment events; Micro-only moves and Mid↔Large moves are out.
@@ -431,7 +437,7 @@ separately, descriptive only.
 
 | date | change | by |
 |---|---|---|
-| | sign here to freeze §1–§4 + §9a | |
+| 2026-10-16 | Freeze §1–§4 as amended by §9a: 15 H2 cells, H1 dropped, §4.3 additions, windows. Gates and cells are not edited after this line. | @lewis (owner; instructed in session, entered by Claude) |
 
 | date | change | by |
 |---|---|---|
