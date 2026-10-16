@@ -438,6 +438,7 @@ separately, descriptive only.
 | date | change | by |
 |---|---|---|
 | 2026-10-16 | Freeze §1–§4 as amended by §9a: 15 H2 cells, H1 dropped, §4.3 additions, windows. Gates and cells are not edited after this line. | @lewis (owner; instructed in session, entered by Claude) |
+| 2026-10-16 | **MSCI_ST holdout amendment, written before any 2022–2025 return was computed.** Reason: MSCI_ST failed the development window only on the sample floor (23 trades / 14 reviews < 30; edge t 2.90, net +650 bps, G2/G3/G4/G6 all pass at k=20), and paper logging alone would take years to reach 30. **Test:** the frozen H2 rule, unchanged, cell MSCI_ST, k = 20, holdout window (reviews announced 2022-01-01 → 2025-12-31, non-freeze; counted before running: 15 events, 9 reviews), all frozen exclusions and costs. **PASS iff, on the holdout trades alone:** (1) mean edge > 0 (G5 sign); (2) G3: mean edge − cost > 0 under current coeffs, candidate coeffs and 1 lot; (3) G6: mean gross − cost − IHSG > 0. **Floor:** development + holdout trades ≥ 30 across ≥ 12 reviews. k = 5/10 and G4/G7/G8 are reported, not decisive. **Only MSCI_ST is computed**; the other cells' holdout stays unseen. Run once and record the result either way. A PASS makes MSCI_ST H2 a §5 candidate, so plan 22 (forward test, 1 lot) may be written. A FAIL closes MSCI_ST H2; the paper log continues. | @lewis (owner; instructed in session, entered by Claude) |
 
 | date | change | by |
 |---|---|---|
