@@ -13,7 +13,7 @@ hold). Impact basis (--impact-basis):
     (names with < 20 bars skipped, periods with no priceable name excluded and
     counted); the cell charges the MEAN of those per-period numbers.
   legacy_full_history: one median over names of the full-history per-name impact
-    (reproduces out_d1_xsec/).
+    (reproduces results/d1_xsec/).
 The full round trip is charged every period (an upper bound for a book that
 only partly turns over).
 
@@ -200,7 +200,7 @@ def main(argv=None) -> None:
     ap.add_argument("--label", default="production")
     ap.add_argument(
         "--impact-basis", default=impact.IMPACT_BASIS_TRAILING, choices=list(impact.IMPACT_BASES),
-        help="trailing_point_in_time (default) or legacy_full_history (reproduces out_d1_xsec/)",
+        help="trailing_point_in_time (default) or legacy_full_history (reproduces results/d1_xsec/)",
     )
     args = ap.parse_args(argv)
 

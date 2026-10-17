@@ -4,7 +4,7 @@ families we consider, which stocks are screened in, and which strategy + stock p
 
 Pure functions over already-loaded inputs. Every source is optional: a missing or unreadable file gives
 ``None`` plus a plain reason, and the page says "not checked" with the command that produces the file.
-Nothing is re-judged: gate results, edges and costs are read from ``out_shortlist/shortlist.json`` (written
+Nothing is re-judged: gate results, edges and costs are read from ``results/shortlist/shortlist.json`` (written
 by strategy_fit.shortlist_2026_10); stages come from the emitter registry's own ``status``; run state
 comes from live.py. Strategy ids are joined only between the emitter registry and the heartbeat files
 (both write the same id); runtime ids are never matched to research family names (strategy_map.py).
@@ -21,7 +21,7 @@ from typing import Any, Mapping, Sequence
 
 from dashboard import strategy_words as W
 
-SHORTLIST_REL = os.path.join("out_shortlist", "shortlist.json")
+SHORTLIST_REL = os.path.join("results/shortlist", "shortlist.json")
 STALE_AFTER_DAYS = 7
 TOP_COMBOS = 15
 GATE_KEYS = ("G2", "G3", "G4", "G5", "G7")

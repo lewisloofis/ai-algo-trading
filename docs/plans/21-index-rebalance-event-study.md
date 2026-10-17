@@ -449,7 +449,7 @@ separately, descriptive only.
 ### 10.1 H2 development run (2026-10-16)
 
 Report: [2026-10-16-index-rebalance-h2-dev.md](../research/2026-10-16-index-rebalance-h2-dev.md);
-numbers in `research/out_index_rebalance/h2_dev.json`. Development window only;
+numbers in `research/results/index_rebalance/h2_dev.json`. Development window only;
 the holdout was **not** run.
 
 | cell | trades / reviews | net, k=20 (bps, Rp 3M) | verdict |
@@ -484,7 +484,7 @@ a holdout run could not produce a candidate. Next:
 
 ### 10.2 MSCI_ST holdout (2026-10-16, run once under the §9 amendment `f08a804`)
 
-Output: `research/out_index_rebalance/h2_holdout_msci_st.{json,md}` and
+Output: `research/results/index_rebalance/h2_holdout_msci_st.{json,md}` and
 `_trades.csv`. Only MSCI_ST was computed. The authorization file was deleted
 after the run, so the other cells' holdout stays unseen.
 

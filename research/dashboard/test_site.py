@@ -59,8 +59,8 @@ def world(tmp_path, make_store):
     daily = tmp_path / "daily"
     daily.mkdir()
     research = tmp_path / "research"
-    (research / "out_d1" / "next_close").mkdir(parents=True)
-    (research / "out_d1" / "next_close" / "strategy_portfolio.md").write_text(REPORT)
+    (research / "results/d1" / "next_close").mkdir(parents=True)
+    (research / "results/d1" / "next_close" / "strategy_portfolio.md").write_text(REPORT)
     for i, sym in enumerate(("AAAA", "BBBB", "GOTO")):
         _bars(daily, sym, seed=i)
 

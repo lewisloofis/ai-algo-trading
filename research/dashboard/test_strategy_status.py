@@ -113,8 +113,8 @@ def test_missing_shortlist_and_universe_say_not_checked_with_commands(tmp_path):
 
 
 def test_unreadable_shortlist_is_not_checked(tmp_path):
-    (tmp_path / "out_shortlist").mkdir()
-    (tmp_path / "out_shortlist" / "shortlist.json").write_text("{not json")
+    (tmp_path / "results/shortlist").mkdir(parents=True)
+    (tmp_path / "results/shortlist" / "shortlist.json").write_text("{not json")
     sl, why = S.load_shortlist(str(tmp_path))
     assert sl is None and "could not be read" in why
 

@@ -3,8 +3,8 @@ strategy_fit/compare_costwin.py — before/after table for the point-in-time
 impact re-score (trailing 60-bar ADV and vol vs full-history).
 
     python -m strategy_fit.compare_costwin \
-        --old out_costwin/legacy_full_history \
-        --new out_costwin/trailing_point_in_time \
+        --old results/costwin/legacy_full_history \
+        --new results/costwin/trailing_point_in_time \
         --data-dir data/daily --use-calibrated
 
 Reads both runs' strategy_portfolio.json sidecars (single-name cells only; event

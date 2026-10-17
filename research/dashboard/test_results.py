@@ -87,19 +87,19 @@ def test_only_registered_dirs_are_considered(tmp_path):
     old = tmp_path / "out_live"
     old.mkdir()
     (old / "strategy_portfolio.md").write_text(REPORT.replace("2026-10-14", "2026-09-24"))
-    new = tmp_path / "out_d1" / "next_close"
+    new = tmp_path / "results/d1" / "next_close"
     new.mkdir(parents=True)
     (new / "strategy_portfolio.md").write_text(REPORT)
-    got = results.latest_report(str(tmp_path), ["out_d1/next_close"])
+    got = results.latest_report(str(tmp_path), ["results/d1/next_close"])
     assert got is not None and got.generated.startswith("2026-10-14")
     assert results.latest_report(str(tmp_path), ["out_nothing"]) is None
 
 
 def test_real_corrected_run_parses_if_present():
     here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(here, "..", "out_d1", "next_close", "strategy_portfolio.md")
+    path = os.path.join(here, "..", "results/d1", "next_close", "strategy_portfolio.md")
     if not os.path.exists(path):
-        pytest.skip("out_d1 not present")
+        pytest.skip("results/d1 not present")
     r = results.load_report(path)
     assert sum(1 for c in r.cells if c.gate == GATE_PASSED_ALL) == 10
     assert len(r.cells) > 1700

@@ -6,7 +6,7 @@ builds the panel, runs every pre-registered variant of families_idx_structural
 through the common gates, splits by market regime, and writes
 ``<outdir>/results.json`` + ``<outdir>/results.md``.
 
-    python -m strategy_fit.run_idx_structural --data-dir data/daily --outdir out_idx_structural
+    python -m strategy_fit.run_idx_structural --data-dir data/daily --outdir results/idx_structural
 
 Reads only the daily parquet files; writes only under --outdir.
 """
@@ -246,7 +246,7 @@ def lebaran_check(panel) -> list[dict]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="data/daily")
-    ap.add_argument("--outdir", default="out_idx_structural")
+    ap.add_argument("--outdir", default="results/idx_structural")
     a = ap.parse_args(argv)
     hist = load_hist(a.data_dir)
     last_date = max(pd.to_datetime(df["date"].astype(str)).max() for df in hist.values())

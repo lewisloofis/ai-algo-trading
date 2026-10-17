@@ -1,6 +1,6 @@
 # IDX alpha search — structural hypotheses, 2026-10
 
-> **Status:** research note, not a plan · **Data:** local daily bars `research/data/daily/*.parquet` (241 names, 2000-11 .. 2026-10-14; the 10-15 placeholder bar is dropped) · **Code:** `research/strategy_fit/families_idx_structural.py`, runner `run_idx_structural.py`, tests `test_families_idx_structural.py` (101) · **Raw output:** `research/out_idx_structural/results.{md,json}` · **No API, token or `.env*` file was touched.**
+> **Status:** research note, not a plan · **Data:** local daily bars `research/data/daily/*.parquet` (241 names, 2000-11 .. 2026-10-14; the 10-15 placeholder bar is dropped) · **Code:** `research/strategy_fit/families_idx_structural.py`, runner `run_idx_structural.py`, tests `test_families_idx_structural.py` (101) · **Raw output:** `research/results/idx_structural/results.{md,json}` · **No API, token or `.env*` file was touched.**
 
 ## 1. Bottom line
 
@@ -14,7 +14,7 @@
 
 ## 2. What was already tested (inventory)
 
-- Single-name daily: `daily_momentum` (1-day), `mean_reversion` (5-day), `volume_breakout`. Event: `gap_event`, `volume_spike_event`, `foreign_flow_spike_event`. Cross-sectional: 1-day-return rank IC. Pairs: cointegration. Intraday: ORB, intraday momentum, intraday mean-reversion. All hold <= 5 days, mostly 2024+ data. D1 entry killed every survivor (`out_d1/`, `out_d1_xsec/`, `out_costwin/`; `docs/research/2026-10-15-first-candidate-shortlist.md`: nothing qualifies).
+- Single-name daily: `daily_momentum` (1-day), `mean_reversion` (5-day), `volume_breakout`. Event: `gap_event`, `volume_spike_event`, `foreign_flow_spike_event`. Cross-sectional: 1-day-return rank IC. Pairs: cointegration. Intraday: ORB, intraday momentum, intraday mean-reversion. All hold <= 5 days, mostly 2024+ data. D1 entry killed every survivor (`results/d1/`, `results/d1_xsec/`, `results/costwin/`; `docs/research/2026-10-15-first-candidate-shortlist.md`: nothing qualifies).
 - **Not previously touched:** long-horizon (21–63 day) low-turnover factor books on the full 2000+ history, limit-class (ARA/ARB) events, dividend ex-date events, calendar windows, overnight/intraday decomposition, regime conditioning.
 
 **Data available locally:** daily OHLCV + value + foreign buy/sell + ex-date dividend per share (price is split-adjusted, **not** dividend-adjusted; dividends added back net of 10% withholding) for 241 names, 132 of them listed before 2010; 1-minute and tick-bar captures for ~7–10 names only (~53 sessions); no index series, no constituent history, no announcement dates, no delisted names before ~2021 (39 names end before 2026-10: 25 on 2021-07-02, ~10 in 2025, the rest scattered).
@@ -144,6 +144,6 @@ Share of days in the bear state over the sample: 30.7% (1,863 days), 18 episodes
 
 ## 9. Files
 
-- Added: `research/strategy_fit/families_idx_structural.py`, `research/strategy_fit/run_idx_structural.py`, `research/strategy_fit/test_families_idx_structural.py`, `research/out_idx_structural/{results.md,results.json}`, this note.
-- Reproduce: `cd research && python3 -m strategy_fit.run_idx_structural --data-dir <main checkout>/research/data/daily --outdir out_idx_structural` (about 6–8 min, no network).
+- Added: `research/strategy_fit/families_idx_structural.py`, `research/strategy_fit/run_idx_structural.py`, `research/strategy_fit/test_families_idx_structural.py`, `research/results/idx_structural/{results.md,results.json}`, this note.
+- Reproduce: `cd research && python3 -m strategy_fit.run_idx_structural --data-dir <main checkout>/research/data/daily --outdir results/idx_structural` (about 6–8 min, no network).
 - Nothing existing was modified. The data directory is gitignored and lives only in the main checkout, so the runner takes it as an argument.

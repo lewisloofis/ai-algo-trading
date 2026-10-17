@@ -12,7 +12,7 @@ the family-level rows are the catalogue's own 6 families x 5 holds, pooled
 across names (a family-level test, 30 hypotheses, Holm-corrected).
 
     cd research
-    python3 -m strategy_fit.shortlist_2026_10 --out-dir out_shortlist
+    python3 -m strategy_fit.shortlist_2026_10 --out-dir results/shortlist
 
 Definitions (all bps, per round trip, long-only, one position per name):
   gross      mean forward return of the sequential trades (enter close_{s+1},
@@ -62,7 +62,7 @@ MIN_N = 30
 ARB_PCT = 0.15                         # assumed daily auto-reject-below (stress only)
 TOP_K = 5
 
-# The cells the 2026-10-14 re-score flagged (out_d1/comparison.md) + 3 it killed.
+# The cells the 2026-10-14 re-score flagged (results/d1/comparison.md) + 3 it killed.
 MECHANICAL_SURVIVORS = [
     ("BIPI", "daily_momentum", 5), ("BRPT", "volume_breakout", 2),
     ("DEWA", "daily_momentum", 5), ("DSSA", "volume_breakout", 2),
@@ -567,7 +567,7 @@ def render_markdown(out: dict) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out-dir", default="out_shortlist")
+    ap.add_argument("--out-dir", default="results/shortlist")
     ap.add_argument("--as-of", default=None, help="last COMPLETE bar date (default: detected)")
     ap.add_argument("--skip-pooled", action="store_true")
     args = ap.parse_args(argv)

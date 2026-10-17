@@ -103,5 +103,5 @@ STAGE_NAMES = {
 STAGE_TONES = {"live": "green", "live_candidate": "amber", "paper": "grey", "study": "amber", "retired": "red"}
 STAGE_ORDER = ("live", "live_candidate", "paper", "study", "retired")
 
-REGENERATE_SHORTLIST = "cd research && python3 -m strategy_fit.shortlist_2026_10 --out-dir out_shortlist"
+REGENERATE_SHORTLIST = "cd research && python3 -m strategy_fit.shortlist_2026_10 --out-dir results/shortlist"
 REGENERATE_UNIVERSE = "make refresh-prices"

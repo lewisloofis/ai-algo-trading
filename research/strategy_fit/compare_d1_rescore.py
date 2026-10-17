@@ -8,7 +8,7 @@ for every PASS-eligible cell in the new run adds a top-5-trade concentration
 check (mean net excluding the 5 best trades).
 
     python -m strategy_fit.compare_d1_rescore --old out_live \
-        --new out_d1/next_close --legacy out_d1/lookahead_legacy \
+        --new results/d1/next_close --legacy results/d1/lookahead_legacy \
         --data-dir data/daily
 """
 

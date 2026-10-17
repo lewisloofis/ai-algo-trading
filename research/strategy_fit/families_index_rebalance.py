@@ -12,7 +12,7 @@ Cells (G7 Holm denominator, fixed): {MSCI_ST, MSCI_SC, FTSE, IDX, pooled} x k = 
 
 DEVELOPMENT WINDOW ONLY by default: non-freeze reviews announced <= 2021-12-31. The
 holdout (G5) is behind ``--holdout`` and refuses to run unless
-``research/out_index_rebalance/HOLDOUT_AUTHORIZED`` exists. ``guard_dev_events`` raises
+``research/results/index_rebalance/HOLDOUT_AUTHORIZED`` exists. ``guard_dev_events`` raises
 if a non-freeze review announced >= 2022-01-01 reaches the dev analysis.
 
     cd research && .venv/bin/python -m strategy_fit.families_index_rebalance
@@ -36,7 +36,7 @@ from strategy_fit.families_idx_structural import (
 from strategy_fit.shortlist_2026_10 import FITS, cluster_t, drop_top, holm, impact_bps, norm_sf
 
 REPO = RESEARCH.parent
-OUT_DIR = RESEARCH / "out_index_rebalance"
+OUT_DIR = RESEARCH / "results/index_rebalance"
 HOLDOUT_FLAG = OUT_DIR / "HOLDOUT_AUTHORIZED"
 DOC_PATH = REPO / "docs" / "research" / "2026-10-16-index-rebalance-h2-dev.md"
 
@@ -478,7 +478,7 @@ def jsonable(out: dict) -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--holdout", action="store_true",
-                    help="plan 21 G5 holdout. Refuses to run unless research/out_index_rebalance/HOLDOUT_AUTHORIZED exists.")
+                    help="plan 21 G5 holdout. Refuses to run unless research/results/index_rebalance/HOLDOUT_AUTHORIZED exists.")
     ap.add_argument("--cells", default=",".join(CELLS),
                     help="comma-separated subset of cells to compute (default all); others stay uncomputed")
     args = ap.parse_args(argv)

@@ -30,7 +30,7 @@ from index_events.msci_ticker_map import MSCI_TICKERS
 RESEARCH = Path(__file__).resolve().parents[1]
 DATA_DIR = RESEARCH / "data" / "index_events"
 DAILY_DIR = RESEARCH / "data" / "daily"
-OUT_DIR = RESEARCH / "out_index_events"
+OUT_DIR = RESEARCH / "results/index_events"
 EVENTS_CSV = DATA_DIR / "events.csv"
 
 MIN_NAMES_TRADING = 10

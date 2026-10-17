@@ -48,7 +48,7 @@ def render_list(d) -> str:
         f'<p class="small">Backtest results: strategy-fit run {esc(d.run.generated)}, using the corrected '
         f'{term_link("next-session-entry")}.</p>' if d.run else
         banner("warn", "No backtest results were found. Expected a corrected run in "
-               "<code>research/out_d1/next_close/strategy_portfolio.md</code> (see config.CORRECTED_RUN_DIRS). "
+               "<code>research/results/d1/next_close/strategy_portfolio.md</code> (see config.CORRECTED_RUN_DIRS). "
                "Family results below use the shortlist only."))
     body = (
         "<h1>Strategies</h1>"

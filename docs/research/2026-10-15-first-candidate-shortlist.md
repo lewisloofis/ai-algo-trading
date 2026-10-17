@@ -168,15 +168,15 @@ Single-name daily cells cannot be validated forward in any useful time. Per-trad
 * **Correction:** the pooled tests use Holm over 30 (smallest adjusted p 0.74). Name-level t's are reported with the expected count of the 2,985 cells that reach the same t by chance (WIFI 873, PTRO 697, DSSA 223; see JSON `expected_cells_ge_t_by_chance`). No name-level cell survives any correction.
 * **Survivorship:** the 199 names are currently listed; always-long nulls are therefore inflated (h60 null +517 bps) and edge-over-null is the number that matters.
 * **Selection:** the 2015-23 window is independent of the selection (the grid was run on 2024+), but the cells were not chosen blind to everything: the 2026-10-14 re-score is the selection step.
-* **Data hygiene (not fixed, out of scope):** the local parquet carries a 2026-10-15 in-progress bar for all 201 names with volume 0 and close equal to the prior close. `LocalParquetDataSource` does not drop it, so a grid run today would count a flat session. The emitter is unaffected (it uses bars strictly before the as-of day). Three out_d1 cells (BIPI, DSSA, TAPG) differ from the comparison.md numbers by 6-30 bps gross; the harness's own `run_single_name_family` on the current bars reproduces this note's figures exactly (BIPI 240.9, TAPG 210.0, DSSA 152.0, PTRO 375.2), so the bars were refreshed after that run (not verified).
+* **Data hygiene (not fixed, out of scope):** the local parquet carries a 2026-10-15 in-progress bar for all 201 names with volume 0 and close equal to the prior close. `LocalParquetDataSource` does not drop it, so a grid run today would count a flat session. The emitter is unaffected (it uses bars strictly before the as-of day). Three results/d1 cells (BIPI, DSSA, TAPG) differ from the comparison.md numbers by 6-30 bps gross; the harness's own `run_single_name_family` on the current bars reproduces this note's figures exactly (BIPI 240.9, TAPG 210.0, DSSA 152.0, PTRO 375.2), so the bars were refreshed after that run (not verified).
 
 ## 9. Reproduce
 
 ```bash
 cd research
 python3 -m pytest -q strategy_fit/test_shortlist_2026_10.py        # 5 tests, synthetic data
-python3 -m strategy_fit.shortlist_2026_10 --out-dir out_shortlist   # ~2.5 min; writes shortlist.json + shortlist.md
-python3 -m strategy_fit.shortlist_2026_10 --out-dir out_shortlist --skip-pooled   # name-level rows only, ~15 s
+python3 -m strategy_fit.shortlist_2026_10 --out-dir results/shortlist   # ~2.5 min; writes shortlist.json + shortlist.md
+python3 -m strategy_fit.shortlist_2026_10 --out-dir results/shortlist --skip-pooled   # name-level rows only, ~15 s
 ```
 
 Local data only (`research/data/daily/*.parquet`, no network, no credentials). `--as-of` pins the last complete bar (default: detected as 2026-10-14).

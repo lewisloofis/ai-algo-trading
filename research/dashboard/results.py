@@ -1,7 +1,7 @@
 """
 dashboard/results.py — read a strategy-fit run's ``strategy_portfolio.md``.
 
-The corrected re-score (research/out_d1) was published as markdown only: the
+The corrected re-score (research/results/d1) was published as markdown only: the
 machine-readable ``strategy_portfolio.json`` sidecar was not kept. So the
 dashboard reads the report's own two tables:
 

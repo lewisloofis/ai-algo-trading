@@ -30,7 +30,7 @@ EXCLUDED_STORES: frozenset[str] = frozenset({"2026-10-14-limitprobe.db"})
 # shown as current results. Older out_* directories (e.g. out_live) used the same-close entry
 # that cannot be traded and must not be added here. When a newer corrected run is produced,
 # add its directory; the newest "Generated:" time wins.
-CORRECTED_RUN_DIRS: tuple[str, ...] = ("out_d1/next_close",)
+CORRECTED_RUN_DIRS: tuple[str, ...] = ("results/d1/next_close",)
 
 # How long to let the collector health check run (it builds a binary and reads S3).
 HEALTHCHECK_TIMEOUT_S = 900

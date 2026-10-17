@@ -7,7 +7,7 @@ reviews announced in 2022 or later are never passed to any statistic;
 2026-02, FTSE >= 2026-03) are a separate descriptive block.
 
 CLI: cd research && .venv/bin/python -m index_events.event_time
-Writes out_index_events/*.png, legs_dev.csv, legs_freeze.csv and
+Writes results/index_events/*.png, legs_dev.csv, legs_freeze.csv and
 docs/research/2026-10-16-index-rebalance-msci-1a.md.
 """
 from __future__ import annotations
@@ -391,7 +391,7 @@ def build_report(ev: pd.DataFrame, dev_res: pd.DataFrame, frz_res: pd.DataFrame,
     P("Mean (solid) and median (dashed) market-adjusted cumulative log return; band = event mean +/- 2 SE, "
       "SE from review means (events averaged within a review first).\n")
     for f in plots:
-        P(f"![{f.stem}](../../research/out_index_events/{f.name})\n")
+        P(f"![{f.stem}](../../research/results/index_events/{f.name})\n")
 
     # ---- freeze
     P("## 4. Freeze block (descriptive)\n")

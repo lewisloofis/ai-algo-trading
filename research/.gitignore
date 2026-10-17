@@ -3,8 +3,8 @@ out_live/
 data/intraday/
 __pycache__/
 *.pyc
-out_fixture/
+results/fixture/
 # Regenerable strategy-fit run artefacts: the .md report is committed, the
 # multi-MB JSON and the run logs are not.
-out_*/**/strategy_portfolio.json
-out_*/*.log
+results/**/strategy_portfolio.json
+results/*/*.log

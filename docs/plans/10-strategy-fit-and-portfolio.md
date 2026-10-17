@@ -501,7 +501,7 @@ refreshed local bars; it now uses a fixed far-future day (unrelated to D1).
 
 **Re-score.** 115 names = the 2026-09-24 run's real universe (all have local parquet), 
 `--use-calibrated`, local bars through 2026-10-14 (the run it is compared with ended
-2026-09-24), output `research/out_d1/` (`next_close/`, `next_open/`, `lookahead_legacy/` =
+2026-09-24), output `research/results/d1/` (`next_close/`, `next_open/`, `lookahead_legacy/` =
 old convention on the same new data, `comparison*.md`). Daily + event cells only.
 
 | previously surviving cell | old gross / net / edge-over-null | legacy on new data (gross) | NEW next_close gross / net / edge-over-null | NEW status |
@@ -536,7 +536,7 @@ always `long_short_infeasible`); it now also records a top-quintile long-leg DIA
 an equal-weight-universe null on the same entry/hold/periods, so a beta-to-trend read is
 possible. Status is unchanged (`long_short_infeasible`, never scored as tradeable).
 
-**Re-score** (115 names, `--use-calibrated`, bars to 2026-10-14, `research/out_d1_xsec/`,
+**Re-score** (115 names, `--use-calibrated`, bars to 2026-10-14, `research/results/d1_xsec/`,
 `strategy_fit/compare_d1_xsec.py`; cost = median floor 84.1 bps + median impact 1.9 bps, full
 round trip each period). Long top-quintile, net of cost, vs equal-weight null, paired t:
 
@@ -574,13 +574,13 @@ only genuinely new listings lose trades (AADI, CBDK, RATU: 85 trades). The hurdl
 impact, so the cell charges the MEAN per-trade impact (`modelled_impact_bps`; median in
 `impact_median_bps`). Cross-sectional: per rebalance day, median over names of the same trailing
 impact, mean over periods. `--impact-basis legacy_full_history` reproduces the old numbers (the
-legacy re-score matches `out_d1/` row for row). Not changed: event cells (they charge no impact at
+legacy re-score matches `results/d1/` row for row). Not changed: event cells (they charge no impact at
 all, `MODELLED_IMPACT_BPS = 0`), intraday cells (own 1-min helpers, same full-history ADV; not in the
 offline path), `execution_lag.py` (historical PTRO study, stays full-history). Live side:
 `target_emitter.py` and `strategy/` compute no ADV/vol (the emitter passes a fixed
 `max_participation_rate` = 5%), so there is nothing to align.
 
-**Re-score** (115 names, `--use-calibrated`, `next_close`, `research/out_costwin/`, `comparison.md`):
+**Re-score** (115 names, `--use-calibrated`, `next_close`, `research/results/costwin/`, `comparison.md`):
 
 | | old (full-history) | new (trailing PIT, mean/trade) |
 |---|---|---|

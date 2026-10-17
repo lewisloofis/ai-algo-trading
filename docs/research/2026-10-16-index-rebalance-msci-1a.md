@@ -188,11 +188,11 @@ Reading: deletions L1-L4 negative then L5 positive (L5 t < 2): pattern only, not
 
 Mean (solid) and median (dashed) market-adjusted cumulative log return; band = event mean +/- 2 SE, SE from review means (events averaged within a review first).
 
-![event_time_msci_st](../../research/out_index_events/event_time_msci_st.png)
+![event_time_msci_st](../../research/results/index_events/event_time_msci_st.png)
 
-![event_time_msci_sc](../../research/out_index_events/event_time_msci_sc.png)
+![event_time_msci_sc](../../research/results/index_events/event_time_msci_sc.png)
 
-![event_time_ftse_all](../../research/out_index_events/event_time_ftse_all.png)
+![event_time_ftse_all](../../research/results/index_events/event_time_ftse_all.png)
 
 ## 4. Freeze block (descriptive)
 
