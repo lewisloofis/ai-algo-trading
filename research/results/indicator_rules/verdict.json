@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "verdicts": [
+    {
+      "family_id": "indicator_rules",
+      "outcome": "FAIL",
+      "decided": "2026-10-17",
+      "source": "plan 24 §10.1",
+      "doc": "docs/plans/24-classic-indicator-rules.md",
+      "summary": "all 5 textbook rules FAIL development (Holm p ≥ 0.32); timing beats random by less than the ~91–95 bps round trip"
+    }
+  ]
+}

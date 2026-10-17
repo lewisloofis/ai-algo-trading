@@ -176,6 +176,74 @@ def test_fingerprint_ignores_heartbeat_mtime_but_sees_outcome_and_db_changes(tmp
     assert serve.fingerprint(str(runs), str(daily)) != base
 
 
+def _research_world(tmp_path):
+    runs, daily = tmp_path / "runs", tmp_path / "daily"
+    results, plans = tmp_path / "research" / "results", tmp_path / "repo" / "docs" / "plans"
+    git = tmp_path / "repo" / ".git"
+    for d in (runs, daily, results / "s1", plans, git / "refs" / "heads"):
+        d.mkdir(parents=True)
+    (plans / "01-x.md").write_text("plan")
+    (git / "HEAD").write_text("ref: refs/heads/main\n")
+    (git / "refs" / "heads" / "main").write_text("a" * 40 + "\n")
+
+    def fp():
+        return serve.fingerprint(str(runs), str(daily), results_dir=str(results),
+                                 plans_dir=str(plans), git_dir=str(git))
+    return fp, results, plans, git
+
+
+def test_fingerprint_sees_new_verdict_but_not_identical_resave(tmp_path):
+    fp, results, _plans, _git = _research_world(tmp_path)
+    base = fp()
+    v = results / "s1" / "verdict.json"
+    v.write_text('{"schema": 1, "verdicts": []}')
+    added = fp()
+    assert added != base
+    v.write_text('{"schema": 1, "verdicts": []}')
+    os.utime(v, (1, 1))
+    assert fp() == added
+    v.write_text('{"schema": 1, "verdicts": [1]}')
+    assert fp() != added
+
+
+def test_fingerprint_sees_plan_touch_and_new_plan(tmp_path):
+    fp, _results, plans, _git = _research_world(tmp_path)
+    base = fp()
+    os.utime(plans / "01-x.md", (5, 5))
+    changed = fp()
+    assert changed != base
+    (plans / "02-y.md").write_text("new")
+    assert fp() != changed
+
+
+def test_fingerprint_sees_head_ref_and_commit_changes(tmp_path):
+    fp, _results, _plans, git = _research_world(tmp_path)
+    base = fp()
+    (git / "refs" / "heads" / "main").write_text("b" * 40 + "\n")
+    assert fp() != base
+    base = fp()
+    (git / "HEAD").write_text("c" * 40 + "\n")  # detached
+    assert fp() != base
+
+
+def test_fingerprint_reads_packed_refs_when_ref_file_is_missing(tmp_path):
+    fp, _results, _plans, git = _research_world(tmp_path)
+    (git / "refs" / "heads" / "main").unlink()
+    (git / "packed-refs").write_text("# pack-refs\n" + "d" * 40 + " refs/heads/main\n")
+    packed = fp()
+    (git / "packed-refs").write_text("# pack-refs\n" + "e" * 40 + " refs/heads/main\n")
+    assert fp() != packed
+
+
+def test_fingerprint_without_git_or_research_dirs_is_fine(tmp_path):
+    runs, daily = tmp_path / "runs", tmp_path / "daily"
+    runs.mkdir()
+    daily.mkdir()
+    gone = str(tmp_path / "nope")
+    fp = serve.fingerprint(str(runs), str(daily), results_dir=gone, plans_dir=gone, git_dir=gone)
+    assert fp == serve.fingerprint(str(runs), str(daily), results_dir=gone, plans_dir=gone, git_dir=gone)
+
+
 # --- end to end over an ephemeral localhost port ------------------------------
 
 @pytest.fixture

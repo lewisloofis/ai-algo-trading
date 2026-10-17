@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "verdicts": [
+    {
+      "family_id": "obi_ofi_tick",
+      "outcome": "NO_GO",
+      "decided": "2026-06-19",
+      "source": "plan 06 (plans 04, 05)",
+      "doc": "docs/plans/06-fill-simulator-and-backtest.md",
+      "summary": "every cell −51 to −99 bps/trade, gross already negative; plan 04 OBI INCONCLUSIVE (18 independent moves); plan 05 OFI_NO_GAIN"
+    }
+  ]
+}

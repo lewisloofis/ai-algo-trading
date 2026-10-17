@@ -128,11 +128,12 @@ def test_values_are_escaped():
 def test_family_rows_cover_catalog_and_derive_result_from_data():
     pooled = ({"family": "daily_momentum", "hold": 5, "names": 199, "edgenet_1lot": -86.0, "p_holm_30": 1.0},)
     sl = S.Shortlist("2026-10-14", 199, (row(),), pooled)
-    rows = {f.family_id: f for f in F.family_rows([], sl, reg(spec("p1", "paper")))}
+    vd = _verdicts(("mean_reversion", "FAIL", "z"))
+    rows = {f.family_id: f for f in F.family_rows([], sl, reg(spec("p1", "paper")), vd)}
     from strategy_fit.catalog_meta import ALL_FAMILIES
     assert {m.family_id for m in ALL_FAMILIES} <= set(rows)
     assert rows["daily_momentum"].headline == "1 name(s) on paper"
-    assert rows["mean_reversion"].headline == "Not scored in the latest run"
+    assert rows["mean_reversion"].headline == "Failed its test"  # outcome outranks "not scored"
     assert rows["multi_week_trend"].headline == "Not testable yet"
     assert any("-86" in e for e in rows["daily_momentum"].evidence)
 
@@ -158,3 +159,76 @@ def test_built_page_has_recent_runs_last_and_overview_has_no_history(world):  # 
     page = text(out, "strategies.html")
     assert page.index("Promising strategy") < page.index("Recent runs")
     assert "zz_done" in page and "zz_done" not in text(out, "index.html")
+
+
+def test_every_catalog_family_has_words_and_no_side_list():
+    from dashboard import strategy_words as W
+    from strategy_fit.catalog_meta import ALL_FAMILIES
+    assert not hasattr(W, "EXTRA_FAMILIES"), "uncatalogued families belong in catalog_meta"
+    assert {m.family_id for m in ALL_FAMILIES} == set(W.FAMILY_WORDS)
+
+
+def _verdicts(*vs, problems=()):
+    from strategy_fit.study_verdicts import Loaded, Verdict
+    return Loaded({v[0]: Verdict(v[0], v[1], "2026-10-15", "plan 99 §1", "docs/plans/README.md", v[2]) for v in vs},
+                  tuple(problems))
+
+
+def test_family_rows_show_test_outcome():
+    vd = _verdicts(("mean_reversion", "FAIL", "TINS fails cost gate"), ("obi_ofi_tick", "NO_GO", "x"),
+                   ("factor_books", "INCONCLUSIVE", "y"))
+    rows = {f.family_id: f for f in F.family_rows([], None, reg(), vd)}
+    mr = rows["mean_reversion"]
+    assert mr.test_outcome == "FAIL"
+    assert (mr.headline, mr.tone) == ("Failed its test", "red")
+    assert mr.evidence[0] == "Test (2026-10-15, plan 99 §1): TINS fails cost gate"
+    assert rows["obi_ofi_tick"].headline == "Failed its test (no-go)"
+    assert (rows["factor_books"].headline, rows["factor_books"].tone) == ("Inconclusive: needs more data", "amber")
+    assert rows["multi_week_trend"].headline == "Not testable yet"
+    assert rows["multi_week_trend"].test_outcome == "untested"
+
+
+def test_paper_names_outrank_family_test_outcome():
+    vd = _verdicts(("daily_momentum", "FAIL", "no edge"))
+    rows = {f.family_id: f for f in F.family_rows([], None, reg(spec("p1", "paper")), vd)}
+    assert rows["daily_momentum"].headline == "1 name(s) on paper"
+    assert any(e.startswith("Test (") for e in rows["daily_momentum"].evidence)
+
+
+def test_families_section_shows_outcome_and_post_triage_status():
+    vd = _verdicts(("mean_reversion", "FAIL", "a"), ("factor_books", "INCONCLUSIVE", "b"))
+    html = SEC.families_section(F.family_rows([], None, reg(), vd))
+    assert "Failed its test" in html and "Inconclusive: needs more data" in html
+    assert "Yes, in its own study" in html
+    assert "post_triage" not in html.replace("post-triage", "")
+
+
+def test_no_verdicts_means_every_family_untested_and_nothing_crashes():
+    for vd in (None, _verdicts()):
+        rows = F.family_rows([], None, reg(), vd)
+        assert rows and all(f.test_outcome == "untested" for f in rows)
+        assert not any(e.startswith("Test (") for f in rows for e in f.evidence)
+        assert "Strategy families we consider" in SEC.families_section(rows)
+
+
+def test_verdict_problem_is_shown_escaped_as_not_checked():
+    html = SEC.families_section(F.family_rows([], None, reg()), ("bad/verdict.json: <b>x</b> & more",))
+    assert '<p class="empty">Not checked: bad/verdict.json: &lt;b&gt;x&lt;/b&gt; &amp; more</p>' in html
+    assert "<b>x</b>" not in html
+
+
+def test_gather_inputs_loads_verdicts_and_survives_failure(tmp_path, monkeypatch):
+    inp = S.gather_inputs(str(tmp_path), str(tmp_path))
+    assert inp.verdicts is not None and inp.verdicts_problem == ""
+    from strategy_fit import study_verdicts as SV
+
+    def boom(*a, **k):
+        raise RuntimeError("nope")
+    monkeypatch.setattr(SV, "load_verdicts", boom)
+    inp = S.gather_inputs(str(tmp_path), str(tmp_path))
+    assert inp.verdicts is None and "RuntimeError" in inp.verdicts_problem
+
+
+def test_positional_inputs_still_construct():
+    inp = S.Inputs(None, "not loaded", None, (), None)
+    assert inp.verdicts is None and inp.verdicts_problem == ""

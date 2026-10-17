@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "verdicts": [
+    {
+      "family_id": "intraday_momentum",
+      "outcome": "FAIL",
+      "decided": "2026-09-05",
+      "source": "plan 10 (ORB / intraday killed)",
+      "doc": "docs/plans/10-strategy-fit-and-portfolio.md",
+      "summary": "edge only in the selection window, ~0 or negative on forward capture from 2026-06-22"
+    }
+  ]
+}

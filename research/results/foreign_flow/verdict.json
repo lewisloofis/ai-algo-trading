@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "verdicts": [
+    {
+      "family_id": "foreign_selling_rebound",
+      "outcome": "FAIL",
+      "decided": "2026-10-17",
+      "source": "plan 22 §10.2",
+      "doc": "docs/plans/22-foreign-selling-rebound.md",
+      "summary": "all 6 development cells FAIL, net −41 to −72 bps; holdout unspent"
+    }
+  ]
+}

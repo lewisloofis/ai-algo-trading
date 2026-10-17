@@ -15,6 +15,7 @@ from datetime import date
 from typing import Optional
 
 from strategy_fit.catalog_meta import ALL_FAMILIES, FamilyMeta
+from strategy_fit.study_verdicts import Loaded, load_verdicts
 from strategy_fit.families_single_name import ROUND_TRIP_BPS
 from strategy_fit.triage_scorer import (
     DataBlockedRecord,
@@ -139,35 +140,39 @@ def _render_markdown(
     all_family_ids: set[str],
     represented_ids: set[str],
     n_names: int,
+    verdicts: Optional[Loaded] = None,
 ) -> str:
+    loaded = verdicts if verdicts is not None else Loaded({}, ())
     today = date.today().isoformat()
     n_families = len(all_family_ids)
+    meta = {f.family_id: f for f in ALL_FAMILIES}
     lines: list[str] = [
         "# Strategy Triage Report",
         f"Generated: {today} | Universe: {n_names} names | Families: {n_families}",
         "",
         "## Section 1 — Testable Now (ranked by score)",
         "",
-        "| Family | Shape | Name / Universe | Score | Gross edge prior (bps) | Friction floor (bps) | Feasible N | Status |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Family | Shape | Name / Universe | Score | Gross edge prior (bps) | Friction floor (bps) | Feasible N | Status | Test outcome |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in sorted(testable, key=lambda x: x.score, reverse=True):
         lines.append(
             f"| {r.family_id} | {r.shape} | {r.name} "
             f"| {r.score:.2f} | {r.gross_edge_prior_bps:.1f} "
-            f"| {r.friction_floor_bps:.1f} | {r.feasible_effective_n} | {r.status} |"
+            f"| {r.friction_floor_bps:.1f} | {r.feasible_effective_n} | {r.status} "
+            f"| {loaded.outcome(r.family_id)} |"
         )
 
     lines += [
         "",
         "## Section 2 — Blocked / Deferred",
         "",
-        "| Family | Status | Unblock condition |",
-        "|---|---|---|",
+        "| Family | Status | Test outcome | Unblock condition |",
+        "|---|---|---|---|",
     ]
     for r in blocked:
         note = r.unblock_note or r.data_blocked_record.need if r.data_blocked_record else r.unblock_note
-        lines.append(f"| {r.family_id} | {r.status} | {note} |")
+        lines.append(f"| {r.family_id} | {r.status} | {loaded.outcome(r.family_id)} | {note} |")
 
     db_records = [r.data_blocked_record for r in blocked if r.data_blocked_record is not None]
     if db_records:
@@ -183,7 +188,25 @@ def _render_markdown(
                 f"| {rec.gap_id} | {rec.kind} | {rec.target} | {rec.need} | {rec.have} |"
             )
 
-    lines += ["", "## Section 3 — Completeness Check", ""]
+    lines += [
+        "",
+        "## Section 3 — Test outcomes",
+        "",
+        "Status above is the pre-test triage prior; test outcome is what the actual study found.",
+        "",
+        "| Family | Test outcome | Decided | Source | Summary |",
+        "|---|---|---|---|---|",
+    ]
+    for fid in sorted(all_family_ids & meta.keys()):
+        v = loaded.verdicts.get(fid)
+        lines.append(
+            f"| {fid} | {loaded.outcome(fid)} | {v.decided if v else '—'} "
+            f"| {v.source if v else '—'} | {v.summary if v else '—'} |"
+        )
+    for problem in loaded.problems:
+        lines += ["", f"PROBLEM: {problem}"]
+
+    lines += ["", "## Section 4 — Completeness Check", ""]
     missing = all_family_ids - represented_ids
     if not missing:
         lines.append(f"All {n_families} families in catalog accounted for.")
@@ -251,7 +274,9 @@ def main() -> int:
 
     all_family_ids = {f.family_id for f in ALL_FAMILIES}
 
-    md = _render_markdown(testable, blocked, all_family_ids, represented_ids, len(annotations))
+    md = _render_markdown(
+        testable, blocked, all_family_ids, represented_ids, len(annotations), load_verdicts()
+    )
 
     os.makedirs(_OUT_DIR, exist_ok=True)
     md_path = os.path.join(_OUT_DIR, "strategy_triage.md")

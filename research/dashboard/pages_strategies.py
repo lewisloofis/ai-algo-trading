@@ -50,12 +50,15 @@ def render_list(d) -> str:
         banner("warn", "No backtest results were found. Expected a corrected run in "
                "<code>research/results/d1/next_close/strategy_portfolio.md</code> (see config.CORRECTED_RUN_DIRS). "
                "Family results below use the shortlist only."))
+    verdict_problems = ((inp.verdicts_problem,) if inp.verdicts_problem else ()) + (
+        tuple(inp.verdicts.problems) if inp.verdicts else ())
     body = (
         "<h1>Strategies</h1>"
         '<p class="lead">The current condition of our strategy work: what is running, what we are considering, '
         "which stocks are in the screen and which combinations look promising. Nothing here has been proven in live trading.</p>"
         + stand_wrap(stages, d)
-        + SEC.families_section(F.family_rows(run_cells, inp.shortlist, inp.specs)) + provenance
+        + SEC.families_section(F.family_rows(run_cells, inp.shortlist, inp.specs, inp.verdicts), verdict_problems)
+        + provenance
         + SEC.screen_section(inp)
         + SEC.combos_section(inp.shortlist, inp.shortlist_problem, combos, _detail_links(d), d.now_wib.date())
         + SEC.runs_section(runs)

@@ -74,12 +74,15 @@ FAMILY_COLS = (Column("Strategy family"), Column("What it bets on"), Column("Hol
 def _family_status(f: F.FamilyRow) -> str:
     if f.status == "testable_now":
         return esc("Yes" + (f" ({f.status_note})" if f.status_note else ""))
+    if f.status == "post_triage":
+        return esc("Yes, in its own study") + '<div class="small">added after the first triage</div>'
     label = "Blocked by data" if f.status == "data_blocked" else f.status.replace("_", " ").capitalize()
     return esc(label) + (f'<div class="small">{esc(f.status_note)}</div>' if f.status_note else "")
 
 
-def families_section(rows: list[F.FamilyRow]) -> str:
-    head = "<h2>Strategy families we consider</h2>"
+def families_section(rows: list[F.FamilyRow], problems=()) -> str:
+    head = "<h2>Strategy families we consider</h2>" + "".join(
+        _not_checked("Not checked: " + esc(p)) for p in problems)
     if not rows:
         return head + _not_checked("Not checked: the family catalog (strategy_fit/catalog_meta.py) could not be loaded.")
     body = []

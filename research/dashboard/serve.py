@@ -7,7 +7,8 @@ Three parts:
   and one extra route, ``GET /live.json``, computed fresh from the heartbeat files on every request.
 * a rebuild thread that rebuilds the whole site every ``rebuild_every`` seconds, and sooner when
   the inputs change (a new or changed runs/*.db, a heartbeat file appearing, disappearing or
-  changing its outcome, a daily price file). Never two builds at once.
+  changing its outcome, a daily price file, a research verdict file's content, a plan edit, a new
+  git commit). Never two builds at once.
 * an atomic swap: each build goes into a fresh temp directory and the server switches to it only
   when it finished, so a request never sees a half-written site. A failed build is logged and the
   previous site keeps being served.
@@ -20,6 +21,7 @@ rebuild trigger (it would rebuild forever). The Online panel does not need a reb
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import os
 import shutil
@@ -106,7 +108,59 @@ class SiteHolder:
 # What to watch, and when to rebuild
 # ---------------------------------------------------------------------------
 
-def fingerprint(runs_dir: str, daily_dir: str) -> Hashable:
+DEFAULT_RESULTS_DIR = os.path.join(config.RESEARCH_DIR, "results")
+DEFAULT_PLANS_DIR = os.path.join(config.REPO_ROOT, "docs", "plans")
+DEFAULT_GIT_DIR = os.path.join(config.REPO_ROOT, ".git")
+
+
+def _read_text(path: str) -> str | None:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except (OSError, ValueError):
+        return None
+
+
+def _git_head(git_dir: str) -> str:
+    """The current commit: ``.git/HEAD``, followed to its ref (loose file, else packed-refs). Never runs git."""
+    head = (_read_text(os.path.join(git_dir, "HEAD")) or "").strip()
+    if not head.startswith("ref:"):
+        return head
+    ref = head[4:].strip()
+    loose = (_read_text(os.path.join(git_dir, *ref.split("/"))) or "").strip()
+    if loose:
+        return f"{ref}={loose}"
+    for line in (_read_text(os.path.join(git_dir, "packed-refs")) or "").splitlines():
+        sha, _, name = line.partition(" ")
+        if name.strip() == ref:
+            return f"{ref}={sha}"
+    return ref
+
+
+def _research_stamps(results_dir: str, plans_dir: str, git_dir: str) -> list[tuple]:
+    stamps: list[tuple] = []
+    for path in sorted(glob.glob(os.path.join(results_dir, "*", "verdict.json"))):
+        try:
+            with open(path, "rb") as f:
+                stamps.append((path, hashlib.sha256(f.read()).hexdigest()))
+        except OSError:
+            stamps.append((path, "unreadable"))
+    for path in sorted(glob.glob(os.path.join(plans_dir, "*.md"))):
+        try:
+            stamps.append((path, os.stat(path).st_mtime_ns))
+        except OSError:
+            continue
+    stamps.append(("git-head", _git_head(git_dir)))
+    return stamps
+
+
+def fingerprint(
+    runs_dir: str,
+    daily_dir: str,
+    results_dir: str = DEFAULT_RESULTS_DIR,
+    plans_dir: str = DEFAULT_PLANS_DIR,
+    git_dir: str = DEFAULT_GIT_DIR,
+) -> Hashable:
     """Everything whose change should refresh the pages, as one comparable value."""
     stamps: list[tuple] = []
     for pattern in (os.path.join(runs_dir, "*.db"), os.path.join(daily_dir, "*.parquet")):
@@ -122,6 +176,7 @@ def fingerprint(runs_dir: str, daily_dir: str) -> Hashable:
             stamps.append((path, str(doc.get("outcome")), str(doc.get("run_id"))))
         except (OSError, ValueError, AttributeError):
             stamps.append((path, "unreadable"))
+    stamps.extend(_research_stamps(results_dir, plans_dir, git_dir))
     return tuple(stamps)
 
 
@@ -296,7 +351,8 @@ def run(opt: ServeOptions, log: Log) -> int:
         build_site(replace(opt.site, out_dir=out_dir, now=None))
 
     def watch() -> Hashable:
-        return fingerprint(opt.site.runs_dir, opt.site.daily_dir)
+        return fingerprint(opt.site.runs_dir, opt.site.daily_dir, os.path.join(opt.site.research_dir, "results"),
+                           DEFAULT_PLANS_DIR, DEFAULT_GIT_DIR)
 
     rebuilder = Rebuilder(holder, build, watch, work_dir, opt.rebuild_every_s, opt.min_gap_s, log=log)
     stop = threading.Event()

@@ -22,6 +22,15 @@ class FamilyRow:
     headline: str
     tone: str
     evidence: tuple[str, ...]
+    test_outcome: str = "untested"
+
+
+_OUTCOME_HEADLINES = {
+    "PASS": ("Passed its test", "green"),
+    "FAIL": ("Failed its test", "red"),
+    "NO_GO": ("Failed its test (no-go)", "red"),
+    "INCONCLUSIVE": ("Inconclusive: needs more data", "amber"),
+}
 
 
 def _horizon(meta) -> str:
@@ -61,8 +70,9 @@ def _pooled_evidence(words: W.FamilyWords, sl: Shortlist | None) -> tuple[str | 
 
 
 def _family_row(fid: str, words: W.FamilyWords, horizon: str, status: str, note: str,
-                run_cells, sl: Shortlist | None, specs) -> FamilyRow:
-    ev: list[str] = []
+                run_cells, sl: Shortlist | None, specs, verdict=None) -> FamilyRow:
+    outcome = verdict.outcome if verdict else "untested"
+    ev: list[str] = [f"Test ({verdict.decided}, {verdict.source}): {verdict.summary}"] if verdict else []
     bt, n_scored = _backtest_evidence(words, run_cells)
     pooled, best_net = _pooled_evidence(words, sl)
     for x in (bt, pooled):
@@ -76,22 +86,26 @@ def _family_row(fid: str, words: W.FamilyWords, horizon: str, status: str, note:
         names = sum(1 for r in sl.name_rows if r.get("family") in words.pooled_families and n_gates_passed(r)[0] >= 1)
     if names:
         ev.append(f"{names} individual stock(s) pass at least one shortlist check.")
-    if status != "testable_now":
-        head, tone = "Not testable yet", "grey"
-    elif n_live:
+    if n_live:
         head, tone = f"{n_live} candidate(s) for live trading", "green"
     elif n_paper:
         head, tone = f"{n_paper} name(s) on paper", "amber"
+    elif outcome in _OUTCOME_HEADLINES:
+        head, tone = _OUTCOME_HEADLINES[outcome]
+    elif status != "testable_now":
+        head, tone = "Not testable yet", "grey"
     elif n_scored == 0 and pooled is None:
         head, tone = "Not scored in the latest run", "grey"
     elif best_net is not None and best_net > 0:
         head, tone = "Some promise, not proven", "amber"
     else:
         head, tone = "Nothing passes after costs", "red"
-    return FamilyRow(fid, words.bet, words.rule, horizon, status, note, head, tone, tuple(ev))
+    return FamilyRow(fid, words.bet, words.rule, horizon, status, note, head, tone, tuple(ev), outcome)
 
 
-def family_rows(run_cells, sl: Shortlist | None, specs) -> list[FamilyRow]:
+def family_rows(run_cells, sl: Shortlist | None, specs, verdicts=None) -> list[FamilyRow]:
+    """``verdicts`` is a study_verdicts.Loaded (or None: every family is untested)."""
+    decided = verdicts.verdicts if verdicts else {}
     try:
         from strategy_fit.catalog_meta import ALL_FAMILIES
     except Exception:  # noqa: BLE001
@@ -99,10 +113,8 @@ def family_rows(run_cells, sl: Shortlist | None, specs) -> list[FamilyRow]:
     out = []
     for m in ALL_FAMILIES:
         words = W.FAMILY_WORDS.get(m.family_id, W.FamilyWords("(no description yet)", "(no description yet)"))
-        out.append(_family_row(m.family_id, words, _horizon(m), m.catalog_status, m.deferred_note, run_cells, sl, specs))
-    for fid, words in W.EXTRA_FAMILIES.items():
-        out.append(_family_row(fid, words, "days", "testable_now", "tested, but not listed in the catalog table",
-                               run_cells, sl, specs))
+        out.append(_family_row(m.family_id, words, _horizon(m), m.catalog_status, m.deferred_note, run_cells, sl,
+                               specs, decided.get(m.family_id)))
     return out
 
 

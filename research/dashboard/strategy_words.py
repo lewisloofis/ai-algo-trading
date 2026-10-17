@@ -61,9 +61,6 @@ FAMILY_WORDS: dict[str, FamilyWords] = {
         "Owning cheap, high-yield stocks for years pays off.",
         "Hold for years; needs much more price history than we have.",
         ()),
-}
-
-EXTRA_FAMILIES: dict[str, FamilyWords] = {
     "volume_breakout": FamilyWords(
         "A day of unusually heavy trading marks a real move that continues.",
         "Buy after a volume spike on an up day, hold a fixed number of days.",
@@ -76,6 +73,27 @@ EXTRA_FAMILIES: dict[str, FamilyWords] = {
         "Heavy net buying by foreign investors pushes the price further.",
         "Buy after an unusually large foreign net-buy day, hold a fixed number of days.",
         ("foreign_flow_spike_event",), ("foreign_flow_spike_event",)),
+    "foreign_selling_rebound": FamilyWords(
+        "After foreign funds dump a big stock in one day, local buyers pull the price back up.",
+        "Buy the morning after a heavy foreign net-sell day, sell 1 to 5 days later."),
+    "index_rebalance_deletion": FamilyWords(
+        "A stock dropped from an MSCI or FTSE index is oversold by forced passive selling, then rebounds.",
+        "Buy after the deletion takes effect, hold about a month."),
+    "indicator_rules": FamilyWords(
+        "Textbook chart indicators (moving averages, MACD, RSI, Bollinger bands) time entries and exits.",
+        "Buy and sell when the indicator says so, using the standard textbook settings."),
+    "factor_books": FamilyWords(
+        "Stocks sharing a trait (strong 12-month trend, low volatility, high dividend) beat the rest for months.",
+        "Each month or quarter, hold the top-ranked group of about 16 stocks."),
+    "limit_move_events": FamilyWords(
+        "A stock that hits its daily auto-reject limit (ARA up, ARB down) moves on afterwards.",
+        "Buy the day after a limit-hit close, hold 1 to 5 days."),
+    "dividend_events": FamilyWords(
+        "Prices drift around dividend dates in a way you can trade.",
+        "Buy before the ex-date, around the cum-date, or after the ex-date drop, hold a few days."),
+    "calendar_effects": FamilyWords(
+        "Prices rise at the turn of the month and before Lebaran.",
+        "Hold the liquid basket over the calendar window only."),
 }
 
 GATE_FAIL_WORDS: dict[str, str] = {

@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "verdicts": [
+    {
+      "family_id": "index_rebalance_deletion",
+      "outcome": "FAIL",
+      "decided": "2026-10-16",
+      "source": "plan 21 §10.2",
+      "doc": "docs/plans/21-index-rebalance-event-study.md",
+      "summary": "MSCI_ST holdout net −342 bps at k=20 (−163 vs IHSG); development edge leaned on 2020"
+    }
+  ]
+}

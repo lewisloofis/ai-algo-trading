@@ -208,7 +208,7 @@ def score_family(
     name_label = name.symbol if name is not None else "universe"
 
     # --- Step 1: capital ceiling check ---
-    if family.char_hold_days > max_hold_days and family.catalog_status != "data_blocked":
+    if family.char_hold_days > max_hold_days and family.catalog_status not in ("data_blocked", "post_triage"):
         need = f"char_hold_days={family.char_hold_days} ≤ max_hold_days={max_hold_days}"
         have = f"max_hold_days={max_hold_days}"
         gid = _gap_id("regime", family.family_id, need)
@@ -262,13 +262,13 @@ def score_family(
             unblock_note=family.deferred_note,
         )
 
-    # --- Step 2b: deferred families ---
-    if family.catalog_status == "deferred":
+    # --- Step 2b: deferred families, and families tested outside triage (no prior to score) ---
+    if family.catalog_status in ("deferred", "post_triage"):
         return TriageResult(
             family_id=family.family_id,
             shape=family.shape,
             name=name_label,
-            status="deferred",
+            status=family.catalog_status,
             gross_edge_prior_bps=family.gross_edge_prior_bps,
             friction_floor_bps=0.0,
             feasible_effective_n=0,

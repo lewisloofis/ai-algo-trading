@@ -8,7 +8,7 @@ import re
 
 import pytest
 
-from strategy_fit.catalog_meta import ALL_FAMILIES, FamilyMeta
+from strategy_fit.catalog_meta import ALL_FAMILIES
 from strategy_fit.triage_scorer import (
     DataInventory,
     NameAnnotations,
@@ -176,3 +176,73 @@ def test_no_redeclared_fee() -> None:
         assert not re.search(r"\b40\.0\b\s*#.*fee", src, re.IGNORECASE), (
             f"{fname} must not redeclare fee as 40.0"
         )
+
+
+# --- test outcomes come from the committed verdict files (plan 25) ---
+
+from strategy_fit.study_verdicts import Loaded, Verdict, load_verdicts
+
+
+def test_obi_ofi_tick_outcome_is_no_go_via_verdicts() -> None:
+    loaded = load_verdicts()
+    assert loaded.outcome("obi_ofi_tick") == "NO_GO"
+    assert "plan 06" in loaded.verdicts["obi_ofi_tick"].source
+
+
+def test_render_shows_test_outcome_column() -> None:
+    from strategy_fit.triage import _render_markdown
+
+    testable = score_family(
+        family=_DAILY_MOMENTUM, name=_itmg_like(), inv=_STD_INV,
+        fee_bps=ROUND_TRIP_BPS, max_hold_days=_MAX_HOLD,
+    )
+    blocked = score_family(
+        family=_OBI_OFI_TICK, name=_bumi_like(), inv=_STD_INV,
+        fee_bps=ROUND_TRIP_BPS, max_hold_days=_MAX_HOLD,
+    )
+    ids = {"daily_momentum", "obi_ofi_tick"}
+    verdicts = Loaded(
+        {"obi_ofi_tick": Verdict("obi_ofi_tick", "NO_GO", "2026-06-19", "plan 06 (plans 04, 05)",
+                                 "docs/plans/06-fill-simulator-and-backtest.md", "every cell negative")},
+        ("x/verdict.json: could not be read (ValueError: bad)",),
+    )
+    md = _render_markdown([testable], [blocked], ids, ids, n_names=2, verdicts=verdicts)
+
+    assert "| Status | Test outcome |" in md
+    assert "| Family | Status | Test outcome | Unblock condition |" in md
+    assert "| daily_momentum | single_name_time_series | ITMG |" in md
+    assert "| testable_now | untested |" in md
+    assert "| obi_ofi_tick | cost_gated | NO_GO |" in md
+    assert "## Section 3 — Test outcomes" in md
+    assert "| obi_ofi_tick | NO_GO | 2026-06-19 | plan 06 (plans 04, 05) | every cell negative |" in md
+    assert "| daily_momentum | untested | — | — | — |" in md
+    assert "PROBLEM: x/verdict.json: could not be read" in md
+
+
+_POST_TRIAGE = [f for f in ALL_FAMILIES if f.catalog_status == "post_triage"]
+
+
+def test_families_tested_after_triage_are_catalogued() -> None:
+    ids = {f.family_id for f in _POST_TRIAGE}
+    assert {
+        "volume_breakout", "volume_spike_event", "foreign_flow_spike_event",
+        "foreign_selling_rebound", "index_rebalance_deletion", "indicator_rules",
+        "factor_books", "limit_move_events", "dividend_events", "calendar_effects",
+    } <= ids
+    assert len({f.family_id for f in ALL_FAMILIES}) == len(ALL_FAMILIES), "duplicate family_id"
+
+
+def test_post_triage_families_carry_a_tested_outcome() -> None:
+    loaded = load_verdicts()
+    for fam in _POST_TRIAGE:
+        assert loaded.outcome(fam.family_id) != "untested", f"{fam.family_id}: post_triage means it was tested"
+
+
+def test_post_triage_family_is_not_scored_by_triage() -> None:
+    result = score_family(
+        family=_POST_TRIAGE[0], name=_itmg_like(), inv=_STD_INV,
+        fee_bps=ROUND_TRIP_BPS, max_hold_days=_MAX_HOLD,
+    )
+    assert result.status == "post_triage"
+    assert result.score == 0.0
+    assert result.data_blocked_record is None

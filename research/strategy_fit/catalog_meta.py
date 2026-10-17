@@ -21,6 +21,8 @@ class FamilyMeta:
     deferred_note: str
 
 
+_POST_TRIAGE_NOTE = "added after the plan-16 triage; tested in its own study"
+
 # Gross-edge-prior sources:
 # obi_ofi_tick:      Cont et al. (2014) "Order-book dynamics in liquid markets"; aggressive taker net ~5-15 bps
 # intraday_momentum: ORB studies; IDX opening-range moves 50-200 bps on breakout sessions
@@ -68,5 +70,38 @@ ALL_FAMILIES: list[FamilyMeta] = [
         1500.0,
         "data_blocked",
         "requires 5+ yrs history; capital_blocked under current leverage facility",
+    ),
+
+    # --- post_triage: families added after the plan-16 triage and tested in their own study.
+    # The triage scorer skips them (no gross-edge prior was set before testing, so 0.0 here).
+    FamilyMeta(
+        "volume_breakout", "single_name_time_series", "days", 2, "per_symbol_row", 0.0, "post_triage", _POST_TRIAGE_NOTE,
+    ),
+    FamilyMeta(
+        "volume_spike_event", "event_driven", "days", 2, "pooled_event", 0.0, "post_triage", _POST_TRIAGE_NOTE,
+    ),
+    FamilyMeta(
+        "foreign_flow_spike_event", "event_driven", "days", 5, "pooled_event", 0.0, "post_triage", _POST_TRIAGE_NOTE,
+    ),
+    FamilyMeta(
+        "foreign_selling_rebound", "event_driven", "days", 3, "pooled_event", 0.0, "post_triage", _POST_TRIAGE_NOTE,
+    ),
+    FamilyMeta(
+        "index_rebalance_deletion", "event_driven", "weeks", 20, "pooled_event", 0.0, "post_triage", _POST_TRIAGE_NOTE,
+    ),
+    FamilyMeta(
+        "indicator_rules", "single_name_time_series", "days-weeks", 13, "per_symbol_row", 0.0, "post_triage", _POST_TRIAGE_NOTE,
+    ),
+    FamilyMeta(
+        "factor_books", "cross_sectional", "months", 21, "cross_sectional_period", 0.0, "post_triage", _POST_TRIAGE_NOTE,
+    ),
+    FamilyMeta(
+        "limit_move_events", "event_driven", "days", 5, "pooled_event", 0.0, "post_triage", _POST_TRIAGE_NOTE,
+    ),
+    FamilyMeta(
+        "dividend_events", "event_driven", "days", 5, "pooled_event", 0.0, "post_triage", _POST_TRIAGE_NOTE,
+    ),
+    FamilyMeta(
+        "calendar_effects", "event_driven", "days", 3, "pooled_event", 0.0, "post_triage", _POST_TRIAGE_NOTE,
     ),
 ]

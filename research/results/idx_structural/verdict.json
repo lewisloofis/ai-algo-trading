@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "verdicts": [
+    {
+      "family_id": "factor_books",
+      "outcome": "INCONCLUSIVE",
+      "decided": "2026-10-15",
+      "source": "alpha-search 2026-10",
+      "doc": "docs/research/alpha-search-2026-10.md",
+      "summary": "12-1 momentum h21/h63 +47/+221 bps over equal-weight but t ≤ 1.6, fails Bonferroni, loses in bear regime; the other factors FAIL"
+    },
+    {
+      "family_id": "limit_move_events",
+      "outcome": "INCONCLUSIVE",
+      "decided": "2026-10-15",
+      "source": "alpha-search 2026-10",
+      "doc": "docs/research/alpha-search-2026-10.md",
+      "summary": "ARA/ARB FAIL at next-close entry; ARB rebound at next open positive in 12 of 15 bear episodes (t 2.3–3.0), needs a pre-open bid and survivorship-free data"
+    },
+    {
+      "family_id": "dividend_events",
+      "outcome": "FAIL",
+      "decided": "2026-10-15",
+      "source": "alpha-search 2026-10",
+      "doc": "docs/research/alpha-search-2026-10.md",
+      "summary": "run-up gross +110 vs 91 bps cost (net −17); cum-date capture net −25; post-ex rebound −162 (t −6.1)"
+    },
+    {
+      "family_id": "calendar_effects",
+      "outcome": "FAIL",
+      "decided": "2026-10-15",
+      "source": "alpha-search 2026-10",
+      "doc": "docs/research/alpha-search-2026-10.md",
+      "summary": "turn-of-month gross +27 vs 87 bps cost; pre-Lebaran IS +132 / OOS −156 bps"
+    }
+  ]
+}

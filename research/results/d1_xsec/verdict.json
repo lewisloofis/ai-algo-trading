@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "verdicts": [
+    {
+      "family_id": "cross_sectional",
+      "outcome": "FAIL",
+      "decided": "2026-10-14",
+      "source": "plan 10 D1 cross-sectional re-score",
+      "doc": "research/results/d1_xsec/xsec_production.md",
+      "summary": "after D1 fix, long-only top quintile has no edge over equal-weight null at any hold"
+    }
+  ]
+}

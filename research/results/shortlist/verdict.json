@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "verdicts": [
+    {
+      "family_id": "daily_momentum",
+      "outcome": "FAIL",
+      "decided": "2026-10-15",
+      "source": "first-candidate shortlist",
+      "doc": "docs/research/2026-10-15-first-candidate-shortlist.md",
+      "summary": "after D1 fix best edge-over-null t 1.12 (TAPG h5), no Holm survivor; BNBR dead (plan 20 P1)"
+    },
+    {
+      "family_id": "mean_reversion",
+      "outcome": "FAIL",
+      "decided": "2026-10-15",
+      "source": "first-candidate shortlist",
+      "doc": "docs/research/2026-10-15-first-candidate-shortlist.md",
+      "summary": "TINS h5 fails cost gate, INCO h2 dead after D1 fix"
+    },
+    {
+      "family_id": "event_driven_gap",
+      "outcome": "FAIL",
+      "decided": "2026-10-15",
+      "source": "first-candidate shortlist",
+      "doc": "docs/research/2026-10-15-first-candidate-shortlist.md",
+      "summary": "gap_event edge over null 8–65 bps vs 100–138 bps cost; h60 not robust to top 5 trades"
+    },
+    {
+      "family_id": "pairs_stat_arb",
+      "outcome": "FAIL",
+      "decided": "2026-10-15",
+      "source": "first-candidate shortlist",
+      "doc": "docs/research/2026-10-15-first-candidate-shortlist.md",
+      "summary": "long_short_infeasible (no shorting); best pair gross −0.3 bps at h2"
+    },
+    {
+      "family_id": "volume_breakout",
+      "outcome": "FAIL",
+      "decided": "2026-10-15",
+      "source": "first-candidate shortlist",
+      "doc": "docs/research/2026-10-15-first-candidate-shortlist.md",
+      "summary": "pooled over 199 names no edge over null at any hold (t ≤ 0.15); DSSA/BRPT h2 fail drop-top-5"
+    },
+    {
+      "family_id": "volume_spike_event",
+      "outcome": "FAIL",
+      "decided": "2026-10-15",
+      "source": "first-candidate shortlist",
+      "doc": "docs/research/2026-10-15-first-candidate-shortlist.md",
+      "summary": "pooled edge over null below cost at every hold (best t 1.23 at h2)"
+    },
+    {
+      "family_id": "foreign_flow_spike_event",
+      "outcome": "FAIL",
+      "decided": "2026-10-15",
+      "source": "first-candidate shortlist",
+      "doc": "docs/research/2026-10-15-first-candidate-shortlist.md",
+      "summary": "h5 edge +58.6 bps (t 1.97, Holm p 0.74) on 2024+, not replicated on 2015-2023"
+    }
+  ]
+}

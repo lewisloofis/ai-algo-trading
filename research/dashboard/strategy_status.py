@@ -54,6 +54,9 @@ class Inputs:
     stored_symbols: tuple[str, ...]
     specs: Mapping[str, Any] | None
     """The emitter registry (strategy_id -> EmitterSpec); None = strategy_fit could not be imported."""
+    verdicts: Any = None
+    """strategy_fit.study_verdicts.Loaded; None = not loaded (see verdicts_problem)."""
+    verdicts_problem: str = ""
 
 
 def load_shortlist(research_dir: str) -> tuple[Shortlist | None, str]:
@@ -89,10 +92,20 @@ def load_specs():
     return SPECS
 
 
+def load_study_verdicts(research_dir: str) -> tuple[Any, str]:
+    """(Loaded, "") or (None, reason): a missing module or a bad folder never crashes the build."""
+    try:
+        from strategy_fit.study_verdicts import load_verdicts
+        return load_verdicts(os.path.join(research_dir, "results")), ""
+    except Exception as exc:  # noqa: BLE001
+        return None, f"the study verdicts could not be loaded ({type(exc).__name__}: {exc})"
+
+
 def gather_inputs(research_dir: str, daily_dir: str) -> Inputs:
     shortlist, problem = load_shortlist(research_dir)
+    verdicts, verdicts_problem = load_study_verdicts(research_dir)
     stored = tuple(sorted(os.path.basename(p)[:-8] for p in glob.glob(os.path.join(daily_dir, "*.parquet"))))
-    return Inputs(shortlist, problem, load_universe(daily_dir), stored, load_specs())
+    return Inputs(shortlist, problem, load_universe(daily_dir), stored, load_specs(), verdicts, verdicts_problem)
 
 
 # ---------------------------------------------------------------------------
