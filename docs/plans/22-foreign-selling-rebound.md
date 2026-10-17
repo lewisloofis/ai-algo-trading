@@ -200,4 +200,22 @@ line. Any later change is a new dated row with the reason.
 
 ## 10. Results log (append-only)
 
-_Empty._
+### 10.1 Phase 1 data checks (2026-10-17)
+
+Downloaded by the owner with `make foreign-fetch` (154 universe names, one call
+per symbol-year, 2016–2026), checked with `make foreign-checks`
+(`research/data/foreign_flow/checks.md`). No returns were computed.
+
+* **Depth:** history reaches **2016-01-04** for names listed then (better than
+  the 2017 probe suggested), so the 250-session warm-up fits before 2017.
+* **Check 1** (net = buy − sell): 0 violations.
+* **Check 4** (endpoint close = chartbit close): 100% match, so the dates line up.
+* **Check 2:** one market-wide gap, **2017-08-30** (all 40 members missing).
+  Otherwise 299 of 2,358 sessions miss 1–9 members. Missing universe name-days
+  are 0.0–1.5% per year, so **no year is `data_blocked`**.
+* **Check 3** (buy + sell > 2 × chartbit value): 263 name-days (0.08% of rows),
+  mostly 2017–2018 (239), median ratio 2.7×. Either chartbit's value or the
+  foreign figure is wrong on those days; the check cannot tell which.
+* **Survivorship:** the universe is built from local bars, so a top-40 name that
+  was delisted and is missing locally cannot be seen (§2.2). Not measurable here.
+* A stray `A.parquet` (1 row, a Saturday) is not a universe name and is ignored.
