@@ -11,6 +11,7 @@
 #   make dashboard
 #   make dashboard-live
 #   make refresh-prices
+#   make foreign-universe | foreign-fetch | foreign-checks   (plan 22 Phase 1 foreign-flow data)
 #   make paper-day STRATEGY=wifi_momo_h5
 #   make paper-scorecard STRATEGY=wifi_momo_h5
 #   make cost-report                  (B6: realised vs modelled cost of every live and paper fill)
@@ -19,7 +20,7 @@
 #   make runner-arm STRATEGY=<id> MAX_IDR=<n> [DATE=] | runner-disarm [DATE=]   (the only way to go live)
 #   make clean
 
-.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices emit-target paper-day paper-scorecard cost-report publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test runner-arm runner-disarm runner-day token-status token-refresh token-ensure token-test collector-live
+.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices foreign-universe foreign-fetch foreign-checks emit-target paper-day paper-scorecard cost-report publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test runner-arm runner-disarm runner-day token-status token-refresh token-ensure token-test collector-live
 
 # collector-live: LIVE check of the EC2 collector via SSM (read-only remote script).
 # Today's S3 data does not exist until midnight, so scripts/collector_healthcheck.py cannot
@@ -136,6 +137,21 @@ REFRESH_ARGS ?=
 refresh-prices:
 	@test -n "$$SB_ACCESS_TOKEN" || { echo "refresh-prices: SB_ACCESS_TOKEN is not set (set -a && source .env.local && set +a)"; exit 2; }
 	cd research && $(DASH_PY) -m screener.daily_store snapshot --all-stored --out-dir data/daily $(REFRESH_ARGS)
+
+# Plan 22 Phase 1 (foreign-flow data). foreign-universe and foreign-checks read local files only;
+# foreign-fetch needs SB_ACCESS_TOKEN (set -a && source .env.local && set +a) and is resumable.
+# Extra flags: FOREIGN_ARGS="--dry-run" or "--symbols BBCA,BMRI --sleep 2".
+FOREIGN_ARGS ?=
+
+foreign-universe:
+	cd research && $(DASH_PY) -m foreign_flow.universe
+
+foreign-fetch:
+	@case "$(FOREIGN_ARGS)" in *--dry-run*) ;; *) test -n "$$SB_ACCESS_TOKEN" || { echo "foreign-fetch: SB_ACCESS_TOKEN is not set (set -a && source .env.local && set +a)"; exit 2; };; esac
+	cd research && $(DASH_PY) -m foreign_flow.fetch $(FOREIGN_ARGS)
+
+foreign-checks:
+	cd research && $(DASH_PY) -m foreign_flow.checks
 
 # emit-target writes the day's target_portfolio.json for ONE registered strategy
 # (research/strategy_fit/emitter_specs.py) and PRINTS the matching live-session
