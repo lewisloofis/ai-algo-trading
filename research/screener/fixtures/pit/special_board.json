@@ -1,0 +1,85 @@
+{
+ "message": "Successfully retrieved special board catalog",
+ "data": {
+  "special_board": [
+   {
+    "parent_id": 88,
+    "id": 1000004658,
+    "symbol": "DAYTRADE",
+    "name": "Day Trade"
+   },
+   {
+    "parent_id": 88,
+    "id": 1000005139,
+    "symbol": "TRADINGLIMIT",
+    "name": "Trading Limit"
+   },
+   {
+    "parent_id": 88,
+    "id": 1000005133,
+    "symbol": "UMA",
+    "name": "UMA"
+   },
+   {
+    "parent_id": 88,
+    "id": 1000005130,
+    "symbol": "SUSPENDED",
+    "name": "Suspended"
+   },
+   {
+    "parent_id": 88,
+    "id": 1000005131,
+    "symbol": "UNSUSPENDED",
+    "name": "Unsuspended"
+   },
+   {
+    "parent_id": 89,
+    "id": 3,
+    "symbol": "Pemantauan-Khusus",
+    "name": "FCA"
+   },
+   {
+    "parent_id": 88,
+    "id": 1000005132,
+    "symbol": "FCA-OUT",
+    "name": "FCA Out"
+   },
+   {
+    "parent_id": 88,
+    "id": 1000004791,
+    "symbol": "NOTASI-KHUSUS",
+    "name": "Notasi Khusus"
+   },
+   {
+    "parent_id": 88,
+    "id": 1000006758,
+    "symbol": "HSC",
+    "name": "High Concentration"
+   },
+   {
+    "parent_id": 88,
+    "id": 1000003448,
+    "symbol": "ABX",
+    "name": "Papan Akselerasi"
+   },
+   {
+    "parent_id": 88,
+    "id": 553,
+    "symbol": "DBX",
+    "name": "Papan Pengembangan"
+   },
+   {
+    "parent_id": 88,
+    "id": 1000005989,
+    "symbol": "PUT WARRANT",
+    "name": "Put Warrant"
+   },
+   {
+    "parent_id": 88,
+    "id": 1000005990,
+    "symbol": "CALL WARRANT",
+    "name": "Call Warrant"
+   }
+  ]
+ }
+}

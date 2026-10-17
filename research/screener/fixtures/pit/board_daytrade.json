@@ -1,0 +1,140 @@
+{
+ "data": [
+  {
+   "id": 1000004658,
+   "level": 2,
+   "companies": [
+    {
+     "change": "-1400.00",
+     "company_id": "1000005203",
+     "country": "ID",
+     "isexist": 0,
+     "last": "9900",
+     "name": "Adaro Andalan Indonesia Tbk.",
+     "symbol": "AADI",
+     "symbol_2": "AADI",
+     "symbol_3": "AADI",
+     "tradeable": 1,
+     "type_company": "Saham",
+     "formatted_price": "9,900",
+     "percent": "-12.39",
+     "is_exists": false,
+     "day_trade_info": {
+      "is_show_multiplier": true,
+      "multiplier": "4"
+     },
+     "extra_attributes": {},
+     "notations": [],
+     "company_status": "STATUS_ACTIVE",
+     "uma": false,
+     "label_text": "",
+     "trading_limit_info": {
+      "is_trading_limit": true,
+      "haircut_percentage": "35%"
+     },
+     "effective_date": "0001-01-01 00:00:00",
+     "grouping_by": {
+      "type": "",
+      "label": ""
+     },
+     "margin_info": {
+      "is_margin_trading": false,
+      "percentage": "0%",
+      "percentage_raw": 0
+     },
+     "concentration": null
+    },
+    {
+     "change": "-825.00",
+     "company_id": "1",
+     "country": "ID",
+     "isexist": 0,
+     "last": "7825",
+     "name": "Astra Agro Lestari Tbk.",
+     "symbol": "AALI",
+     "symbol_2": "AALI",
+     "symbol_3": "AALI",
+     "tradeable": 1,
+     "type_company": "Saham",
+     "formatted_price": "7,825",
+     "percent": "-9.54",
+     "is_exists": false,
+     "day_trade_info": {
+      "is_show_multiplier": true,
+      "multiplier": "4"
+     },
+     "extra_attributes": {},
+     "notations": [],
+     "company_status": "STATUS_ACTIVE",
+     "uma": false,
+     "label_text": "",
+     "trading_limit_info": {
+      "is_trading_limit": true,
+      "haircut_percentage": "40%"
+     },
+     "effective_date": "0001-01-01 00:00:00",
+     "grouping_by": {
+      "type": "",
+      "label": ""
+     },
+     "margin_info": {
+      "is_margin_trading": false,
+      "percentage": "0%",
+      "percentage_raw": 0
+     },
+     "concentration": null
+    },
+    {
+     "change": "-300.00",
+     "company_id": "4",
+     "country": "ID",
+     "isexist": 0,
+     "last": "2430",
+     "name": "ABM Investama Tbk.",
+     "symbol": "ABMM",
+     "symbol_2": "ABMM",
+     "symbol_3": "ABMM",
+     "tradeable": 1,
+     "type_company": "Saham",
+     "formatted_price": "2,430",
+     "percent": "-10.99",
+     "is_exists": false,
+     "day_trade_info": {
+      "is_show_multiplier": true,
+      "multiplier": "3"
+     },
+     "extra_attributes": {},
+     "notations": [],
+     "company_status": "STATUS_ACTIVE",
+     "uma": false,
+     "label_text": "",
+     "trading_limit_info": {
+      "is_trading_limit": true,
+      "haircut_percentage": "60%"
+     },
+     "effective_date": "0001-01-01 00:00:00",
+     "grouping_by": {
+      "type": "",
+      "label": ""
+     },
+     "margin_info": {
+      "is_margin_trading": false,
+      "percentage": "0%",
+      "percentage_raw": 0
+     },
+     "concentration": null
+    }
+   ],
+   "pagination": {
+    "next_page": 0,
+    "prev_page": 0,
+    "current_page": 1,
+    "total_page": 1,
+    "data_per_page": 10000,
+    "total_data_in_page": 3,
+    "total_data": 3
+   }
+  }
+ ],
+ "message": "Successfully retrieved companies"
+}

@@ -1,0 +1,159 @@
+{
+ "data": [
+  {
+   "id": "1",
+   "name": "Barang Konsumen Primer",
+   "alias1": "barang-konsumen-primer",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "2",
+   "name": "Kesehatan",
+   "alias1": "kesehatan",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "3",
+   "name": "Keuangan",
+   "alias1": "keuangan",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "4",
+   "name": "Barang Konsumen Non-Primer",
+   "alias1": "barang-konsumen-non-primer",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "5",
+   "name": "Properti & Real Estat",
+   "alias1": "properti-real-estat",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "6",
+   "name": "Perindustrian",
+   "alias1": "Perindustrian",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "7",
+   "name": "Energi",
+   "alias1": "energi",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "8",
+   "name": "Barang Baku",
+   "alias1": "barang-baku",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "9",
+   "name": "Infrastruktur",
+   "alias1": "infrastruktur",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "50",
+   "name": "Teknologi",
+   "alias1": "teknologi",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "51",
+   "name": "Transportasi & Logistik",
+   "alias1": "transportasi-logistik",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "65",
+   "name": "Currencies",
+   "alias1": "currencies",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "67",
+   "name": "Others",
+   "alias1": "others",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "70",
+   "name": "Indeks Sektoral",
+   "alias1": "indeks-sektoral",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "73",
+   "name": "Commodities",
+   "alias1": "commodities",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "75",
+   "name": "Crypto",
+   "alias1": "cryptocurrency",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "78",
+   "name": "Global Index",
+   "alias1": "global-index",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "80",
+   "name": "Reksadana",
+   "alias1": "reksadana",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "85",
+   "name": "Delisted Stock",
+   "alias1": "delisted-stock",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "88",
+   "name": "Indeks",
+   "alias1": "indeks",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "89",
+   "name": "Listing Board",
+   "alias1": "listing-board",
+   "parent": "",
+   "symbol": ""
+  },
+  {
+   "id": "92",
+   "name": "FR Bonds",
+   "alias1": "fr-bonds",
+   "parent": "",
+   "symbol": ""
+  }
+ ],
+ "message": "Successfully retrieved list sector company"
+}

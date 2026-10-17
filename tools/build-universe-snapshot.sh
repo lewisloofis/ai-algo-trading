@@ -1,10 +1,11 @@
 #!/bin/bash
 # Build and publish the universe-snapshot zipapp for the collector box.
 #
-# The box is a 512 MB t4g.nano with no third-party Python. Both bundled modules
+# The box is a 512 MB t4g.nano with no third-party Python. All bundled modules
 # are stdlib-only (enforced below), so `python3 universe-snapshot.pyz` just runs.
 # Shipping one file mirrors how the collector binary deploys: upload to the
 # artifacts prefix, and the next scheduled start picks it up.
+# NO_UPLOAD=1 builds the .pyz only (no AWS call).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,7 +16,9 @@ trap 'rm -rf "$BUILD"' EXIT
 
 mkdir -p "$BUILD/screener"
 touch "$BUILD/screener/__init__.py"
-cp "$ROOT/research/screener/emitten.py" "$ROOT/research/screener/universe_snapshot.py" "$BUILD/screener/"
+for m in emitten universe_snapshot sb_http pit_recorder pit_tables pit_store; do
+  cp "$ROOT/research/screener/$m.py" "$BUILD/screener/"
+done
 
 # Fail the build rather than ship something that cannot import on the box.
 python3 - "$BUILD" <<'PY'
@@ -41,6 +44,11 @@ MAIN
 OUT="$ROOT/tools/universe-snapshot.pyz"
 python3 -m zipapp "$BUILD" -o "$OUT" -p "/usr/bin/env python3"
 echo "built $OUT ($(wc -c < "$OUT") bytes)"
+
+if [ "${NO_UPLOAD:-}" = "1" ]; then
+  echo "NO_UPLOAD=1: built only, nothing uploaded"
+  exit 0
+fi
 
 aws s3 cp "$OUT" "s3://$BUCKET/artifacts/universe-snapshot.pyz" --region "$REGION"
 echo "published to s3://$BUCKET/artifacts/universe-snapshot.pyz"

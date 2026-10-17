@@ -166,25 +166,8 @@ def put_snapshot(snapshot: dict, bucket: str, region: str) -> str:
     return uri
 
 
-def main(argv: list[str] | None = None) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    parser = argparse.ArgumentParser(description="Record today's eligible universe (plan 18 A-3).")
-    parser.add_argument("--bucket", required=True, help="S3 bucket to write into.")
-    parser.add_argument("--region", default=os.environ.get("AWS_DEFAULT_REGION", "ap-southeast-3"))
-    parser.add_argument("--as-of", default=None, help="Snapshot date (default: today, WIB).")
-    parser.add_argument(
-        "--ssm-prefix", default=os.environ.get("SSM_PARAM_PREFIX"),
-        help="SSM prefix holding the rotated access token (e.g. /sb-collector). "
-             "Used only when SB_ACCESS_TOKEN is unset.",
-    )
-    parser.add_argument("--dry-run", action="store_true", help="Build and print; do not upload.")
-    args = parser.parse_args(argv)
-
-    wib = _dt.timezone(_dt.timedelta(hours=7))
-    as_of = args.as_of or _dt.datetime.now(wib).date().isoformat()
-
-    token = resolve_bearer_token(args.ssm_prefix, args.region)
-    snapshot = build_snapshot(EmittenClient(token), as_of=as_of)
+def _run_eligibility(client: EmittenClient, args, as_of: str) -> None:
+    snapshot = build_snapshot(client, as_of=as_of)
     logger.info(
         "%s: %d day-trade ∩ %d trading-limit = %d eligible",
         as_of, snapshot["counts"]["day_trade"],
@@ -194,6 +177,53 @@ def main(argv: list[str] | None = None) -> None:
         print(json.dumps(snapshot, indent=2)[:600])
         return
     logger.info("written to %s", put_snapshot(snapshot, args.bucket, args.region))
+
+
+def _run_recorder(client: EmittenClient, args, as_of: str) -> None:
+    from screener import pit_recorder
+    from screener.pit_store import AwsS3Store
+
+    pit_recorder.record(client, AwsS3Store(args.bucket, args.region), as_of)
+
+
+def _isolated(label: str, fn, *fn_args) -> bool:
+    """Run one recording leg; a crash is logged and reported, never propagated to the other leg."""
+    try:
+        fn(*fn_args)
+        return True
+    except Exception:  # noqa: BLE001
+        logger.exception("%s failed", label)
+        return False
+
+
+def main(argv: list[str] | None = None) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    parser = argparse.ArgumentParser(description="Record today's eligible universe (plan 18 A-3) and PIT reference data (plan 23).")
+    parser.add_argument("--bucket", required=True, help="S3 bucket to write into.")
+    parser.add_argument("--region", default=os.environ.get("AWS_DEFAULT_REGION", "ap-southeast-3"))
+    parser.add_argument("--as-of", default=None, help="Snapshot date (default: today, WIB).")
+    parser.add_argument(
+        "--ssm-prefix", default=os.environ.get("SSM_PARAM_PREFIX"),
+        help="SSM prefix holding the rotated access token (e.g. /sb-collector). "
+             "Used only when SB_ACCESS_TOKEN is unset.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Build and print; do not upload (skips the PIT recorder).")
+    parser.add_argument("--no-pit", action="store_true", help="Skip the plan 23 PIT recorder.")
+    args = parser.parse_args(argv)
+
+    wib = _dt.timezone(_dt.timedelta(hours=7))
+    as_of = args.as_of or _dt.datetime.now(wib).date().isoformat()
+
+    try:
+        client = EmittenClient(resolve_bearer_token(args.ssm_prefix, args.region))
+    except Exception:  # noqa: BLE001
+        logger.exception("cannot authenticate; eligibility and PIT recording skipped")
+        raise SystemExit(1) from None
+    ok = _isolated("eligibility snapshot", _run_eligibility, client, args, as_of)
+    if not (args.dry_run or args.no_pit):
+        ok = _isolated("PIT recorder", _run_recorder, client, args, as_of) and ok
+    if not ok:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

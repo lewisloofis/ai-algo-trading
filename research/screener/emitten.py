@@ -15,6 +15,7 @@ for eligibility and tradability.
 """
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import os
@@ -52,9 +53,27 @@ def build_ssl_context() -> ssl.SSLContext:
     empty interpreter trust store (bare macOS venv / python.org build) falls
     back to the certifi bundle instead of failing with CERTIFICATE_VERIFY_FAILED.
     """
-    from screener.screen_universe import _build_ssl_context  # local: avoid import cycle
-
-    return _build_ssl_context()
+    # Self-contained on purpose: this module ships alone in the box's .pyz, and
+    # screen_universe imports pandas. Mirrors screen_universe._build_ssl_context.
+    insecure = os.environ.get("SB_INSECURE_TLS", "").lower() in ("1", "true", "yes")
+    ca = os.environ.get("SB_CA_BUNDLE")
+    if insecure:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        logger.warning("SB_INSECURE_TLS set - TLS certificate verification DISABLED")
+        return ctx
+    if ca:
+        return ssl.create_default_context(cafile=ca)
+    ctx = ssl.create_default_context()
+    if ctx.get_ca_certs():
+        return ctx
+    try:  # optional, not bundled in the box .pyz; importlib keeps the stdlib-only build check honest
+        certifi = importlib.import_module("certifi")
+    except ImportError:
+        logger.warning("TLS trust store is empty and certifi is not installed")
+        return ctx
+    return ssl.create_default_context(cafile=certifi.where())
 
 
 class ClassificationError(RuntimeError):
@@ -89,7 +108,21 @@ def _notation(raw: object) -> str:
     if isinstance(raw, str):
         return raw
     if isinstance(raw, dict):
-        return str(raw.get("notation") or raw.get("code") or json.dumps(raw, sort_keys=True))
+        code = raw.get("notation_code") or raw.get("notation") or raw.get("code")
+        return str(code or json.dumps(raw, sort_keys=True))
+    return str(raw)
+
+
+notation_text = _notation  # public alias for the point-in-time recorder
+
+
+def company_status_text(raw: object) -> str:
+    """``company_status`` is a plain string on the wire; tolerate a ``Status`` object too."""
+    if raw is None:
+        return ""
+    if isinstance(raw, dict):
+        val = raw.get("status") or raw.get("name") or raw.get("code")
+        return str(val or json.dumps(raw, sort_keys=True))
     return str(raw)
 
 
@@ -119,7 +152,7 @@ def parse_classification(body: dict) -> tuple[CompanyRecord, ...]:
             records.append(CompanyRecord(
                 symbol=symbol,
                 tradeable=_tradeable_flag(row.get("tradeable")),
-                company_status=str(row.get("company_status") or ""),
+                company_status=company_status_text(row.get("company_status")),
                 notations=tuple(_notation(n) for n in row.get("notations") or []),
                 uma=bool(row.get("uma")),
             ))
@@ -143,12 +176,15 @@ class EmittenClient:
         self._token = bearer_token
         self._ssl_ctx = build_ssl_context()
 
-    def _get(self, url: str) -> dict:
+    def get_raw(self, url: str) -> bytes:
+        """GET *url* and return the body bytes exactly as received (raises SBHttpError)."""
         req = urllib.request.Request(
             url, headers={**_HEADERS, "Authorization": f"Bearer {self._token}"}
         )
-        raw = urlopen_bytes(req, timeout=15, context=self._ssl_ctx)
-        return json.loads(raw.decode())
+        return urlopen_bytes(req, timeout=15, context=self._ssl_ctx)
+
+    def _get(self, url: str) -> dict:
+        return json.loads(self.get_raw(url).decode())
 
     def fetch_classification(self, subsector_id: str) -> tuple[CompanyRecord, ...]:
         """

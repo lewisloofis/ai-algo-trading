@@ -1,0 +1,50 @@
+{
+ "message": "Successfully retrieved indexes catalog data",
+ "data": [
+  {
+   "section": "Index",
+   "items": [
+    {
+     "company_id": 550,
+     "symbol": "LQ45",
+     "total_stock": 45
+    },
+    {
+     "company_id": 559,
+     "symbol": "IDX30",
+     "total_stock": 30
+    },
+    {
+     "company_id": 1000000010,
+     "symbol": "IDXHIDIV20",
+     "total_stock": 20
+    },
+    {
+     "company_id": 1000002393,
+     "symbol": "IDXG30",
+     "total_stock": 30
+    },
+    {
+     "company_id": 1000002398,
+     "symbol": "IDXV30",
+     "total_stock": 30
+    }
+   ]
+  },
+  {
+   "section": "Syariah",
+   "items": [
+    {
+     "company_id": 551,
+     "symbol": "JII",
+     "total_stock": 30
+    },
+    {
+     "company_id": 558,
+     "symbol": "ISSI",
+     "total_stock": 579
+    }
+   ]
+  }
+ ]
+}

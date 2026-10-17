@@ -1,0 +1,77 @@
+{
+ "message": "Successfully retrieved company sector data",
+ "data": [
+  {
+   "company_id": "54",
+   "country": "ID",
+   "type": "Saham",
+   "symbol": "BBCA",
+   "symbol_2": "BBCA",
+   "symbol_3": "BBCA",
+   "name": "Bank Central Asia Tbk.",
+   "tradeable": 1,
+   "last": "5175",
+   "change": "-900.00",
+   "percent": "-14.81",
+   "isexist": 0,
+   "notation": [],
+   "uma": false,
+   "corp_action": {
+    "active": false,
+    "icon": "https://assets.stockbit.com/images/corp_action_event_icon.svg",
+    "text": "Perusahaan Memiliki Corporate Action",
+    "detail": null
+   },
+   "status": "STATUS_ACTIVE",
+   "is_exists": false
+  },
+  {
+   "company_id": "59",
+   "country": "ID",
+   "type": "Saham",
+   "symbol": "BBRI",
+   "symbol_2": "BBRI",
+   "symbol_3": "BBRI",
+   "name": "Bank Rakyat Indonesia (Persero) Tbk.",
+   "tradeable": 1,
+   "last": "2640",
+   "change": "-460.00",
+   "percent": "-14.84",
+   "isexist": 0,
+   "notation": [],
+   "uma": false,
+   "corp_action": {
+    "active": false,
+    "icon": "https://assets.stockbit.com/images/corp_action_event_icon.svg",
+    "text": "Perusahaan Memiliki Corporate Action",
+    "detail": null
+   },
+   "status": "STATUS_ACTIVE",
+   "is_exists": false
+  },
+  {
+   "company_id": "79",
+   "country": "ID",
+   "type": "Saham",
+   "symbol": "BMRI",
+   "symbol_2": "BMRI",
+   "symbol_3": "BMRI",
+   "name": "Bank Mandiri (Persero) Tbk.",
+   "tradeable": 1,
+   "last": "3390",
+   "change": "-590.00",
+   "percent": "-14.82",
+   "isexist": 0,
+   "notation": [],
+   "uma": false,
+   "corp_action": {
+    "active": false,
+    "icon": "https://assets.stockbit.com/images/corp_action_event_icon.svg",
+    "text": "Perusahaan Memiliki Corporate Action",
+    "detail": null
+   },
+   "status": "STATUS_ACTIVE",
+   "is_exists": false
+  }
+ ]
+}

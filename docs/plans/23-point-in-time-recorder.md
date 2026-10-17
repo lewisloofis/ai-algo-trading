@@ -1,6 +1,6 @@
 # Point-in-Time Reference-Data Recorder
 
-> **Status:** 🔨 Scope agreed 2026-10-17 (P0 recorder only; §11 decisions), Phase 0 next · **Owner:** @lewis · **Created:** 2026-10-17
+> **Status:** 🔨 Phase 0 done, Phase 1 built 2026-10-17 (awaiting owner upload + first box run) · **Owner:** @lewis · **Created:** 2026-10-17
 > **Related:** [18-alpha-and-infrastructure-split.md](./18-alpha-and-infrastructure-split.md) (§ Track A, item A-3, "Start recording point-in-time eligibility now") · [12-data-gap-backlog-and-demand-driven-capture.md](./12-data-gap-backlog-and-demand-driven-capture.md) (requirement-record format, §"Record" fields) · [21-index-rebalance-event-study.md](./21-index-rebalance-event-study.md) (IDX gap Jul-2018 to 2021) · [22-foreign-selling-rebound.md](./22-foreign-selling-rebound.md) (§2.2, §10.1 survivorship) · [03-token-rotation.md](./03-token-rotation.md) · [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md)
 
 > **In plain words.** Stockbit tells us what is true today: which stocks exist,
@@ -107,6 +107,14 @@ Seven GET calls, all HTTP 200. Shapes now pinned (fixtures to be trimmed from th
   2026-09-14 → 10-16 (plus 09-13) **except 10-09, 10-12, 10-13, 10-14**: lost to the collector UA
   outage, unnoticed for a week because nothing alerts on a missing snapshot. Phase 2's `pit-check`
   exists for exactly this; those four days go into the gap ledger.
+
+* **Phase 1 built (2026-10-17).** `screener/pit_recorder.py`, `pit_tables.py`, `pit_store.py`; 35 items,
+  ~29–45 GETs/day. The box cannot HeadObject (403, PutObject-only role), so no-overwrite relies on
+  `put-object --if-none-match '*'`; on an AWS CLI too old for that flag the store falls back to a plain
+  put recorded as `written_unguarded` (bucket versioning is the backstop) rather than losing the day.
+  The build script also bundled too little before (no `sb_http`, and `build_ssl_context` pulled pandas);
+  both fixed. Special boards with zero rows are `ok` + `empty` anomaly; DAYTRADE, TRADINGLIMIT, indexes
+  and sectors with zero rows are failures.
 
 **Scope consequence (2026-10-17).** The special boards (SUSPENDED, UNSUSPENDED, UMA, NOTASI-KHUSUS,
 FCA, FCA-OUT, HSC) and sector 85 cost one call each and are exactly the history that cannot be
