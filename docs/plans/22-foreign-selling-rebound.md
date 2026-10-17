@@ -1,6 +1,6 @@
 # Foreign-Selling Rebound: Pre-Registration
 
-> **Status:** 🔒 Frozen 2026-10-17 (§9) · pre-registration · **Owner:** @lewis · **Created:** 2026-10-17
+> **Status:** ⛔ Closed 2026-10-17: development FAIL, holdout unspent (§10.2) · 🔒 Frozen 2026-10-17 (§9) · **Owner:** @lewis · **Created:** 2026-10-17
 > **Related:** [21-index-rebalance-event-study.md](./21-index-rebalance-event-study.md) (template; its H2 failed because the edge leaned on 2020) · [20-bnbr-forward-test-preregistration.md](./20-bnbr-forward-test-preregistration.md) (D1 entry timing) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) · [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md)
 
 > **In plain words.** When foreign funds dump a large Indonesian stock in one
@@ -220,3 +220,41 @@ per symbol-year, 2016–2026), checked with `make foreign-checks`
 * **Survivorship:** the universe is built from local bars, so a top-40 name that
   was delisted and is missing locally cannot be seen (§2.2). Not measurable here.
 * A stray `A.parquet` (1 row, a Saturday) is not a universe name and is ignored.
+
+### 10.2 Development run (2026-10-17)
+
+Code: `research/strategy_fit/families_foreign_flow.py` (`--dev`). Output:
+`research/results/foreign_flow/dev.{json,md}` and `dev_trades.csv`. Signals
+2017-01-01 → 2022-12-31 only; the holdout was **not** run and no
+authorization file was created.
+
+| cell | trades / dates | gross | edge (t) | net, current cost | net − IHSG | G9 net (no 2020) | verdict |
+|---|---|---|---|---|---|---|---|
+| S1 k=1 | 1156 / 693 | +12 | +11 (0.85) | −69 | −78 | −78 | FAIL |
+| S1 k=3 | 1000 / 631 | +21 | +19 (0.83) | −62 | −71 | −73 | FAIL |
+| S1 k=5 | 923 / 592 | +45 | +39 (1.23) | −41 | −55 | −70 | FAIL |
+| S2 k=1 | 431 / 88 | +4 | −0 (−0.02) | −72 | −65 | −72 | FAIL |
+| S2 k=3 | 371 / 87 | +42 | +29 (0.89) | −43 | −35 | −77 | FAIL |
+| S2 k=5 | 338 / 85 | +50 | +28 (0.68) | −44 | −24 | −109 | FAIL |
+
+All bps; cost ≈ 80 (S1) / 72 (S2) per round trip, and the three cost
+variants differ by < 2 bps. Every cell meets the sample floor and fails G2,
+G3, G4, G6, G7 (Holm p ≥ 0.66) and G9.
+
+* **Exit convention.** The harness's `ENTRY_NEXT_OPEN` exits at
+  `open_{t+1+k}`, while §3 says `close_{t+k}`. Recomputed independently
+  from raw bars with the literal §3 exit: net −93 / −83 / −66 (S1) and
+  −78 / −46 / −42 (S2). Same verdict either way.
+* **Independent check:** every trade's open-to-open return was recomputed
+  from raw bars. 4,144 of 4,219 match within 1 bp; the other 75 differ by the
+  cash dividends the harness adds back (e.g. ITMG 2022-11, PTBA 2019-05).
+* **C1** (heavy foreign buying): edge ≤ 0 at every k, so the control does not
+  "rebound" either.
+* **`close_{t+1}` entry:** net −42 to −73 in every cell.
+* **G8 (reported, not a gate):** the edge is larger when IHSG is below its
+  200-session average. S2 k=5 in that regime: edge +146 bps (t 2.10), net +72,
+  on 36 signal dates. This is a post-hoc subset of a failed test, so it is
+  **not** evidence; testing it would need a new pre-registration scored only
+  on data that does not exist yet.
+
+**§5 branch: nothing passes in development → close; the holdout stays unspent.**
