@@ -103,6 +103,11 @@ Seven GET calls, all HTTP 200. Shapes now pinned (fixtures to be trimmed from th
   it but exist in the E2 tree (ids 1000003288, 555), so their index route is unconfirmed.
 * **E2 tree** (`/emitten/classification?id=88`) lists 46 index/board nodes with ids.
 
+* **A-3 continuity** (`aws s3 ls universe/`, owner, 2026-10-17): `dt=` folders for every weekday
+  2026-09-14 → 10-16 (plus 09-13) **except 10-09, 10-12, 10-13, 10-14**: lost to the collector UA
+  outage, unnoticed for a week because nothing alerts on a missing snapshot. Phase 2's `pit-check`
+  exists for exactly this; those four days go into the gap ledger.
+
 **Scope consequence (2026-10-17).** The special boards (SUSPENDED, UNSUSPENDED, UMA, NOTASI-KHUSUS,
 FCA, FCA-OUT, HSC) and sector 85 cost one call each and are exactly the history that cannot be
 recovered, so they move from P1 into the P0 recorder. Corporate actions stay deferred (§11).
