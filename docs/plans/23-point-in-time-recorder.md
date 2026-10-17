@@ -77,6 +77,36 @@ every "key fields" column comes from the proto and must be confirmed by Phase 0.
 - *Delisting and suspension:* no dedicated route. They show up through E1/E5 (`tradeable=0`, `company_status`, `isexist`, notation codes) and as a symbol vanishing. Optional external: IDX announcements (delisting, suspension), which also carry dates the API lacks.
 - Backoffice routes (`/emitten/backoffice/...`, `/corpaction/backoffice/...`) are admin-only. Do not use them.
 
+### 2.1 Phase 0 results (owner-run probe, 2026-10-17)
+
+Seven GET calls, all HTTP 200. Shapes now pinned (fixtures to be trimmed from these responses):
+
+* **E1 `/emitten/classification/company?ids=<id>&parent_id=88`** returns `data[0]{id, level, companies[], pagination}`;
+  `data_per_page` 10000, so one call returns the whole board (DAYTRADE: 118 rows, 1 page).
+  `company_status` is a **string** (`"STATUS_ACTIVE"`). `notations[]` items are
+  `{notation_code, notation_desc, icon_url{light_mode,dark_mode}}` (confirms the `_notation()` defect).
+  `effective_date` is the zero value `"0001-01-01 00:00:00"`. `tradeable` = 1 on every row.
+* **E4 special-board catalogue is the big find.** It lists boards that answer the "suspension /
+  delisting / watchlist history" question directly, all readable through E1:
+  `SUSPENDED` 1000005130, `UNSUSPENDED` 1000005131, `UMA` 1000005133, `NOTASI-KHUSUS` 1000004791,
+  `FCA` (`ids=3&parent_id=89`), `FCA-OUT` 1000005132, `HSC` (high concentration) 1000006758,
+  plus DAYTRADE 1000004658 and TRADINGLIMIT 1000005139 (parent 88 unless stated). Only DAYTRADE was
+  called; the others are unconfirmed until the first recorder run.
+* **E5 sectors.** `/emitten/sectors` ids are strings: equity sectors 1–9, 50, 51, plus **85 "Delisted
+  Stock"** (a delisted list, so IDX scraping is less needed). `/emitten/v3/sector/{id}/company` is
+  paginated at 100 (`pagination.next_page`, sector 1 = 138 rows over 2 pages). **`tradeable` is 0 on
+  every E5 row, including UNVR and INDF**: the field is not populated on this route and must not be
+  read as a tradeability flag. E5 is for listing membership only.
+* **E3 indexes.** `/emitten/indexes/LQ45?page=1&limit=100` → `data[]` of 45 rows (`symbol, status,
+  notation[], uma, tradeable, corp_action{active}`), no pagination object. The catalogue lists only
+  LQ45, IDX30, IDXHIDIV20, IDXG30, IDXV30, JII, ISSI with `total_stock`; IDX80 and KOMPAS100 are not in
+  it but exist in the E2 tree (ids 1000003288, 555), so their index route is unconfirmed.
+* **E2 tree** (`/emitten/classification?id=88`) lists 46 index/board nodes with ids.
+
+**Scope consequence (2026-10-17).** The special boards (SUSPENDED, UNSUSPENDED, UMA, NOTASI-KHUSUS,
+FCA, FCA-OUT, HSC) and sector 85 cost one call each and are exactly the history that cannot be
+recovered, so they move from P1 into the P0 recorder. Corporate actions stay deferred (§11).
+
 ## 3. What to record, prioritised
 
 | Pri | Item | Why it is here | Cadence | Cost |
