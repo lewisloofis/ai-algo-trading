@@ -1,6 +1,6 @@
 # Point-in-Time Reference-Data Recorder
 
-> **Status:** 📝 Draft, scoping only (nothing built) · **Owner:** @lewis · **Created:** 2026-10-17
+> **Status:** 🔨 Scope agreed 2026-10-17 (P0 recorder only; §11 decisions), Phase 0 next · **Owner:** @lewis · **Created:** 2026-10-17
 > **Related:** [18-alpha-and-infrastructure-split.md](./18-alpha-and-infrastructure-split.md) (§ Track A, item A-3, "Start recording point-in-time eligibility now") · [12-data-gap-backlog-and-demand-driven-capture.md](./12-data-gap-backlog-and-demand-driven-capture.md) (requirement-record format, §"Record" fields) · [21-index-rebalance-event-study.md](./21-index-rebalance-event-study.md) (IDX gap Jul-2018 to 2021) · [22-foreign-selling-rebound.md](./22-foreign-selling-rebound.md) (§2.2, §10.1 survivorship) · [03-token-rotation.md](./03-token-rotation.md) · [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md)
 
 > **In plain words.** Stockbit tells us what is true today: which stocks exist,
@@ -205,7 +205,7 @@ Cross-check once per week: every symbol in E5 has local daily bars or is queued 
 | 0 | Owner runs 6 authenticated calls (E1, E2, E3 one index, E4, E5 one sector, E6) and saves **redacted** samples under `research/screener/fixtures/`; confirm shapes (`company_status`, `notation_code`, pagination, index names, special-board names); `aws s3 ls universe/` to confirm A-3 has run daily; test conditional put | 0.5 day (owner) | Shapes pinned in this doc's §2 |
 | 1 | P0 recorder: `screener/pit_recorder.py` (stdlib), widen `universe_snapshot.main` to also run it, manifest, guards, no-overwrite; rebuild `.pyz`, owner uploads to `artifacts/` | 1.5 days | Two consecutive real boots write a manifest |
 | 2 | `make pit-sync`, `lib/pit.py`, runner `pit-check` step, weekly report | 1.5 days | Missing-day alert fires in a dry run; `universe_as_of` returns a set for a recorded day |
-| 3 | P1 items (special boards, corp actions), one-time `pit=false` corp-action backfill | 1 day | Manifest shows all P1 `ok` |
+| 3 | **Deferred 2026-10-17.** P1 items (special boards, corp actions) and the `pit=false` corp-action backfill, only when a study needs them | 1 day | Manifest shows all P1 `ok` |
 | 4 | P2 only if a study blocks on it (IDX announcements) | decide later | n/a |
 
 Order matters: Phase 1 first, because each day without it is lost.
@@ -238,6 +238,17 @@ Order matters: Phase 1 first, because each day without it is lost.
    *Proposed default:* yes, in Phase 3, kept apart from the PIT snapshots.
 4. **IDX announcements scraper (delisting and suspension dates) as P2?** *Proposed default:* no for now;
    revisit after 4 weeks of snapshots show whether `tradeable`/status alone catch delistings.
+
+**Decisions (owner, 2026-10-17):**
+
+| # | Decision |
+|---|---|
+| 1 | Yes. Pre-open snapshot only; snapshot *D* = state known at the open of *D*. |
+| 2 | Yes. Keep the `universe/` prefix; no IAM change, no `tofu apply`. |
+| 3 | **Not now.** Daily bars are already split-adjusted and dividends are added back, so no current study needs corporate-action dates; history stays fetchable later. Also unconfirmed: whether `ListAll` (`/corpaction/dividend?year=`) returns all companies without a `symbol`; if not, a backfill is ~950 symbols x 5 kinds per-company calls. Settle it only when a study needs it. |
+| 4 | **Not now.** Revisit after 4 weeks of snapshots show whether `tradeable`/status flips catch suspensions and delistings. |
+
+Scope is therefore Phase 0, Phase 1 (P0 items only) and Phase 2. Phase 0 drops E6.
 
 ---
 
