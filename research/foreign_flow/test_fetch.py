@@ -151,6 +151,7 @@ def test_token_never_printed(tmp_path, capsys, monkeypatch):
     rc = fx.main(["--symbols", "A", "--start-year", "2024", "--end-year", "2026", "--sleep", "0"])
     cap = capsys.readouterr()
     assert rc == 1 and TOKEN not in cap.out + cap.err and "token expired" in cap.err
+    assert (tmp_path / "A.parquet").exists()             # main() honours the patched paths, not real data
 
 
 def test_missing_token_exits_2(monkeypatch, capsys):

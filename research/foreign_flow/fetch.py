@@ -191,7 +191,8 @@ def main(argv: list[str] | None = None) -> int:
         print(NO_TOKEN_MSG, file=sys.stderr)
         return 2
     summary = run(ForeignFlowClient(token), symbols, start_year=args.start_year,
-                  end_year=args.end_year, sleep_s=args.sleep, today=today)
+                  end_year=args.end_year, data_dir=DATA_DIR, manifest_path=MANIFEST_PATH,
+                  sleep_s=args.sleep, today=today)
     print(f"summary: {summary['fetched']} calls ok, {summary['rows']} rows, "
           f"{len(summary['failures'])} failures")
     for line in summary["failures"]:
