@@ -51,7 +51,8 @@ def render_list(d) -> str:
                "<code>research/results/d1/next_close/strategy_portfolio.md</code> (see config.CORRECTED_RUN_DIRS). "
                "Family results below use the shortlist only."))
     verdict_problems = ((inp.verdicts_problem,) if inp.verdicts_problem else ()) + (
-        tuple(inp.verdicts.problems) if inp.verdicts else ())
+        tuple(inp.verdicts.problems) if inp.verdicts else ()) + (
+        (inp.recheck_problem,) if inp.recheck_problem else ())
     research_problems = ((inp.research_log_problem,) if inp.research_log_problem else ()) + (
         tuple(inp.research_log.problems) if inp.research_log else ())
     body = (
@@ -59,7 +60,7 @@ def render_list(d) -> str:
         '<p class="lead">The current condition of our strategy work: what is running, what we are considering, '
         "which stocks are in the screen and which combinations look promising. Nothing here has been proven in live trading.</p>"
         + stand_wrap(stages, d)
-        + SEC.families_section(F.family_rows(run_cells, inp.shortlist, inp.specs, inp.verdicts), verdict_problems)
+        + SEC.families_section(F.family_rows(run_cells, inp.shortlist, inp.specs, inp.verdicts, inp.recheck), verdict_problems)
         + SEC.research_activity_section(inp.research_log, research_problems, d.now)
         + provenance
         + SEC.screen_section(inp)

@@ -1,6 +1,6 @@
 # Closed-Family Re-check
 
-> **Status:** 📝 Draft 2026-10-17 · not built; build when the first daily family nears 30 post-verdict observations (≈ Dec 2026–Jan 2027) · **Owner:** @lewis · **Created:** 2026-10-17
+> **Status:** ✔️ Built 2026-10-17 (`make recheck`) · first run 2026-10-16: all 11 families waiting, 0 of 30 · **Owner:** @lewis · **Created:** 2026-10-17
 > **Related:** [25-research-verdicts-feed-the-dashboard.md](./25-research-verdicts-feed-the-dashboard.md) (verdict files, research log, §2.5 manual-trigger decision) · [22-foreign-selling-rebound.md](./22-foreign-selling-rebound.md) · [24-classic-indicator-rules.md](./24-classic-indicator-rules.md) · [21-index-rebalance-event-study.md](./21-index-rebalance-event-study.md) · [11-decay-monitoring-and-live-revalidation.md](./11-decay-monitoring-and-live-revalidation.md) (live strategies; this plan is for closed ones)
 
 > **In plain words.** Every strategy family we tested failed or was
@@ -77,16 +77,16 @@ Every family whose verdict file (plan 25) says `FAIL`, `NO_GO` or
 
 ## 4. Build tasks (when triggered)
 
-* [ ] `research/recheck/specs.py`: one frozen spec per re-checkable family,
+* [x] `research/recheck/specs.py`: one frozen spec per re-checkable family,
       each citing its source plan section and family code; test that every
       closed family in the verdict files is either specced or listed in §1.1
       with its reason.
-* [ ] `research/recheck/run.py`: post-verdict window, de-overlap, milestone
+* [x] `research/recheck/run.py`: post-verdict window, de-overlap, milestone
       logic, alert bar, output files. Poison test: no signal dated on or
       before the verdict date is ever read.
-* [ ] Milestone ledger in `research/results/recheck/milestones.json` so a
+* [x] Milestone ledger in `research/results/recheck/milestones.json` so a
       milestone is evaluated once (a second run at the same N refuses).
-* [ ] Dashboard: the families table shows "re-check: N of 30" per family.
+* [x] Dashboard: the families table shows "re-check: N of 30" per family.
 
 ## 5. Open questions for the owner
 
@@ -98,3 +98,4 @@ None open. Both answered 2026-10-17 (§6).
 |---|---|---|
 | 2026-10-17 | Manual trigger, no schedule (plan 25 §2.5). Draft written; build deferred until post-verdict data accumulates. | @lewis (owner; instructed in session, entered by Claude) |
 | 2026-10-17 | Plans 22 and 24 stay **out** of the re-check; their holdouts stay unspent. Milestones stay **30 / 60 / 120** (3 looks per family). | @lewis (owner; instructed in session, entered by Claude) |
+| 2026-10-17 | Built early on owner request. Effective-N unit = non-overlapping block of `hold` trading days (per-date units rejected in review: overlap inflated t by ~√hold), t = Newey-West HAC lag 1. Holds frozen per family from the shortlist's highest pooled t. cross_sectional universe deviates (S.txt not in repo; 241 names, noted in every report). K = 11 → p < 0.00303. | @lewis (owner request; build and review by Claude) |

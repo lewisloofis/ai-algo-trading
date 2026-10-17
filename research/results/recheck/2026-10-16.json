@@ -1,0 +1,214 @@
+{
+  "schema": 1,
+  "as_of": "2026-10-16",
+  "k": 11,
+  "n_looks": 3,
+  "alpha_family": 0.1,
+  "alert_p_threshold": 0.0030303030303030303,
+  "milestones": [
+    30,
+    60,
+    120
+  ],
+  "impact_coeffs": {
+    "file": "impact_coeffs.json",
+    "sha256": "79638dbb9da39643e051574b08c5fbe9c56e9ce1b8a3d1b212fb472e4154c230"
+  },
+  "notes": [
+    "cross_sectional universe differs from the verdict's (S.txt not in repo): traded-within-7-days, 241 names"
+  ],
+  "families": [
+    {
+      "family_id": "daily_momentum",
+      "verdict_date": "2026-10-15",
+      "verdict_outcome": "FAIL",
+      "source": "docs/research/2026-10-15-first-candidate-shortlist.md (pooled table)",
+      "hold": 5,
+      "entry": "next_close",
+      "unit": "non-overlapping block of `hold` trading days by entry date (pooled trades in a block count once)",
+      "n": 0,
+      "next_milestone": 30,
+      "status": "waiting",
+      "evaluation": null,
+      "regime_split": null
+    },
+    {
+      "family_id": "mean_reversion",
+      "verdict_date": "2026-10-15",
+      "verdict_outcome": "FAIL",
+      "source": "docs/research/2026-10-15-first-candidate-shortlist.md (pooled table)",
+      "hold": 1,
+      "entry": "next_close",
+      "unit": "non-overlapping block of `hold` trading days by entry date (pooled trades in a block count once)",
+      "n": 0,
+      "next_milestone": 30,
+      "status": "waiting",
+      "evaluation": null,
+      "regime_split": null
+    },
+    {
+      "family_id": "event_driven_gap",
+      "verdict_date": "2026-10-15",
+      "verdict_outcome": "FAIL",
+      "source": "docs/research/2026-10-15-first-candidate-shortlist.md (pooled table, gap_event)",
+      "hold": 2,
+      "entry": "next_close",
+      "unit": "non-overlapping block of `hold` trading days by entry date (pooled trades in a block count once)",
+      "n": 0,
+      "next_milestone": 30,
+      "status": "waiting",
+      "evaluation": null,
+      "regime_split": null
+    },
+    {
+      "family_id": "volume_breakout",
+      "verdict_date": "2026-10-15",
+      "verdict_outcome": "FAIL",
+      "source": "docs/research/2026-10-15-first-candidate-shortlist.md (pooled table)",
+      "hold": 2,
+      "entry": "next_close",
+      "unit": "non-overlapping block of `hold` trading days by entry date (pooled trades in a block count once)",
+      "n": 0,
+      "next_milestone": 30,
+      "status": "waiting",
+      "evaluation": null,
+      "regime_split": null
+    },
+    {
+      "family_id": "volume_spike_event",
+      "verdict_date": "2026-10-15",
+      "verdict_outcome": "FAIL",
+      "source": "docs/research/2026-10-15-first-candidate-shortlist.md (pooled table)",
+      "hold": 2,
+      "entry": "next_close",
+      "unit": "non-overlapping block of `hold` trading days by entry date (pooled trades in a block count once)",
+      "n": 0,
+      "next_milestone": 30,
+      "status": "waiting",
+      "evaluation": null,
+      "regime_split": null
+    },
+    {
+      "family_id": "foreign_flow_spike_event",
+      "verdict_date": "2026-10-15",
+      "verdict_outcome": "FAIL",
+      "source": "docs/research/2026-10-15-first-candidate-shortlist.md (pooled table)",
+      "hold": 5,
+      "entry": "next_close",
+      "unit": "non-overlapping block of `hold` trading days by entry date (pooled trades in a block count once)",
+      "n": 0,
+      "next_milestone": 30,
+      "status": "waiting",
+      "evaluation": null,
+      "regime_split": null
+    },
+    {
+      "family_id": "cross_sectional",
+      "verdict_date": "2026-10-14",
+      "verdict_outcome": "FAIL",
+      "source": "research/results/d1_xsec/xsec_production.md (next_close rows)",
+      "hold": 5,
+      "entry": "next_close",
+      "unit": "rebalance period",
+      "n": 0,
+      "next_milestone": 30,
+      "status": "waiting",
+      "evaluation": null,
+      "regime_split": null
+    },
+    {
+      "family_id": "factor_books",
+      "verdict_date": "2026-10-15",
+      "verdict_outcome": "INCONCLUSIVE",
+      "source": "docs/research/alpha-search-2026-10.md (mom_12_1)",
+      "hold": 21,
+      "entry": "next_close",
+      "unit": "rebalance period",
+      "n": 0,
+      "next_milestone": 30,
+      "status": "waiting",
+      "evaluation": null,
+      "regime_split": null
+    },
+    {
+      "family_id": "limit_move_events",
+      "verdict_date": "2026-10-15",
+      "verdict_outcome": "INCONCLUSIVE",
+      "source": "docs/research/alpha-search-2026-10.md (ARB next_close)",
+      "hold": 5,
+      "entry": "next_close",
+      "unit": "non-overlapping block of `hold` trading days by entry date (pooled trades in a block count once)",
+      "n": 0,
+      "next_milestone": 30,
+      "status": "waiting",
+      "evaluation": null,
+      "regime_split": null
+    },
+    {
+      "family_id": "dividend_events",
+      "verdict_date": "2026-10-15",
+      "verdict_outcome": "FAIL",
+      "source": "docs/research/alpha-search-2026-10.md (runup, yield >= 2%)",
+      "hold": 5,
+      "entry": "next_close",
+      "unit": "non-overlapping block of `hold` trading days by entry date (pooled trades in a block count once)",
+      "n": 0,
+      "next_milestone": 30,
+      "status": "waiting",
+      "evaluation": null,
+      "regime_split": null
+    },
+    {
+      "family_id": "calendar_effects",
+      "verdict_date": "2026-10-15",
+      "verdict_outcome": "FAIL",
+      "source": "docs/research/alpha-search-2026-10.md (turn_of_month)",
+      "hold": 3,
+      "entry": "next_close",
+      "unit": "rebalance period",
+      "n": 0,
+      "next_milestone": 30,
+      "status": "waiting",
+      "evaluation": null,
+      "regime_split": null
+    }
+  ],
+  "excluded": [
+    {
+      "family_id": "foreign_selling_rebound",
+      "reason": "excluded (owner, 2026-10-17): unspent holdout overlaps post-verdict data"
+    },
+    {
+      "family_id": "indicator_rules",
+      "reason": "excluded (owner, 2026-10-17): unspent holdout overlaps post-verdict data"
+    },
+    {
+      "family_id": "index_rebalance_deletion",
+      "reason": "waiting: needs new MSCI_ST deletion events; event ingestion not built"
+    },
+    {
+      "family_id": "obi_ofi_tick",
+      "reason": "waiting: needs post-2026-06-19 tick captures of the original names"
+    },
+    {
+      "family_id": "intraday_momentum",
+      "reason": "waiting: needs 1-minute bars after the verdict; not wired"
+    },
+    {
+      "family_id": "pairs_stat_arb",
+      "reason": "skipped: fails structurally (no shorting)"
+    },
+    {
+      "family_id": "multi_month_macro",
+      "reason": "not re-checked: untested"
+    },
+    {
+      "family_id": "multi_week_trend",
+      "reason": "not re-checked: untested"
+    },
+    {
+      "family_id": "multi_year_carry",
+      "reason": "not re-checked: untested"
+    }
+  ]
+}

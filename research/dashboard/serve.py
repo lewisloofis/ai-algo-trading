@@ -7,7 +7,8 @@ Three parts:
   and one extra route, ``GET /live.json``, computed fresh from the heartbeat files on every request.
 * a rebuild thread that rebuilds the whole site every ``rebuild_every`` seconds, and sooner when
   the inputs change (a new or changed runs/*.db, a heartbeat file appearing, disappearing or
-  changing its outcome, a daily price file, a research verdict file's content, a plan edit, a new
+  changing its outcome, a daily price file, a research verdict file's content, a closed-family re-check output's content
+  (results/recheck/*.json), a plan edit, a new
   git commit, a line appended to runs/research_log.jsonl). Never two builds at once.
 * an atomic swap: each build goes into a fresh temp directory and the server switches to it only
   when it finished, so a request never sees a half-written site. A failed build is logged and the
@@ -142,6 +143,12 @@ def _git_head(git_dir: str) -> str:
 def _research_stamps(results_dir: str, plans_dir: str, git_dir: str) -> list[tuple]:
     stamps: list[tuple] = []
     for path in sorted(glob.glob(os.path.join(results_dir, "*", "verdict.json"))):
+        try:
+            with open(path, "rb") as f:
+                stamps.append((path, hashlib.sha256(f.read()).hexdigest()))
+        except OSError:
+            stamps.append((path, "unreadable"))
+    for path in sorted(glob.glob(os.path.join(results_dir, "recheck", "*.json"))):
         try:
             with open(path, "rb") as f:
                 stamps.append((path, hashlib.sha256(f.read()).hexdigest()))

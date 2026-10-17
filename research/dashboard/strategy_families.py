@@ -73,7 +73,7 @@ def _pooled_evidence(words: W.FamilyWords, sl: Shortlist | None) -> tuple[str | 
 
 
 def _family_row(fid: str, words: W.FamilyWords, horizon: str, status: str, note: str,
-                run_cells, sl: Shortlist | None, specs, verdict=None) -> FamilyRow:
+                run_cells, sl: Shortlist | None, specs, verdict=None, recheck=None) -> FamilyRow:
     outcome = verdict.outcome if verdict else "untested"
     ev: list[str] = [f"Test ({verdict.decided}, {verdict.source}): {verdict.summary}"] if verdict else []
     bt, n_scored = _backtest_evidence(words, run_cells)
@@ -89,6 +89,9 @@ def _family_row(fid: str, words: W.FamilyWords, horizon: str, status: str, note:
         names = sum(1 for r in sl.name_rows if r.get("family") in words.pooled_families and n_gates_passed(r)[0] >= 1)
     if names:
         ev.append(f"{names} individual stock(s) pass at least one shortlist check.")
+    line = recheck.lines.get(fid) if recheck else None
+    if line:
+        ev.append(f"Re-check ({recheck.as_of}): {line}")
     if n_live:
         head, tone = f"{n_live} candidate(s) for live trading", "green"
     elif n_paper:
@@ -106,8 +109,9 @@ def _family_row(fid: str, words: W.FamilyWords, horizon: str, status: str, note:
     return FamilyRow(fid, words.bet, words.rule, horizon, status, note, head, tone, tuple(ev), outcome)
 
 
-def family_rows(run_cells, sl: Shortlist | None, specs, verdicts=None) -> list[FamilyRow]:
-    """``verdicts`` is a study_verdicts.Loaded (or None: every family is untested)."""
+def family_rows(run_cells, sl: Shortlist | None, specs, verdicts=None, recheck=None) -> list[FamilyRow]:
+    """``verdicts`` is a study_verdicts.Loaded (or None: every family is untested); ``recheck`` is a
+    recheck_view.Recheck (or None: no re-check line)."""
     decided = verdicts.verdicts if verdicts else {}
     try:
         from strategy_fit.catalog_meta import ALL_FAMILIES
@@ -117,7 +121,7 @@ def family_rows(run_cells, sl: Shortlist | None, specs, verdicts=None) -> list[F
     for m in ALL_FAMILIES:
         words = W.FAMILY_WORDS.get(m.family_id, W.FamilyWords("(no description yet)", "(no description yet)"))
         out.append(_family_row(m.family_id, words, _horizon(m), m.catalog_status, m.deferred_note, run_cells, sl,
-                               specs, decided.get(m.family_id)))
+                               specs, decided.get(m.family_id), recheck))
     return out
 
 

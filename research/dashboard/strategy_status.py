@@ -60,6 +60,9 @@ class Inputs:
     research_log: Any = None
     """strategy_fit.research_log.LogState; None = not loaded (see research_log_problem)."""
     research_log_problem: str = ""
+    recheck: Any = None
+    """dashboard.recheck_view.Recheck from the newest results/recheck/<date>.json; None = none or unusable."""
+    recheck_problem: str = ""
 
 
 def load_shortlist(research_dir: str) -> tuple[Shortlist | None, str]:
@@ -113,13 +116,23 @@ def load_research_log(path: str) -> tuple[Any, str]:
         return None, f"the research log could not be loaded ({type(exc).__name__}: {exc})"
 
 
+def load_recheck(research_dir: str) -> tuple[Any, str]:
+    """(Recheck, "") / (None, "") when no re-check was run / (None, reason) when its output is unusable."""
+    try:
+        from dashboard.recheck_view import load_recheck as _load
+        return _load(os.path.join(research_dir, "results"))
+    except Exception as exc:  # noqa: BLE001
+        return None, f"the closed-family re-check could not be loaded ({type(exc).__name__}: {exc})"
+
+
 def gather_inputs(research_dir: str, daily_dir: str, research_log_path: str | None = None) -> Inputs:
     shortlist, problem = load_shortlist(research_dir)
     verdicts, verdicts_problem = load_study_verdicts(research_dir)
     log_state, log_problem = (None, "") if research_log_path is None else load_research_log(research_log_path)
+    recheck, recheck_problem = load_recheck(research_dir)
     stored = tuple(sorted(os.path.basename(p)[:-8] for p in glob.glob(os.path.join(daily_dir, "*.parquet"))))
     return Inputs(shortlist, problem, load_universe(daily_dir), stored, load_specs(), verdicts, verdicts_problem,
-                  log_state, log_problem)
+                  log_state, log_problem, recheck, recheck_problem)
 
 
 # ---------------------------------------------------------------------------

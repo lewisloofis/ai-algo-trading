@@ -15,6 +15,7 @@ One folder per study run, committed (reports and small CSV/JSON; large
 | `index_events/` | plan 21 coverage tables and event-time plots | 21 |
 | `index_rebalance/` | plan 21 H2 development and MSCI_ST holdout | 21 |
 | `indicator_rules/` | plan 24 classic indicator rules, development run (holdout unspent) | 24 |
+| `recheck/` | plan 26 closed-family re-check: `<as-of>.md` / `.json` per run and the milestone ledger `milestones.json` (written by `make recheck`) | 26 |
 | `fixture/` | local fixture run (gitignored) | — |
 
 A study that decides a strategy family also holds a `verdict.json` (schema in `strategy_fit/study_verdicts.py`; written with `python -m strategy_fit.study_verdicts record`, see plan 25). The triage report and the dashboard read it.

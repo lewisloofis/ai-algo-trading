@@ -327,3 +327,20 @@ def test_fingerprint_sees_research_log_append(tmp_path):
     with open(log, "a") as f:
         f.write('{"a": 2}\n')
     assert fp() != created
+
+
+def test_fingerprint_sees_recheck_output_by_content_not_mtime(tmp_path):
+    fp, results, _plans, _git = _research_world(tmp_path)
+    base = fp()
+    out = results / "recheck" / "2026-12-01.json"
+    out.parent.mkdir()
+    out.write_text('{"schema": 1}')
+    added = fp()
+    assert added != base
+    out.write_text('{"schema": 1}')
+    os.utime(out, (1, 1))
+    assert fp() == added
+    out.write_text('{"schema": 2}')
+    assert fp() != added
+    (out.parent / "milestones.json").write_text("{}")
+    assert fp() != added

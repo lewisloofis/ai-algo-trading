@@ -11,6 +11,7 @@
 #   make dashboard
 #   make dashboard-live
 #   make refresh-prices
+#   make recheck [AS_OF=YYYY-MM-DD]   (plan 26 closed-family re-check on post-verdict data)
 #   make foreign-universe | foreign-fetch | foreign-checks   (plan 22 Phase 1 foreign-flow data)
 #   make paper-day STRATEGY=wifi_momo_h5
 #   make paper-scorecard STRATEGY=wifi_momo_h5
@@ -20,7 +21,7 @@
 #   make runner-arm STRATEGY=<id> MAX_IDR=<n> [DATE=] | runner-disarm [DATE=]   (the only way to go live)
 #   make clean
 
-.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live refresh-prices foreign-universe foreign-fetch foreign-checks emit-target paper-day paper-scorecard cost-report publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test runner-arm runner-disarm runner-day token-status token-refresh token-ensure token-test collector-live
+.PHONY: build build-linux-arm64 build-strategy collect sbcap test dashboard dashboard-live recheck refresh-prices foreign-universe foreign-fetch foreign-checks emit-target paper-day paper-scorecard cost-report publish-dashboard recon clean runner-install runner-uninstall runner-status runner-dry-run runner-test runner-arm runner-disarm runner-day token-status token-refresh token-ensure token-test collector-live
 
 # collector-live: LIVE check of the EC2 collector via SSM (read-only remote script).
 # Today's S3 data does not exist until midnight, so scripts/collector_healthcheck.py cannot
@@ -96,6 +97,21 @@ dashboard-live:
 	@echo "Live dashboard: http://127.0.0.1:$(PORT)/"
 	cd research && $(DASH_PY) -m dashboard serve --port $(PORT) \
 		$(if $(filter skip,$(HEALTHCHECK)),--no-healthcheck,)
+
+# recheck re-runs every closed strategy family, with the rules it failed under, on prices that arrived AFTER
+# its verdict (plan 26). Manual trigger only, no schedule; nothing here places an order, reads a token or
+# touches the network (it reads research/data/daily/*.parquet). Run `make refresh-prices` first so the bars
+# are current: it refuses (exit 2) when --as-of is in the future or the newest daily bar is more than
+# 10 days older than --as-of. Each family is evaluated only when its post-verdict N first reaches 30, 60
+# and 120 independent observations; a milestone is evaluated once (research/results/recheck/milestones.json).
+# An ALERT only earns a new pre-registered plan, it is not a verdict. Output:
+# research/results/recheck/<as-of>.md and .json (committed).
+#   make recheck                         as of today (Jakarta time)
+#   make recheck AS_OF=2026-12-01
+AS_OF ?= $(shell TZ=Asia/Jakarta date +%Y-%m-%d)
+
+recheck:
+	cd research && $(DASH_PY) -m recheck.run --as-of $(AS_OF)
 
 # recon is the broker reconciliation (strategy/cmd/account-recon --stores): the
 # expected position from ALL live stores + runs/manual_trades.json + the broker-
