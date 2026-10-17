@@ -6,11 +6,15 @@ Cells passed to ``table`` are trusted HTML, so every value is escaped here.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from dashboard import paper_tests as PT
 from dashboard import strategy_families as F
 from dashboard import strategy_status as S
 from dashboard import strategy_words as W
 from dashboard.render import Column, banner, esc, money, pill, table, tile
+
+WIB = timezone(timedelta(hours=7))
 
 NOT_CHECKED_SHORTLIST = (
     "Not checked: the shortlist file could not be used ({why}). Produce it with "
@@ -95,6 +99,52 @@ def families_section(rows: list[F.FamilyRow], problems=()) -> str:
         ])
     return (head + '<p class="lead">Each family is a different idea about when to buy. Results are the latest '
             "backtest and shortlist; money is after trading costs.</p>" + table(FAMILY_COLS, body))
+
+
+# ---------------------------------------------------------------------------
+# B2. Research activity (runs/research_log.jsonl)
+# ---------------------------------------------------------------------------
+
+RESEARCH_COLS = (Column("Finished (WIB)"), Column("Study"), Column("Plan"), Column("Outcome"), Column("Note"))
+RESEARCH_SHOWN = 10
+
+
+def _wib(ts: str) -> datetime:
+    return datetime.fromisoformat(ts).astimezone(WIB)
+
+
+def _ago(then: datetime, now: datetime) -> str:
+    minutes = max(0, int((now - then).total_seconds() // 60))
+    if minutes < 60:
+        return f"{minutes} min ago"
+    hours, rest = divmod(minutes, 60)
+    if hours < 48:
+        return f"{hours} h {rest} min ago"
+    return f"{hours // 24} days ago"
+
+
+def _running_item(e, now: datetime) -> str:
+    started = _wib(e.ts)
+    fams = ", ".join(e.families) or "no family"
+    return (f"<li><b>{esc(e.study)}</b> ({esc(e.plan)}; {esc(fams)}): {esc(e.note)} "
+            f'<span class="small">started {started:%Y-%m-%d %H:%M} WIB, {esc(_ago(started, now))}</span></li>')
+
+
+def _finished_row(e) -> list[str]:
+    return [esc(f"{_wib(e.ts):%Y-%m-%d %H:%M}"), f"<b>{esc(e.study)}</b>", esc(e.plan),
+            pill(F.OUTCOME_TONES.get(e.outcome, "grey"), e.outcome or "?"), esc(e.note)]
+
+
+def research_activity_section(state, problems, now) -> str:
+    """``state`` is a research_log.LogState (None when it could not be loaded); ``now`` is aware."""
+    head = "<h2>Research activity</h2>" + "".join(_not_checked("Not checked: " + esc(p)) for p in problems)
+    if state is None:
+        return head
+    running = ("<ul>" + "".join(_running_item(e, now) for e in state.running) + "</ul>"
+               if state.running else _not_checked("No research is running."))
+    return (head + "<h3>Running now</h3>" + running + "<h3>Recently finished</h3>"
+            + table(RESEARCH_COLS, [_finished_row(e) for e in state.recent[:RESEARCH_SHOWN]],
+                    empty="No research finished yet."))
 
 
 # ---------------------------------------------------------------------------

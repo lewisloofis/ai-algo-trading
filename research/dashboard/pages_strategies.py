@@ -52,12 +52,15 @@ def render_list(d) -> str:
                "Family results below use the shortlist only."))
     verdict_problems = ((inp.verdicts_problem,) if inp.verdicts_problem else ()) + (
         tuple(inp.verdicts.problems) if inp.verdicts else ())
+    research_problems = ((inp.research_log_problem,) if inp.research_log_problem else ()) + (
+        tuple(inp.research_log.problems) if inp.research_log else ())
     body = (
         "<h1>Strategies</h1>"
         '<p class="lead">The current condition of our strategy work: what is running, what we are considering, '
         "which stocks are in the screen and which combinations look promising. Nothing here has been proven in live trading.</p>"
         + stand_wrap(stages, d)
         + SEC.families_section(F.family_rows(run_cells, inp.shortlist, inp.specs, inp.verdicts), verdict_problems)
+        + SEC.research_activity_section(inp.research_log, research_problems, d.now)
         + provenance
         + SEC.screen_section(inp)
         + SEC.combos_section(inp.shortlist, inp.shortlist_problem, combos, _detail_links(d), d.now_wib.date())

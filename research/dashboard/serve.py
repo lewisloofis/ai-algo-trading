@@ -8,7 +8,7 @@ Three parts:
 * a rebuild thread that rebuilds the whole site every ``rebuild_every`` seconds, and sooner when
   the inputs change (a new or changed runs/*.db, a heartbeat file appearing, disappearing or
   changing its outcome, a daily price file, a research verdict file's content, a plan edit, a new
-  git commit). Never two builds at once.
+  git commit, a line appended to runs/research_log.jsonl). Never two builds at once.
 * an atomic swap: each build goes into a fresh temp directory and the server switches to it only
   when it finished, so a request never sees a half-written site. A failed build is logged and the
   previous site keeps being served.
@@ -111,6 +111,8 @@ class SiteHolder:
 DEFAULT_RESULTS_DIR = os.path.join(config.RESEARCH_DIR, "results")
 DEFAULT_PLANS_DIR = os.path.join(config.REPO_ROOT, "docs", "plans")
 DEFAULT_GIT_DIR = os.path.join(config.REPO_ROOT, ".git")
+RESEARCH_LOG_NAME = "research_log.jsonl"
+"""Appended by strategy_fit.research_log; lives in the runs directory."""
 
 
 def _read_text(path: str) -> str | None:
@@ -160,6 +162,7 @@ def fingerprint(
     results_dir: str = DEFAULT_RESULTS_DIR,
     plans_dir: str = DEFAULT_PLANS_DIR,
     git_dir: str = DEFAULT_GIT_DIR,
+    research_log_path: str | None = None,
 ) -> Hashable:
     """Everything whose change should refresh the pages, as one comparable value."""
     stamps: list[tuple] = []
@@ -177,6 +180,11 @@ def fingerprint(
         except (OSError, ValueError, AttributeError):
             stamps.append((path, "unreadable"))
     stamps.extend(_research_stamps(results_dir, plans_dir, git_dir))
+    try:
+        st = os.stat(research_log_path or os.path.join(runs_dir, RESEARCH_LOG_NAME))
+        stamps.append(("research-log", st.st_size, st.st_mtime_ns))
+    except OSError:
+        pass
     return tuple(stamps)
 
 
@@ -352,7 +360,7 @@ def run(opt: ServeOptions, log: Log) -> int:
 
     def watch() -> Hashable:
         return fingerprint(opt.site.runs_dir, opt.site.daily_dir, os.path.join(opt.site.research_dir, "results"),
-                           DEFAULT_PLANS_DIR, DEFAULT_GIT_DIR)
+                           DEFAULT_PLANS_DIR, DEFAULT_GIT_DIR, opt.site.research_log_path)
 
     rebuilder = Rebuilder(holder, build, watch, work_dir, opt.rebuild_every_s, opt.min_gap_s, log=log)
     stop = threading.Event()

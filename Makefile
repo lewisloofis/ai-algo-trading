@@ -86,6 +86,7 @@ dashboard:
 # dashboard-live serves the same dashboard on http://127.0.0.1:$(PORT)/ (this machine only). The
 # "Online now" panel refreshes every 5 seconds from the bot's heartbeat files, and the pages
 # rebuild every 5 minutes or sooner when the run stores / daily prices change. Ctrl-C stops it.
+# It also refreshes on research verdicts, plan edits, new commits and appended runs/research_log.jsonl lines.
 #   make dashboard-live                      (runs the health check on each rebuild: slow, needs AWS credentials)
 #   make dashboard-live HEALTHCHECK=skip     recommended for a live view
 #   make dashboard-live PORT=9000

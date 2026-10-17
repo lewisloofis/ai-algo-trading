@@ -32,6 +32,9 @@ _OUTCOME_HEADLINES = {
     "INCONCLUSIVE": ("Inconclusive: needs more data", "amber"),
 }
 
+OUTCOME_TONES = {**{k: tone for k, (_, tone) in _OUTCOME_HEADLINES.items()}, "ABANDONED": "grey"}
+"""Colour of a research-log outcome pill: the same tones as the family headlines; abandoned is grey."""
+
 
 def _horizon(meta) -> str:
     return f"{meta.horizon_label} (typical hold {meta.char_hold_days} day{'s' if meta.char_hold_days != 1 else ''})" \

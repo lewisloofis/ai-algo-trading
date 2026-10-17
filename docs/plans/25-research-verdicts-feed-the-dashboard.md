@@ -1,6 +1,6 @@
 # Research Verdicts Feed the Dashboard
 
-> **Status:** 🔨 In progress · steps 1–2 built 2026-10-17, step 3 not started · **Owner:** @lewis · **Created:** 2026-10-17
+> **Status:** ✔️ Done 2026-10-17 · steps 1–3 built (step 3 without a hook, §2.4) · **Owner:** @lewis · **Created:** 2026-10-17
 > **Related:** [19-observability-and-dashboard.md](./19-observability-and-dashboard.md) (the dashboard) · [16-strategy-triage-and-prioritization.md](./16-strategy-triage-and-prioritization.md) (the family catalog) · [../../research/results/README.md](../../research/results/README.md)
 
 > **In plain words.** Research happens in Claude Code sessions: a study runs, we
@@ -79,13 +79,24 @@ a holdout, and that cannot be derived from one JSON).
 A verdict recorded in a Claude Code session then reaches the live page at
 the next poll plus the settle gap (seconds), not the 5-minute periodic build.
 
-### 2.4 Research activity feed (step 3, not started)
+### 2.4 Research activity feed (step 3)
 
-A "Research activity" section built from git commits and verdict files, and
-optionally a Claude Code hook that appends to `runs/research_log.jsonl` when
-a study starts or finishes, so in-progress research shows as "running" like
-the bot's Online panel. It needs a hook in the owner's Claude Code settings,
-so it waits for an explicit go.
+**Decided 2026-10-17 (owner): no Claude Code hook.** Claude appends an event
+to `runs/research_log.jsonl` by hand, through
+`python -m strategy_fit.research_log start|finish`, whenever a study starts
+or finishes in this project. The log is machine-local (`runs/` is
+gitignored), like the bot's heartbeat files.
+
+The Strategies page gets a "Research activity" section: studies running now
+(started, not finished) and the last 10 finished, with their outcome.
+`dashboard serve` also rebuilds when the log changes.
+
+### 2.5 Re-checking closed families (plan 26, not written)
+
+**Decided 2026-10-17 (owner): manual trigger for now.** A monthly re-check of
+closed families on post-verdict data is run when asked, not on a schedule.
+Its result is recorded like any study: a `research_log` start/finish pair
+and, when it decides something, a verdict file.
 
 ## 3. Backfill
 
@@ -113,7 +124,7 @@ they were decided (from git history and the plans' §10 logs):
 * [x] Backfill files committed; triage report and dashboard read them.
 * [x] `catalog_meta` carries no outcome fields.
 * [x] `dashboard serve` rebuilds on a verdict, plan or commit change (tests).
-* [ ] Step 3 decided.
+* [x] Step 3 decided and built: research log + "Research activity" section, no hook.
 
 ## 5. Rule for future studies
 

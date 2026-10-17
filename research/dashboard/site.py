@@ -41,6 +41,8 @@ class SiteOptions:
     """Default: <runs_dir>/manual_trades.json. A missing file means no manual trades."""
     broker_trades_path: str | None = None
     """Default: <runs_dir>/broker_trades.json (written by account-recon). A missing file means none."""
+    research_log_path: str | None = None
+    """Default: <runs_dir>/research_log.jsonl (appended by strategy_fit.research_log). A missing file means none."""
     healthcheck: str = "run"
     """'run' (run the script), 'skip', or a path to a saved ``--json`` output."""
     now: datetime | None = None
@@ -169,7 +171,9 @@ def gather(opt: SiteOptions, log: Callable[[str], None] = lambda _m: None) -> Si
         daily_last=health.daily_data_newest(opt.daily_dir),
         online=collect_live(opt.runs_dir, now),
         paper_tests=paper_tests.collect(opt.runs_dir, opt.daily_dir),
-        strategy_inputs=strategy_status.gather_inputs(opt.research_dir, opt.daily_dir),
+        strategy_inputs=strategy_status.gather_inputs(
+            opt.research_dir, opt.daily_dir,
+            opt.research_log_path or os.path.join(opt.runs_dir, "research_log.jsonl")),
         run_history=collect_live(opt.runs_dir, now, recent_days=strategy_status.RUN_HISTORY_DAYS),
     )
 

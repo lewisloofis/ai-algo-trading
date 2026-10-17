@@ -57,6 +57,9 @@ class Inputs:
     verdicts: Any = None
     """strategy_fit.study_verdicts.Loaded; None = not loaded (see verdicts_problem)."""
     verdicts_problem: str = ""
+    research_log: Any = None
+    """strategy_fit.research_log.LogState; None = not loaded (see research_log_problem)."""
+    research_log_problem: str = ""
 
 
 def load_shortlist(research_dir: str) -> tuple[Shortlist | None, str]:
@@ -101,11 +104,22 @@ def load_study_verdicts(research_dir: str) -> tuple[Any, str]:
         return None, f"the study verdicts could not be loaded ({type(exc).__name__}: {exc})"
 
 
-def gather_inputs(research_dir: str, daily_dir: str) -> Inputs:
+def load_research_log(path: str) -> tuple[Any, str]:
+    """(LogState, "") or (None, reason): a missing module or an unreadable file never crashes the build."""
+    try:
+        from strategy_fit.research_log import load
+        return load(path), ""
+    except Exception as exc:  # noqa: BLE001
+        return None, f"the research log could not be loaded ({type(exc).__name__}: {exc})"
+
+
+def gather_inputs(research_dir: str, daily_dir: str, research_log_path: str | None = None) -> Inputs:
     shortlist, problem = load_shortlist(research_dir)
     verdicts, verdicts_problem = load_study_verdicts(research_dir)
+    log_state, log_problem = (None, "") if research_log_path is None else load_research_log(research_log_path)
     stored = tuple(sorted(os.path.basename(p)[:-8] for p in glob.glob(os.path.join(daily_dir, "*.parquet"))))
-    return Inputs(shortlist, problem, load_universe(daily_dir), stored, load_specs(), verdicts, verdicts_problem)
+    return Inputs(shortlist, problem, load_universe(daily_dir), stored, load_specs(), verdicts, verdicts_problem,
+                  log_state, log_problem)
 
 
 # ---------------------------------------------------------------------------

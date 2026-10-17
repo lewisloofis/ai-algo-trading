@@ -315,3 +315,15 @@ def test_cli_refuses_a_public_bind_before_building_anything(capsys):
 
     assert main(["serve", "--host", "0.0.0.0", "--no-healthcheck"]) == 2
     assert "127.0.0.1 only" in capsys.readouterr().err
+
+
+def test_fingerprint_sees_research_log_append(tmp_path):
+    fp, _results, _plans, _git = _research_world(tmp_path)
+    log = tmp_path / "runs" / "research_log.jsonl"
+    base = fp()
+    log.write_text('{"a": 1}\n')
+    created = fp()
+    assert created != base
+    with open(log, "a") as f:
+        f.write('{"a": 2}\n')
+    assert fp() != created
