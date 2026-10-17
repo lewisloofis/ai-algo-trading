@@ -197,6 +197,7 @@ line. Any later change is a new dated row with the reason.
 | date | change | by |
 |---|---|---|
 | 2026-10-17 | Freeze §1–§5 as written. §8 answered with the proposed defaults: universe = top 40 by value traded, S1 keeps the −2% price filter, no k = 10 hold. Signed before any foreign-flow history beyond the BMRI depth probe was downloaded; no returns computed. | @lewis (owner; instructed in session, entered by Claude) |
+| 2026-10-17 | **Data rule, added after the §10.1 checks and before any return was computed.** (1) A name-day that is missing, or that fails check 3 (buy + sell > 2 × chartbit value), is *no data*: it cannot trigger, it is left out of the name's trailing-250 percentile history, and it is never treated as zero flow. (2) S2 is evaluated only on sessions where ≥ 35 of the 40 universe members have valid foreign data; the market sum and its trailing-250 percentile use only those sessions. Nothing else changes. | @lewis (owner; instructed in session, entered by Claude) |
 
 ## 10. Results log (append-only)
 
