@@ -12,6 +12,7 @@ One folder per study run, committed (reports and small CSV/JSON; large
 | `shortlist/` | 2026-10-15 first-candidate shortlist (read by the dashboard) | 10 |
 | `index_events/` | plan 21 coverage tables and event-time plots | 21 |
 | `index_rebalance/` | plan 21 H2 development and MSCI_ST holdout | 21 |
+| `indicator_rules/` | plan 24 classic indicator rules, development run (holdout unspent) | 24 |
 | `fixture/` | local fixture run (gitignored) | — |
 
 Live runner output stays in `research/out_live/`; older loose script output is in `research/out/` (gitignored).

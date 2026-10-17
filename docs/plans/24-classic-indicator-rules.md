@@ -1,6 +1,6 @@
 # Classic Indicator Rules: Pre-Registration
 
-> **Status:** 🔒 Frozen 2026-10-17 (§9), development run next · **Owner:** @lewis · **Created:** 2026-10-17
+> **Status:** ⛔ Closed 2026-10-17: development FAIL in all 5 cells, holdout unspent (§10.1) · 🔒 Frozen 2026-10-17 (§9) · **Owner:** @lewis · **Created:** 2026-10-17
 > **Related:** [22-foreign-selling-rebound.md](./22-foreign-selling-rebound.md) (template, gates) · [10-strategy-fit-and-portfolio.md](./10-strategy-fit-and-portfolio.md) (momentum / mean-reversion / breakout families, all fixed-hold, no edge) · [../research/alpha-search-2026-10.md](../research/alpha-search-2026-10.md) (12-1 momentum weak lead, fails in bear) · [ADR-0015](../adr/0015-leverage-optional-horizon-ceiling-lifted.md)
 
 > **In plain words.** Retail traders use moving averages, RSI, MACD and
@@ -168,7 +168,39 @@ line. Any later change is a new dated row with the reason.
 
 ## 10. Results log (append-only)
 
-*Empty until the development run.*
+### 10.1 Development run, 2026-10-17
+
+Code `research/strategy_fit/families_indicator_rules{,_views,_report}.py`, tests
+`test_families_indicator_rules.py` (33). Output `research/results/indicator_rules/dev.{json,md}`,
+`dev_trades.csv`. Entries 2015-01-01 → 2022-12-30; no price dated 2023+ read (poison test).
+Three trades hand-checked from raw bars (KLBF R5, ADHI R3 with dividend, PTPP R4): exact match.
+
+| rule | trades | mean hold | gross | null | edge | cluster t | Holm p | net (edge − cost, current) | net − IHSG | verdict |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| R1 golden cross | 607 | 132.5 | +524 | +1755 | −1232 | −4.86 | 1.00 | −1323 | +183 | FAIL G2 G3 G4 G7 G9 |
+| R2 MACD | 8135 | 12.4 | +84 | +43 | +41 | 1.00 | 0.47 | −50 | −30 | FAIL G2 G3 G4 G6 G7 G9 |
+| R3 RSI 30/50 | 1867 | 15.3 | −28 | −153 | +126 | 1.52 | 0.32 | +31 | −140 | FAIL G2 G6 G7 G9 |
+| R4 Bollinger | 4015 | 12.9 | −48 | −60 | +13 | 0.25 | 0.80 | −80 | −163 | FAIL G2 G3 G4 G6 G7 G9 |
+| R5 RSI-2 pullback | 4917 | 4.3 | +53 | +36 | +18 | 1.32 | 0.38 | −74 | −54 | FAIL G2 G3 G4 G6 G7 G9 |
+
+**Verdict: nothing passes development. Family closed; holdout unspent.** No re-test with other settings (§7).
+
+Notes:
+* **Timing is real but small.** C-rand percentile of mean gross: R2 99, R3 100, R5 99 (R1 0, R4 60).
+  The rules pick better days than random, by less than the ~91–95 bps round trip.
+* **R3 is the closest.** Positive net under all three cost variants and ex-5 net +4, but t 1.52,
+  negative net − IHSG, and its gross is negative (−28 bps): it "beats" a null that was itself −153
+  bps, i.e. it loses less than holding in bad years. Its edge sits in the IHSG-above-SMA200 regime
+  (t 4.18, G8, reported only, post-hoc, not evidence) and net − IHSG is negative in both regimes.
+* **R1's null is inflated.** `hold × mean daily return` uses the arithmetic mean, which overstates a
+  132-session compounded hold for volatile names, and it includes the pre-cross rally in the same year.
+  The per-trade verdict is therefore harsh on R1, but the portfolio view does not rescue it: R1 book
+  CAGR 3.0%, max DD −59% vs equal-weight universe 7.7% / −56% and IHSG 3.6% / −41%.
+* **No risk-control finding.** No book has a smaller drawdown than buy-and-hold (R2–R5 books lose
+  9–35% a year after costs).
+* Agent judgment calls (none change a setting, cell, gate or window), listed in full in the agent
+  report: net for G3/G4/G9 on the plan-22 edge − cost basis, gross-basis figures also in `dev.md`;
+  cost at the actual entry open; time stop exits at open e+20.
 
 ---
 
