@@ -47,7 +47,7 @@ def test_price_chart_marks_filled_and_unfilled_orders_differently():
     polys = doc.getElementsByTagName("polygon")
     assert len(polys) == 2
     assert polys[0].getAttribute("fill") == svg.GREEN
-    assert polys[1].getAttribute("fill") == "#ffffff"  # hollow = not filled
+    assert polys[1].getAttribute("fill") == "var(--bg)"  # hollow = not filled
 
 
 def test_price_chart_places_orders_after_the_last_close():

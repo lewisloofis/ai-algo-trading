@@ -43,11 +43,11 @@ HOVER_JS = r"""
     // JS is running: the per-point native tooltips would fight the readout.
     Array.prototype.forEach.call(svg.querySelectorAll(".pt"), function (c) { c.style.pointerEvents = "none"; });
     var g = el("g", { "pointer-events": "none", visibility: "hidden" }, svg);
-    var vline = el("line", { y1: PT, y2: PB, stroke: "#6b7280", "stroke-dasharray": "3 3" }, g);
-    var dots = d.s.map(function (s) { return el("circle", { r: 4, fill: s.c, stroke: "#fff", "stroke-width": 1.5 }, g); });
-    var box = el("rect", { rx: 4, fill: "#fff", stroke: "#9ca3af", "fill-opacity": 0.95 }, g);
+    var vline = el("line", { y1: PT, y2: PB, stroke: "var(--muted)", "stroke-dasharray": "3 3" }, g);
+    var dots = d.s.map(function (s) { return el("circle", { r: 4, fill: s.c, stroke: "var(--bg)", "stroke-width": 1.5 }, g); });
+    var box = el("rect", { rx: 4, fill: "var(--panel)", stroke: "var(--muted)", "fill-opacity": 0.95 }, g);
     var lines = [];
-    for (var i = 0; i < d.s.length + 2; i++) lines.push(el("text", { "font-size": 12, fill: "#1a1a1a" }, g));
+    for (var i = 0; i < d.s.length + 2; i++) lines.push(el("text", { "font-size": 12, fill: "var(--ink)" }, g));
     function y(v) { return PB - (v - d.y0) / (d.y1 - d.y0) * (PB - PT); }
     function move(ev) {
       var r = svg.getBoundingClientRect();

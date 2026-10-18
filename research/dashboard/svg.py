@@ -16,13 +16,13 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Callable, Sequence
 
-INK = "#1a1a1a"
-MUTED = "#6b7280"
-GRID = "#e5e7eb"
-BLUE = "#1d4ed8"
-GREEN = "#15803d"
-RED = "#b91c1c"
-AMBER = "#c2410c"
+INK = "var(--ink)"
+MUTED = "var(--muted)"
+GRID = "var(--line)"
+BLUE = "var(--accent)"
+GREEN = "var(--green)"
+RED = "var(--red)"
+AMBER = "var(--amber)"
 
 W, H = 720, 280
 PAD_L, PAD_R, PAD_T, PAD_B = 70, 16, 14, 34
@@ -281,7 +281,7 @@ def price_chart(
         tri = f"{x:.1f},{y - 8:.1f} {x - 6:.1f},{y + 5:.1f} {x + 6:.1f},{y + 5:.1f}" if up else (
             f"{x:.1f},{y + 8:.1f} {x - 6:.1f},{y - 5:.1f} {x + 6:.1f},{y - 5:.1f}"
         )
-        fill = color if m.filled else "#ffffff"
+        fill = color if m.filled else "var(--bg)"
         tip = html.escape(m.label or f"{m.side} {m.price:,.0f} on {m.day}")
         body += f'<polygon points="{tri}" fill="{fill}" stroke="{color}" stroke-width="2"><title>{tip}</title></polygon>'
     body += _legend([("Daily close (Rp)", MUTED, False)])
