@@ -26,6 +26,7 @@ from strategy_fit.trade_export import CellTrades, export_cells
 
 from dashboard import broker_import, config, health, inputs, ledger, manual_trades, recon, results, scorecard, store, trades_data
 from dashboard import paper_tests, strategy_status
+from dashboard import summary as site_summary
 from dashboard.live import LiveSummary, collect as collect_live
 from dashboard.annotations import Annotation, Decision, TimelineEvent, load_annotations, load_decision, load_timeline
 
@@ -215,4 +216,8 @@ def build_site(opt: SiteOptions, log: Callable[[str], None] = lambda _m: None) -
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
         written.append(path)
+    try:  # summary.json for the portfolio overview; not counted as a page, and never fatal
+        site_summary.write_summary(d, opt.out_dir)
+    except Exception as exc:  # noqa: BLE001 - the dashboard is the product, the export is optional
+        log(f"summary.json skipped: {exc!r}")
     return written

@@ -117,6 +117,29 @@ def test_every_page_is_written_with_the_shared_nav(world):
         assert page.count("<script>") == (1 if "data-hv=" in page else 0) + (1 if n == "index.html" else 0)
 
 
+def test_summary_json_is_written_next_to_the_pages_without_the_account_number(world):
+    opt, _runs, out = world
+    written = build_site(opt)
+    assert (out / "summary.json").exists() and not (out / "summary.json.tmp").exists()
+    assert "summary.json" not in {os.path.basename(p) for p in written}  # not counted as a page
+    doc = json.loads(text(out, "summary.json"))
+    assert doc["source"] == "algo" and ACCOUNT not in text(out, "summary.json")
+
+
+def test_a_failing_summary_export_never_fails_the_build(world, monkeypatch):
+    from dashboard import site
+
+    def boom(*_a, **_k):
+        raise RuntimeError("export broke")
+
+    monkeypatch.setattr(site.site_summary, "write_summary", boom)
+    opt, _runs, out = world
+    logs = []
+    written = build_site(opt, log=logs.append)
+    assert (out / "index.html").exists() and written
+    assert "summary.json skipped: RuntimeError('export broke')" in logs
+
+
 def test_the_account_number_is_never_rendered(world):
     opt, _runs, out = world
     build_site(opt)
