@@ -2,9 +2,13 @@
 
 Automated:  main session (SB_ACCESS_TOKEN; the retired SB_BEARER_TOKEN is no longer written) via SB_REFRESH_TOKEN; if that is dead
             and SB_USERNAME/SB_PASSWORD/SB_PLAYER_ID are present, a headless re-login with the
-            already-trusted player_id (plan 03 phase 0). Trading session via SB_TRADING_REFRESH_TOKEN.
-Manual:     a challenge on login (trust revoked), a dead trading refresh token (needs the PIN, which
-            this tool never stores), a missing refresh token. These come back as ``actions``.
+            already-trusted player_id (plan 03 phase 0). Trading session: a fresh PIN login
+            (main access -> login_token -> carina /auth/v2/login with SB_TRADING_PIN -> carina-api
+            /auth/account/switch to SB_TRADING_ACCOUNT) whenever it has < TRADING_MIN_HOURS left; the PIN
+            login alone lands on the primary account, so its token is never kept. Carina's trading
+            refresh token is not usable, so it is never kept either.
+Manual:     a challenge on login (trust revoked), a missing main refresh token, a missing or rejected
+            SB_TRADING_PIN, a missing SB_TRADING_ACCOUNT or a refused switch. These come back as ``actions``.
 
 Nothing here prints or returns a token except ``EnsureResult.apply_to`` (in-memory env update)."""
 
@@ -20,11 +24,14 @@ from token_rotation import client
 from token_rotation.envstore import read_env, update_env
 
 ACCESS, REFRESH = "SB_ACCESS_TOKEN", "SB_REFRESH_TOKEN"
-T_ACCESS, T_REFRESH = "SB_TRADING_ACCESS_TOKEN", "SB_TRADING_REFRESH_TOKEN"
+T_ACCESS, T_PIN, T_ACCOUNT = "SB_TRADING_ACCESS_TOKEN", "SB_TRADING_PIN", "SB_TRADING_ACCOUNT"
 USER, PASSWORD, PLAYER = "SB_USERNAME", "SB_PASSWORD", "SB_PLAYER_ID"
-TOKEN_NAMES = (ACCESS, REFRESH, T_ACCESS, T_REFRESH)
+TOKEN_NAMES = (ACCESS, REFRESH, T_ACCESS)
 
 DEFAULT_MIN_HOURS = 12.0     # refresh when any main access token has less than this left
+# A PIN login lasts 8h: minted at the 08:45 preflight it covers the whole session, and the 16:20
+# post-close retry (~25 min left) re-mints it for recon. Above the 1.5h live preflight minimum.
+TRADING_MIN_HOURS = 2.0
 REFRESH_WARN_HOURS = 72.0    # a refresh token this close to death, with no relogin creds, is flagged
 RETRIES = 3
 
@@ -134,19 +141,38 @@ def _rotate_main(env: Dict[str, str], exodus: str, sleep) -> Tuple[Optional[clie
     return None, actions, False
 
 
-def _rotate_trading(env: Dict[str, str], carina: str, sleep) -> Tuple[Optional[client.TokenPair], List[str], bool]:
-    pin_hint = ("log in to the trading session again (PIN, see docs/runbooks/first-live-order.md) and put fresh "
-                f"{T_ACCESS}/{T_REFRESH} in .env.local; the PIN is never stored, so this cannot be automated")
-    if not env.get(T_REFRESH):
-        return None, [f"trading session cannot be refreshed ({T_REFRESH} is not set); {pin_hint}"], False
+def _mint_trading(env: Mapping[str, str], main_access: str, exodus: str, carina: str, carina_api: str,
+                  sleep) -> Tuple[Optional[client.TokenPair], List[str], bool]:
+    """PIN login from the (possibly just rotated) main session, then a switch to SB_TRADING_ACCOUNT.
+    -> (pair or None, actions, transient).
+
+    The PIN POST is sent at most once per call, never retried: repeated wrong PINs can lock the account.
+    The PIN login's own token is for the primary account and is never returned."""
+    for name in (T_PIN, T_ACCOUNT):
+        if not env.get(name):
+            return None, [f"trading session cannot be renewed ({name} is not set): add it to .env.local"], False
     try:
-        return _with_retries(lambda: client.refresh_trading(carina, env[T_REFRESH], env), sleep), [], False
-    except client.RefreshExpired:
-        return None, [f"trading refresh token expired; {pin_hint}"], False
+        lt = _with_retries(lambda: client.trading_login_token(exodus, main_access, env), sleep)
     except client.Transient:
         return None, [], True
     except client.AuthError as exc:
-        return None, [f"trading refresh failed: {exc}; {pin_hint}"], False
+        return None, [f"trading login token failed: {exc}"], False
+    if lt.target != "2":
+        return None, [f"trading login target {lt.target or '?'} is legacy, not NEW_CORE; the PIN was not sent"], False
+    try:
+        primary = client.trading_login(carina, lt.token, env[T_PIN], env)
+    except client.Transient:
+        return None, [], True
+    except client.AuthError as exc:
+        return None, [f"trading PIN login refused: {exc}; check {T_PIN} before the next run "
+                      "(repeated wrong PINs can lock the account)"], False
+    try:
+        pair = _with_retries(lambda: client.switch_account(carina_api, primary.access, env[T_ACCOUNT], env), sleep)
+    except client.Transient:
+        return None, [], True
+    except client.AuthError as exc:
+        return None, [f"trading account switch refused: {exc}; check {T_ACCOUNT}"], False
+    return pair, [], False
 
 
 def _main_updates(pair: client.TokenPair, env: Mapping[str, str]) -> Dict[str, str]:
@@ -155,13 +181,14 @@ def _main_updates(pair: client.TokenPair, env: Mapping[str, str]) -> Dict[str, s
 
 def ensure_tokens(env_path: Path, *, min_hours: float = DEFAULT_MIN_HOURS, force: bool = False,
                   now: Optional[float] = None, exodus: Optional[str] = None, carina: Optional[str] = None,
-                  sleep: Callable[[float], None] = time.sleep) -> EnsureResult:
+                  carina_api: Optional[str] = None, sleep: Callable[[float], None] = time.sleep) -> EnsureResult:
     """THE runner hook. Refresh the sessions in ``env_path`` that have < min_hours left (or all, if
     ``force``), write the result atomically, and report. Never raises for auth/network problems."""
     now = time.time() if now is None else now
     env = read_env(env_path)
     exodus = exodus or env.get("SB_EXODUS_HOST") or client.EXODUS_DEFAULT
     carina = carina or env.get("SB_CARINA_HOST") or client.CARINA_DEFAULT
+    carina_api = carina_api or env.get("SB_CARINA_API_HOST") or client.CARINA_API_DEFAULT
     actions: List[str] = []
     warnings: List[str] = []
     refreshed: List[str] = []
@@ -177,15 +204,16 @@ def ensure_tokens(env_path: Path, *, min_hours: float = DEFAULT_MIN_HOURS, force
             updates.update(_main_updates(pair, env))
             refreshed.append("main")
 
-    if env.get(T_ACCESS) or env.get(T_REFRESH):
+    main_access = updates.get(ACCESS) or env.get(ACCESS, "")
+    main_usable = _status(ACCESS, main_access, now).state == "fresh"
+    if (env.get(T_ACCESS) or env.get(T_PIN)) and main_usable:
         t_st = _status(T_ACCESS, env.get(T_ACCESS), now)
-        if force or t_st.state != "fresh" or t_st.hours_left < min_hours:
-            pair, acts, transient_t = _rotate_trading(env, carina, sleep)
+        if force or t_st.state != "fresh" or t_st.hours_left < TRADING_MIN_HOURS:
+            pair, acts, transient_t = _mint_trading(env, main_access, exodus, carina, carina_api, sleep)
             actions += acts
             transient = transient or transient_t
             if pair:
-                updates[T_ACCESS] = pair.access
-                updates[T_REFRESH] = pair.refresh or env.get(T_REFRESH, "")
+                updates[T_ACCESS] = pair.access          # its refresh token is not usable: not kept
                 refreshed.append("trading")
 
     if updates:

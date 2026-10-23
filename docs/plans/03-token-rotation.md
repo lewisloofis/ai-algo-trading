@@ -241,10 +241,14 @@ reads hand-copied web tokens from `.env.local` and died when they expired. Imple
 - [x] **Refresh dead → headless re-login (automated, opt-in):** if `SB_USERNAME`, `SB_PASSWORD` and
   `SB_PLAYER_ID` (the trusted player_id from Phase 0) are in `.env.local`, log in with it (no
   signature). A new-device challenge (trust revoked) is surfaced as a manual action.
-- [x] **Trading session (refresh only):** `POST carina /auth/refresh` with `SB_TRADING_REFRESH_TOKEN`
-  keeps `SB_TRADING_ACCESS_TOKEN` alive for `recon`.
-- [ ] **Cannot be automated, by design:** a dead trading refresh token needs the PIN, which is never
-  stored; a revoked player_id trust needs a phone approval; a missing `SB_REFRESH_TOKEN` needs one
+- [x] **Trading session (PIN re-mint, 2026-10-21):** Carina's trading refresh token turned out not
+  to be usable (the apps re-enter the PIN instead), so `/auth/refresh` is no longer called. When
+  `SB_TRADING_ACCESS_TOKEN` is missing or has < 2h left, a fresh PIN login is made from
+  `SB_TRADING_PIN` in `.env.local` (8h session: minted at 08:45, re-minted at 16:20 for `recon`).
+  Since 2026-10-23 the PIN login's token (primary investment account) is only used to
+  `POST carina.api /auth/account/switch` to `SB_TRADING_ACCOUNT`; only the switched token is kept.
+- [ ] **Cannot be automated, by design:** a missing or refused `SB_TRADING_PIN`; a revoked player_id
+  trust needs a phone approval; a missing `SB_REFRESH_TOKEN` needs one
   manual seed. These return `ACTION REQUIRED` messages (exit code 1/3), and a refresh token with
   < 72h left and no re-login credentials raises an early warning, so the runner alerts days ahead.
 - Write path: flock, 0600 temp file in the same directory, fsync, `os.replace` (atomic); other

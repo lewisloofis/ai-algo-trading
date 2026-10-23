@@ -59,7 +59,8 @@ def build_plan(cfg: Config, day: date, calendar=CALENDAR, now: Optional[datetime
     symbols = sorted({sym for s in [*paper, *(s for s, _ in live)] for sym in s.symbols})
     lines = [f"{day} ({wd}) plan, times WIB; dry run: nothing is executed",
              f"  arm status: {livereport.arm_status(cfg, day)}"]
-    lines.append(f"  {cfg.preflight_at}  token rotation: token_rotation.ensure_tokens(.env.local) refreshes sessions with < 12h left "
+    lines.append(f"  {cfg.preflight_at}  token rotation: token_rotation.ensure_tokens(.env.local) refreshes the main session with < 12h left "
+                 "and re-mints the trading session from SB_TRADING_PIN when it has < 2h left "
                  "(network call to the Stockbit auth hosts, rewrites .env.local); names only are reported. "
                  "A dry run does not call it.")
     lines.append(f"  {cfg.preflight_at}  preflight: trading day; previous bar ({calendar.prev_trading_day(day)}) complete for "
@@ -86,8 +87,8 @@ def build_plan(cfg: Config, day: date, calendar=CALENDAR, now: Optional[datetime
         lines.append("        LIVE watch: every order event (submitted / partial / filled / rejected / cancelled) is pushed; "
                      "deleting the arm file stops the session; a dead live process is NEVER restarted")
     lines.append(f"  {cfg.post_close_at}  post-close:")
-    lines.append("        token rotation retry: the same ensure_tokens call (a no-op unless a session is stale or "
-                 "under 12h), so a morning network miss cannot leave recon on an expired token. A dry run does not call it.")
+    lines.append("        token rotation retry: the same ensure_tokens call; the 8h trading session minted in the morning "
+                 "has < 2h left by now, so it is re-minted for recon (and a morning network miss is covered). A dry run does not call it.")
     for st in post_close_steps(cfg, ids):
         note = f"   [SKIPPED: {st['skip']}]" if st["skip"] else ""
         lines.append("        " + shlex.join(st["argv"]) + note)

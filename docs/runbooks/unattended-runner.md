@@ -21,7 +21,7 @@ reuses them in-process. The Go side is reached only through `paper_day` (which b
 | 08:45 | preflight | trading day (repo calendar); previous session's daily bar present, not a zero-volume placeholder, for every paper spec's symbols; `SB_ACCESS_TOKEN` present and not expiring within 1.5h; `runs/KILL` absent; strategy binaries present or `go` available. Any failure: alert, skip the day |
 | right after | start | `make build-strategy`, then `python -m strategy_fit.paper_day --strategy <id>` for each spec with status `paper` (emit target + `live-session --sink paper --source live`), so it runs before 09:29 |
 | to 09:45 | watch | every 15s: status file stale > 2 min alerts; dead process is restarted only if safe (below); at 09:45 anything still running gets a graceful SIGINT |
-| 16:20 | `runner post-close` | **token rotation retry** first: the same `ensure_tokens` call, a no-op unless a session is stale or under 12h. It covers a morning network miss: on 2026-10-16 the 08:34 trading refresh was skipped and recon later ran on an expired token. Alerts and the state key are labelled `(post-close)`, and it is skipped when post-close is skipped. Then `refresh-prices`, `recon` (only if `SB_ACCOUNT_NO` and `SB_TRADING_ACCESS_TOKEN` are set), `paper-scorecard` per paper strategy, dashboard rebuild (`HEALTHCHECK=skip`), then ONE **review message** (rules over local artefacts + a short summary; see Daily ops review) that carries the day's summary and, if live was armed or ran, the LIVE summary |
+| 16:20 | `runner post-close` | **token rotation retry** first: the same `ensure_tokens` call. A PIN-minted trading session lasts 8h, so the one minted at 08:45 has about 25 minutes left here and is re-minted from `SB_TRADING_PIN` for recon. It also covers a morning network miss (2026-10-16: recon ran on an expired trading token). Alerts and the state key are labelled `(post-close)`, and it is skipped when post-close is skipped. Then `refresh-prices`, `recon` (only if `SB_ACCOUNT_NO` and `SB_TRADING_ACCESS_TOKEN` are set), `paper-scorecard` per paper strategy, dashboard rebuild (`HEALTHCHECK=skip`), then ONE **review message** (rules over local artefacts + a short summary; see Daily ops review) that carries the day's summary and, if live was armed or ran, the LIVE summary |
 
 A failed preflight skips trading for the day but **post-close still runs**: refreshing prices
 is what repairs the next morning's stale-bar failure.
@@ -90,14 +90,26 @@ make token-ensure      # rotate only if < TOKEN_MIN_HOURS (12) left; what the ru
 ```
 
 One-time seed: `.env.local` must contain `SB_REFRESH_TOKEN` (main session) alongside the existing
-`SB_ACCESS_TOKEN`; optionally `SB_TRADING_REFRESH_TOKEN` (recon) and
+`SB_ACCESS_TOKEN`; optionally `SB_TRADING_PIN` + `SB_TRADING_ACCOUNT` (live trading and recon) and
 `SB_USERNAME`/`SB_PASSWORD`/`SB_PLAYER_ID` (headless re-login if the refresh token dies; skip these
 to keep the password off disk, at the cost of a manual re-login at refresh-token death).
 
-Exit codes: 0 ok · 1 main session needs a manual re-login · 2 transient network error (retry) ·
-3 ok but a warning/action is pending (e.g. trading PIN login needed).
+**Trading session.** Carina's trading refresh token is not usable, so the session is never refreshed:
+it is minted again (main access -> `GET exodus /sekuritas/auth/token` -> `POST carina /auth/v2/login`
+with `SB_TRADING_PIN` -> `POST carina.api /auth/account/switch` to `SB_TRADING_ACCOUNT`) whenever
+`SB_TRADING_ACCESS_TOKEN` is missing or has < 2h left. The PIN login alone lands on the primary
+(investment) account, so its token is only used for the switch and never written; a refused switch
+is an `ACTION REQUIRED`, and without `SB_TRADING_ACCOUNT` the PIN is not sent at all. A PIN login
+lasts 8h, so a normal day mints twice: 08:45 (covers the session) and 16:20 (recon). Only
+`SB_TRADING_ACCESS_TOKEN` is written; a leftover `SB_TRADING_REFRESH_TOKEN` is ignored and can be
+deleted. The PIN POST is never retried within a run (wrong PINs can lock the account); a refused PIN
+is an `ACTION REQUIRED` and the day continues paper-only. A legacy (`target` 1) login is refused
+without sending the PIN.
 
-**Still manual:** trading session after its refresh token dies (needs the PIN, never stored);
+Exit codes: 0 ok · 1 main session needs a manual re-login · 2 transient network error (retry) ·
+3 ok but a warning/action is pending (e.g. `SB_TRADING_PIN` missing or refused).
+
+**Still manual:** a missing or wrong `SB_TRADING_PIN` or `SB_TRADING_ACCOUNT`;
 revoked player_id trust (approve once on the phone); the one-time `SB_REFRESH_TOKEN` seed. The
 tool reports these as `ACTION REQUIRED ...` and warns when a refresh token has < 72h left and no
 re-login credentials are configured. Do not run it from two places at once (rotation invalidates the

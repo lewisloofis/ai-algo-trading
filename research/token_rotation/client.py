@@ -16,6 +16,7 @@ from lib.tls import ssl_context
 USER_AGENT = "okhttp/4.9.3"     # the WAF 403s other agents before auth is even checked
 EXODUS_DEFAULT = "https://exodus.stockbit.com"
 CARINA_DEFAULT = "https://carina.stockbit.com"
+CARINA_API_DEFAULT = "https://carina.api.stockbit.com"
 TIMEOUT_S = 20.0
 _LOOPBACK = ("localhost", "127.0.0.1", "::1")
 
@@ -58,12 +59,17 @@ def _check_url(url: str) -> None:
 
 def _post(url: str, what: str, headers: Dict[str, str], body: Optional[bytes],
           env: Optional[Dict[str, str]] = None) -> Any:
-    """POST and return parsed JSON. Maps every failure to a typed, value-free AuthError."""
+    return _request("POST", url, what, headers, body, env)
+
+
+def _request(method: str, url: str, what: str, headers: Dict[str, str], body: Optional[bytes],
+             env: Optional[Dict[str, str]] = None) -> Any:
+    """Send and return parsed JSON. Maps every failure to a typed, value-free AuthError."""
     _check_url(url)
     hdrs = {"User-Agent": USER_AGENT, "X-Platform": "android", "X-AppVersion": "7.0.0",
             "X-DeviceType": "algo-token-rotation", "Accept-Language": "id", "Accept": "application/json"}
     hdrs.update(headers)
-    req = urllib.request.Request(url, data=body, headers=hdrs, method="POST")
+    req = urllib.request.Request(url, data=body, headers=hdrs, method=method)
     ctx = ssl_context(env or {}) if url.startswith("https") else None
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT_S, context=ctx) as resp:  # noqa: S310 - scheme checked
@@ -133,12 +139,43 @@ def login(exodus: str, user: str, password: str, player_id: str,
     raise Rejected(200, "login (no tokens in response)")
 
 
-def refresh_trading(carina: str, refresh_token: str, env: Optional[Dict[str, str]] = None) -> TokenPair:
-    body = urllib.parse.urlencode({"refresh_token": refresh_token}).encode()
-    doc = _post(carina.rstrip("/") + "/auth/refresh", "trading refresh",
-                {"Authorization": "Bearer " + refresh_token,
-                 "Content-Type": "application/x-www-form-urlencoded"}, body, env)
+@dataclass(frozen=True)
+class LoginToken:
+    token: str = field(repr=False)
+    target: str = ""            # "2" NEW_CORE (carina /auth/v2/login), "1" LEGACY
+
+
+def trading_login_token(exodus: str, access_token: str, env: Optional[Dict[str, str]] = None) -> LoginToken:
+    """Step 1 of the trading login: a one-time login_token derived from the main session."""
+    doc = _request("GET", exodus.rstrip("/") + "/sekuritas/auth/token", "trading login token",
+                   {"Authorization": "Bearer " + access_token}, None, env)
+    data = doc.get("data") if isinstance(doc, dict) else None
+    token = data.get("token") if isinstance(data, dict) else None
+    if not isinstance(token, str) or not token:
+        raise Rejected(200, "trading login token (no token in response)")
+    return LoginToken(token, str(data.get("target") or ""))
+
+
+def trading_login(carina: str, login_token: str, pin: str, env: Optional[Dict[str, str]] = None) -> TokenPair:
+    """Step 2: the PIN check (NEW_CORE). The trading refresh token it returns is not usable, so a
+    session is renewed by calling this again, never by /auth/refresh."""
+    body = json.dumps({"login_token": login_token, "pin": pin}).encode()
+    doc = _post(carina.rstrip("/") + "/auth/v2/login", "trading login",
+                {"Content-Type": "application/json"}, body, env)
     pair = find_pair(doc)
     if not pair:
-        raise Rejected(200, "trading refresh (no tokens in response)")
+        raise Rejected(200, "trading login (no tokens in response)")
+    return pair
+
+
+def switch_account(carina_api: str, trading_access: str, account_number: str,
+                   env: Optional[Dict[str, str]] = None) -> TokenPair:
+    """Step 3: the PIN login always lands on the primary account; trade its temporary access token
+    for a session on ``account_number``. The new access token is in the response ``data``."""
+    body = json.dumps({"account_number": account_number}).encode()
+    doc = _post(carina_api.rstrip("/") + "/auth/account/switch", "account switch",
+                {"Authorization": "Bearer " + trading_access, "Content-Type": "application/json"}, body, env)
+    pair = find_pair(doc.get("data") if isinstance(doc, dict) else None)
+    if not pair:
+        raise Rejected(200, "account switch (no tokens in response)")
     return pair

@@ -34,10 +34,13 @@ class FakeServer:
         outer = self
 
         class H(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                self.do_POST()
+
             def do_POST(self):  # noqa: N802
                 n = int(self.headers.get("Content-Length") or 0)
                 body = self.rfile.read(n).decode() if n else ""
-                outer.calls.append({"path": self.path, "auth": self.headers.get("Authorization"),
+                outer.calls.append({"path": self.path, "method": self.command, "auth": self.headers.get("Authorization"),
                                     "ua": self.headers.get("User-Agent"), "body": body})
                 route = outer.routes.get(self.path, (404, {}))
                 status, doc = route(outer.calls[-1]) if callable(route) else route
@@ -81,7 +84,8 @@ def pair_doc(access, refresh):
 
 
 def run(envf, srv, **kw):
-    return rotate.ensure_tokens(envf, now=NOW, exodus=srv.url, carina=srv.url, sleep=lambda s: None, **kw)
+    return rotate.ensure_tokens(envf, now=NOW, exodus=srv.url, carina=srv.url, carina_api=srv.url,
+                               sleep=lambda s: None, **kw)
 
 
 # ---- success -------------------------------------------------------------------------------
@@ -100,16 +104,6 @@ def test_main_refresh_success_writes_both_and_keeps_other_lines(envf, srv):
     applied = {}
     res.apply_to(applied)
     assert applied["SB_ACCESS_TOKEN"] == new_a
-
-
-def test_trading_refresh_success_form_encoded(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN="r",
-              SB_TRADING_ACCESS_TOKEN=jwt(1, "t"), SB_TRADING_REFRESH_TOKEN="trold")
-    srv.routes["/auth/refresh"] = (200, {"access_token": jwt(20, "tn"), "refresh_token": "trnew"})
-    res = run(envf, srv)
-    assert res.refreshed == ("trading",) and res.ok
-    assert read_env(envf)["SB_TRADING_REFRESH_TOKEN"] == "trnew"
-    assert srv.calls[0]["body"] == "refresh_token=trold"
 
 
 # ---- no-op ---------------------------------------------------------------------------------
@@ -160,19 +154,153 @@ def test_login_challenge_is_manual_action(envf, srv):
     assert not res.ok and "challenge" in res.summary and res.exit_code == 1
 
 
-def test_trading_dead_refresh_needs_pin_and_does_not_fail_main(envf, srv):
-    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500),
-              SB_TRADING_ACCESS_TOKEN=jwt(-2), SB_TRADING_REFRESH_TOKEN="trdead")
-    srv.routes["/auth/refresh"] = (401, {})
-    res = run(envf, srv)
-    assert res.ok and res.exit_code == 3
-    assert "PIN" in res.summary and "cannot be automated" in res.summary
-
-
 def test_refresh_token_nearly_dead_without_creds_warns_early(envf, srv):
     write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(24))
     res = run(envf, srv)
     assert res.ok and res.exit_code == 3 and "re-login soon" in res.summary
+
+
+# ---- trading session: minted from SB_TRADING_PIN (its refresh token is not usable) ---------
+
+PIN = "135790"     # synthetic
+ACCOUNT = "0000001X"     # synthetic
+
+
+def trading_routes(srv, target="2", access=None):
+    srv.routes["/sekuritas/auth/token"] = (200, {"message": "OK", "data": {"token": "logintok", "target": target}})
+    srv.routes["/auth/v2/login"] = (200, {"access_token": jwt(8, "primary"), "refresh_token": "unusable"})
+    srv.routes["/auth/account/switch"] = (200, {"message": "OK", "data": {"access_token": access or jwt(8, "tn")}})
+
+
+def test_trading_minted_from_pin_when_missing(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30, "main"), SB_REFRESH_TOKEN=jwt(500), SB_TRADING_PIN=PIN, SB_TRADING_ACCOUNT=ACCOUNT)
+    new_t = jwt(8, "tn")
+    trading_routes(srv, access=new_t)
+    res = run(envf, srv)
+    env = read_env(envf)
+    assert res.ok and res.refreshed == ("trading",) and res.exit_code == 0
+    assert env["SB_TRADING_ACCESS_TOKEN"] == new_t and "SB_TRADING_REFRESH_TOKEN" not in env
+    assert env["SB_TRADING_PIN"] == PIN                                    # left as the operator wrote it
+    get, post, switch = srv.calls
+    assert (get["method"], get["path"], get["auth"]) == ("GET", "/sekuritas/auth/token", "Bearer " + jwt(30, "main"))
+    assert post["method"] == "POST" and json.loads(post["body"]) == {"login_token": "logintok", "pin": PIN}
+    assert (switch["method"], switch["path"], switch["auth"]) == ("POST", "/auth/account/switch",
+                                                                  "Bearer " + jwt(8, "primary"))
+    assert json.loads(switch["body"]) == {"account_number": ACCOUNT}
+
+
+def test_primary_account_token_is_never_kept_when_switch_fails(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500),
+              SB_TRADING_ACCESS_TOKEN=jwt(-1), SB_TRADING_PIN=PIN, SB_TRADING_ACCOUNT=ACCOUNT)
+    before = envf.read_text()
+    trading_routes(srv)
+    srv.routes["/auth/account/switch"] = (400, {"echo": ACCOUNT})
+    res = run(envf, srv)
+    assert res.ok and res.exit_code == 3 and "account switch refused" in res.summary
+    assert envf.read_text() == before and "SB_TRADING_ACCESS_TOKEN" not in res.values
+    assert [c["path"] for c in srv.calls].count("/auth/v2/login") == 1
+
+
+def test_switch_5xx_retries_without_resending_the_pin(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500), SB_TRADING_PIN=PIN, SB_TRADING_ACCOUNT=ACCOUNT)
+    new_t = jwt(8, "tn")
+    trading_routes(srv)
+    answers = iter([(503, {}), (200, {"data": {"access_token": new_t}})])
+    srv.routes["/auth/account/switch"] = lambda _c: next(answers)
+    res = run(envf, srv)
+    assert res.refreshed == ("trading",) and read_env(envf)["SB_TRADING_ACCESS_TOKEN"] == new_t
+    assert [c["path"] for c in srv.calls].count("/auth/v2/login") == 1
+
+
+def test_missing_trading_account_sends_no_pin(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500), SB_TRADING_PIN=PIN)
+    res = run(envf, srv)
+    assert res.exit_code == 3 and "SB_TRADING_ACCOUNT is not set" in res.summary and srv.calls == []
+
+
+def test_trading_mint_uses_the_freshly_rotated_main_access(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(0.5, "old"), SB_REFRESH_TOKEN="r", SB_TRADING_PIN=PIN, SB_TRADING_ACCOUNT=ACCOUNT)
+    new_main = jwt(24, "newmain")
+    srv.routes["/login/refresh"] = (200, pair_doc(new_main, "r2"))
+    trading_routes(srv)
+    res = run(envf, srv)
+    assert res.refreshed == ("main", "trading")
+    assert srv.calls[1]["auth"] == "Bearer " + new_main
+
+
+def test_trading_not_reminted_while_it_has_more_than_trading_min_hours(envf, srv):
+    # an 8h token minted at 08:45 has ~5h left at noon: no PIN login, even though main uses a 12h threshold
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500),
+              SB_TRADING_ACCESS_TOKEN=jwt(5), SB_TRADING_PIN=PIN, SB_TRADING_ACCOUNT=ACCOUNT)
+    res = run(envf, srv, min_hours=12)
+    assert res.ok and res.refreshed == () and srv.calls == []
+
+
+def test_trading_reminted_before_post_close_when_nearly_expired(envf, srv):
+    # 16:20 recon on a token minted at 08:45: ~25 minutes left
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500),
+              SB_TRADING_ACCESS_TOKEN=jwt(0.4), SB_TRADING_PIN=PIN, SB_TRADING_ACCOUNT=ACCOUNT)
+    trading_routes(srv)
+    assert run(envf, srv).refreshed == ("trading",)
+
+
+def test_wrong_pin_is_one_attempt_and_a_manual_action(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500),
+              SB_TRADING_ACCESS_TOKEN=jwt(-1), SB_TRADING_PIN=PIN, SB_TRADING_ACCOUNT=ACCOUNT)
+    before = envf.read_text()
+    trading_routes(srv)
+    srv.routes["/auth/v2/login"] = (400, {"message": "PIN salah", "echo": PIN})
+    res = run(envf, srv)
+    assert res.ok and res.exit_code == 3                                   # paper still runs
+    assert "SB_TRADING_PIN" in res.summary and "lock" in res.summary
+    assert PIN not in res.summary + repr(res)
+    assert [c["path"] for c in srv.calls].count("/auth/v2/login") == 1
+    assert envf.read_text() == before
+
+
+def test_pin_login_5xx_is_not_retried(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500),
+              SB_TRADING_ACCESS_TOKEN=jwt(-1), SB_TRADING_PIN=PIN, SB_TRADING_ACCOUNT=ACCOUNT)
+    trading_routes(srv)
+    srv.routes["/auth/v2/login"] = (503, {})
+    res = run(envf, srv)
+    assert res.ok and "network/server error" in res.summary
+    assert [c["path"] for c in srv.calls].count("/auth/v2/login") == 1
+
+
+def test_stale_trading_token_without_pin_is_a_manual_action(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500), SB_TRADING_ACCESS_TOKEN=jwt(-2))
+    res = run(envf, srv)
+    assert res.ok and res.exit_code == 3 and "SB_TRADING_PIN is not set" in res.summary
+    assert srv.calls == []
+
+
+def test_no_trading_session_configured_is_left_alone(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500))
+    res = run(envf, srv)
+    assert res.ok and res.exit_code == 0 and srv.calls == []
+
+
+def test_legacy_target_never_receives_the_pin(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN=jwt(500), SB_TRADING_PIN=PIN, SB_TRADING_ACCOUNT=ACCOUNT)
+    trading_routes(srv, target="1")
+    res = run(envf, srv)
+    assert "legacy" in res.summary and [c["path"] for c in srv.calls] == ["/sekuritas/auth/token"]
+
+
+def test_no_mint_when_main_session_is_unusable(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(-1), SB_REFRESH_TOKEN="dead", SB_TRADING_PIN=PIN, SB_TRADING_ACCOUNT=ACCOUNT)
+    srv.routes["/login/refresh"] = (401, {})
+    res = run(envf, srv)
+    assert not res.ok and [c["path"] for c in srv.calls] == ["/login/refresh"]
+
+
+def test_force_remints_trading(envf, srv):
+    write_env(envf, SB_ACCESS_TOKEN=jwt(30), SB_REFRESH_TOKEN="r",
+              SB_TRADING_ACCESS_TOKEN=jwt(7), SB_TRADING_PIN=PIN, SB_TRADING_ACCOUNT=ACCOUNT)
+    srv.routes["/login/refresh"] = (200, pair_doc(jwt(24, "n"), "r2"))
+    trading_routes(srv)
+    assert run(envf, srv, force=True).refreshed == ("main", "trading")
 
 
 # ---- network error -------------------------------------------------------------------------
@@ -243,9 +371,9 @@ def test_persist_failure_is_critical_action(envf, srv, monkeypatch):
 # ---- redaction -----------------------------------------------------------------------------
 
 def test_no_secret_in_summary_repr_status_or_cli_output(envf, srv, capsys):
-    secrets = [jwt(-1, "oldA"), "refresh-secret-old", "fakepw", "player-secret"]
+    secrets = [jwt(-1, "oldA"), "refresh-secret-old", "fakepw", "player-secret", "864213"]
     write_env(envf, SB_ACCESS_TOKEN=secrets[0], SB_REFRESH_TOKEN=secrets[1],
-              SB_USERNAME="fakeuser", SB_PASSWORD=secrets[2], SB_PLAYER_ID=secrets[3])
+              SB_USERNAME="fakeuser", SB_PASSWORD=secrets[2], SB_PLAYER_ID=secrets[3], SB_TRADING_PIN=secrets[4])
     new_a = jwt(24, "newA")
     # server echoes secrets in an error body; they must not surface
     srv.routes["/login/refresh"] = (401, {"echo": secrets[1]})
