@@ -55,7 +55,17 @@ def test_arm_file_state_is_logged(cfg, alerter, tmp_path):
     paper = select_and_log(REGISTRY, alerter, cfg.runs_dir, DAY)
     assert [s.strategy_id for s in paper] == ["paper_x"]
     log = cfg.log_file.read_text()
-    assert "arm file ARM-2026-10-15.json: valid" in log and "skip dead_x" in log
+    assert "arm file ARM-2026-10-15.json: valid" in log and "skip cand_x" in log
+    assert "dead_x" not in log                                  # retired specs are not logged
+
+
+def test_retired_specs_are_left_out_of_every_decision(cfg):
+    from runner.strategies import decide_all, select
+    paper, other = select(REGISTRY)
+    assert "dead_x" not in [sid for sid, _ in other]
+    gate = modes.LiveGate(day=DAY, today=DAY, arm=modes.read_arm_file(cfg.runs_dir, DAY),
+                          kill_present=False, preflight_ok=True)
+    assert "dead_x" not in [s.strategy_id for s, _ in decide_all(REGISTRY, gate)]
 
 
 # ---- preflight ---------------------------------------------------------------------------------

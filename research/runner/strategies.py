@@ -14,18 +14,25 @@ from runner.config import WIB, Config
 from runner.modes import PAPER, LiveGate, Mode, decide_mode
 
 
+SHELVED = ("retired", "example")   # kept in the registry as a record; the runner neither runs nor reports them
+
+
 def _registry(registry=None):
     if registry is None:
         from strategy_fit.emitter_specs import SPECS as registry  # noqa: N811
     return registry
 
 
+def _active(registry=None) -> list:
+    """Every spec that is not shelved, sorted by id."""
+    return sorted((s for s in _registry(registry).values() if s.status not in SHELVED), key=lambda s: s.strategy_id)
+
+
 def select(registry=None) -> Tuple[list, List[Tuple[str, str]]]:
-    """(paper specs sorted by id, [(strategy_id, reason)] of every other spec). No live gate: a
-    candidate is never selected here; the live decision is ``decide_all`` with a real gate."""
-    registry = _registry(registry)
+    """(paper specs sorted by id, [(strategy_id, reason)] of every other non-shelved spec). No live
+    gate: a candidate is never selected here; the live decision is ``decide_all`` with a real gate."""
     paper, other = [], []
-    for s in sorted(registry.values(), key=lambda s: s.strategy_id):
+    for s in _active(registry):
         m = decide_mode(s)
         (paper if m.mode == PAPER else other).append(s if m.mode == PAPER else (s.strategy_id, m.reason))
     return paper, other
@@ -62,8 +69,8 @@ def build_gate(cfg: Config, day: date, now: datetime, preflight_ok: bool,
 
 
 def decide_all(registry, gate: LiveGate) -> List[Tuple[object, Mode]]:
-    """(spec, mode) for every spec, sorted by id."""
-    return [(s, decide_mode(s, gate)) for s in sorted(_registry(registry).values(), key=lambda s: s.strategy_id)]
+    """(spec, mode) for every non-shelved spec, sorted by id."""
+    return [(s, decide_mode(s, gate)) for s in _active(registry)]
 
 
 def select_and_log(registry, alerter: Alerter, runs_dir: Optional[Path] = None, day: Optional[date] = None) -> list:
